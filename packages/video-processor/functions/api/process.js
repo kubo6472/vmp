@@ -1,3 +1,6 @@
+const SEGMENT_DURATION_SECONDS = 10;
+const TARGET_SEGMENT_SIZE_BYTES = 10 * 1024 * 1024;
+
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -20,19 +23,45 @@ export async function onRequestPost(context) {
     return json({ error: 'Uploaded source not found for videoId' }, 404);
   }
 
-  const processedAt = new Date().toISOString();
+  if (!source.size) {
+    return json({ error: 'Uploaded source file is empty' }, 400);
+  }
+
+  const sourceSize = Number(source.size);
+  const segmentCount = Math.max(1, Math.ceil(sourceSize / TARGET_SEGMENT_SIZE_BYTES));
+  const segmentsPrefix = `videos/${videoId}/processed/segments`;
   const playlistKey = `videos/${videoId}/processed/playlist.m3u8`;
   const metadataKey = `videos/${videoId}/metadata.json`;
+  const processedAt = new Date().toISOString();
 
-  const playlistContent = [
-    '#EXTM3U',
-    '#EXT-X-VERSION:3',
-    '#EXT-X-TARGETDURATION:10',
-    '#EXT-X-MEDIA-SEQUENCE:0',
-    '#EXTINF:10.0,',
-    source.key,
-    '#EXT-X-ENDLIST'
-  ].join('\n');
+  const segmentKeys = [];
+  for (let index = 0; index < segmentCount; index += 1) {
+    const start = index * TARGET_SEGMENT_SIZE_BYTES;
+    const length = Math.min(TARGET_SEGMENT_SIZE_BYTES, sourceSize - start);
+    const sourceChunk = await env.VIDEO_BUCKET.get(source.key, { range: { offset: start, length } });
+    if (!sourceChunk) {
+      return json({ error: `Unable to read source chunk ${index}` }, 500);
+    }
+
+    const segmentBytes = await sourceChunk.arrayBuffer();
+    const segmentKey = `${segmentsPrefix}/segment_${String(index).padStart(4, '0')}.ts`;
+
+    await env.VIDEO_BUCKET.put(segmentKey, segmentBytes, {
+      httpMetadata: { contentType: 'video/mp2t' },
+      customMetadata: {
+        status: 'processed',
+        visibility,
+        processedAt,
+        videoId,
+        sourceKey: source.key,
+        segmentIndex: String(index)
+      }
+    });
+
+    segmentKeys.push(segmentKey);
+  }
+
+  const playlistContent = buildPlaylist(segmentKeys, SEGMENT_DURATION_SECONDS);
 
   await env.VIDEO_BUCKET.put(playlistKey, playlistContent, {
     httpMetadata: { contentType: 'application/vnd.apple.mpegurl' },
@@ -47,15 +76,43 @@ export async function onRequestPost(context) {
     videoId,
     sourceKey: source.key,
     playlistKey,
+    segmentKeys,
     status: 'processed',
     visibility,
     processedAt,
-    note: 'This is a lightweight processing placeholder. Replace with real transcoding pipeline as needed.'
+    segmentDurationSeconds: SEGMENT_DURATION_SECONDS,
+    note: 'Segments are generated from uploaded bytes in fixed-size chunks with .ts naming for HLS-compatible key structure. Replace with ffmpeg transcoding for production-grade MPEG-TS output.'
   }, null, 2), {
     httpMetadata: { contentType: 'application/json' }
   });
 
-  return json({ ok: true, videoId, playlistKey, metadataKey, processedAt, visibility });
+  return json({
+    ok: true,
+    videoId,
+    playlistKey,
+    segmentKeys,
+    metadataKey,
+    processedAt,
+    visibility
+  });
+}
+
+function buildPlaylist(segmentKeys, segmentDurationSeconds) {
+  const header = [
+    '#EXTM3U',
+    '#EXT-X-VERSION:3',
+    `#EXT-X-TARGETDURATION:${segmentDurationSeconds}`,
+    '#EXT-X-MEDIA-SEQUENCE:0'
+  ];
+
+  const lines = [...header];
+  for (const key of segmentKeys) {
+    lines.push(`#EXTINF:${segmentDurationSeconds.toFixed(1)},`);
+    lines.push(key);
+  }
+
+  lines.push('#EXT-X-ENDLIST');
+  return lines.join('\n');
 }
 
 function sanitizeVisibility(value) {

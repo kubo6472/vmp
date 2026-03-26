@@ -20,16 +20,17 @@
       button { background: #2563eb; border: none; cursor: pointer; }
       button:disabled { background: #374151; cursor: not-allowed; }
       .muted { color: #9ca3af; font-size: .9rem; }
-      .status { margin-top: .75rem; min-height: 1.5rem; }
+      .status { margin-top: .75rem; min-height: 1.5rem; white-space: pre-line; }
       table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
       th, td { border-bottom: 1px solid #374151; padding: .55rem; text-align: left; font-size: .92rem; }
       .pill { padding: .15rem .5rem; border-radius: 999px; background: #374151; }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4/dist/tus.min.js"></script>
   </head>
   <body>
     <div class="container">
       <h1>Video Processor Admin</h1>
-      <p class="muted">Drag/drop videos, upload to R2, then trigger processing and apply visibility tags.</p>
+      <p class="muted">Drag/drop videos, upload to R2 with tus resumable uploads, then trigger processing and apply visibility tags.</p>
 
       <section class="card">
         <h2>Upload</h2>
@@ -44,7 +45,7 @@
               <option value="public">public</option>
             </select>
           </label>
-          <button id="uploadBtn" disabled>Upload to R2</button>
+          <button id="uploadBtn" disabled>Upload with tus</button>
           <button id="processBtn" disabled>Process Video</button>
         </div>
         <div id="uploadStatus" class="status muted"></div>
@@ -98,23 +99,41 @@
       uploadBtn.addEventListener('click', async () => {
         if (!selectedFile) return;
         uploadBtn.disabled = true;
-        setStatus('Uploading file to R2...');
+        processBtn.disabled = true;
+        setStatus('Starting tus upload...');
 
-        const formData = new FormData();
-        formData.append('file', selectedFile);
-        formData.append('visibility', visibility.value);
+        const upload = new tus.Upload(selectedFile, {
+          endpoint: '/api/uploads',
+          chunkSize: 8 * 1024 * 1024,
+          retryDelays: [0, 1000, 3000, 5000],
+          metadata: {
+            filename: selectedFile.name,
+            filetype: selectedFile.type,
+            visibility: visibility.value
+          },
+          onError: (error) => {
+            setStatus(`Upload failed: ${error?.message || 'unknown error'}`);
+            uploadBtn.disabled = false;
+          },
+          onProgress: (uploaded, total) => {
+            const percent = ((uploaded / total) * 100).toFixed(1);
+            setStatus(`Uploading via tus... ${percent}% (${Math.round(uploaded / 1024 / 1024)} / ${Math.round(total / 1024 / 1024)} MB)`);
+          },
+          onSuccess: () => {
+            const uploadUrl = upload.url || '';
+            uploadedVideoId = uploadUrl.split('/').pop();
+            setStatus(`Tus upload complete. videoId: ${uploadedVideoId}`);
+            processBtn.disabled = !uploadedVideoId;
+          }
+        });
 
-        const res = await fetch('/api/upload', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (!res.ok) {
-          setStatus(`Upload failed: ${data.error || 'unknown error'}`);
-          uploadBtn.disabled = false;
-          return;
+        const previousUploads = await upload.findPreviousUploads();
+        if (previousUploads.length > 0) {
+          upload.resumeFromPreviousUpload(previousUploads[0]);
+          setStatus('Resuming previous tus upload...');
         }
 
-        uploadedVideoId = data.videoId;
-        setStatus(`Uploaded ${data.fileName} → videoId ${data.videoId}`);
-        processBtn.disabled = false;
+        upload.start();
       });
 
       processBtn.addEventListener('click', async () => {
@@ -128,9 +147,9 @@
           body: JSON.stringify({ videoId: uploadedVideoId, visibility: visibility.value })
         });
 
-        const data = await res.json();
+        const data = await safeJson(res);
         if (!res.ok) {
-          setStatus(`Processing failed: ${data.error || 'unknown error'}`);
+          setStatus(`Processing failed: ${data.error || data.rawText || 'unknown error'}`);
           processBtn.disabled = false;
           return;
         }
@@ -166,6 +185,15 @@
 
       refreshBtn.addEventListener('click', loadVideos);
       loadVideos();
+
+      async function safeJson(response) {
+        const text = await response.text();
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { rawText: text };
+        }
+      }
     </script>
   </body>
 </html>
