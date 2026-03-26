@@ -94,7 +94,8 @@ onMounted(async () => {
     const response = await fetch(`${config.public.apiUrl}/api/video-access/${userId}/${videoId}`)
     
     if (!response.ok) {
-      throw new Error('Failed to load video data')
+      const errorBody = await response.text()
+      throw new Error(`Failed to load video data (${response.status}): ${errorBody}`)
     }
     
     videoData.value = await response.json()

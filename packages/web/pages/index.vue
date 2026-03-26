@@ -22,9 +22,13 @@
           <input
             v-model.trim="videoId"
             type="text"
-            placeholder="Enter video ID (e.g. test1)"
+            placeholder="Enter video ID or playlist path"
             class="w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
           />
+          <span class="mt-1 block text-xs text-gray-500">
+            Example: <code>e1b68f1b-8706-48ef-b7c4-3f6093ae23da</code> or
+            <code>videos/&lt;id&gt;/processed/playlist.m3u8</code>
+          </span>
         </label>
         <NuxtLink 
           :to="watchLink"
@@ -39,7 +43,7 @@
 
 <script setup lang="ts">
 const selectedUser = ref<string | null>(null)
-const videoId = ref('test1')
+const videoId = ref('demo_video')
 
 const testUsers = [
   { id: 'user_free', name: 'Free User', type: 'Preview access only' },

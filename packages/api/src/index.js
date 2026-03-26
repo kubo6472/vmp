@@ -34,7 +34,8 @@ async function handleVideoAccess(request, env, corsHeaders) {
     }
 
     const userId = pathParts[3];
-    const videoId = pathParts[4];
+    const requestedVideoId = decodeURIComponent(pathParts[4] ?? '');
+    const videoId = normalizeVideoId(requestedVideoId);
 
     const db = getDatabaseBinding(env);
 
@@ -53,44 +54,48 @@ async function handleVideoAccess(request, env, corsHeaders) {
       SELECT * FROM videos WHERE id = ?
     `).bind(videoId).first();
 
-    if (!video) {
-      return jsonResponse({ error: 'Video not found' }, 404, corsHeaders);
-    }
-
     // Check premium access
     const hasPremiumAccess = subscription && 
       subscription.plan_type === 'premium' && 
       (subscription.expires_at === null || new Date(subscription.expires_at) > new Date());
 
+    const hasVideoMetadata = Boolean(video);
+    const hasAccess = hasPremiumAccess || !hasVideoMetadata;
+    const playlistUrl = await resolvePlaylistUrl({
+      env,
+      videoId,
+      hasPremiumAccess
+    });
+    const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0;
+    const fullDuration = video?.full_duration ?? previewDuration;
+
     const response = {
       userId,
       videoId,
-      hasAccess: hasPremiumAccess,
+      hasAccess,
       subscription: {
         planType: subscription ? subscription.plan_type : 'free',
         status: subscription ? subscription.status : 'none',
         expiresAt: subscription ? subscription.expires_at : null
       },
       video: {
-        title: video.title,
-        fullDuration: video.full_duration,
-        previewDuration: video.preview_duration,
-        playlistUrl: hasPremiumAccess ? 
-          `${env.R2_BASE_URL}/full/${videoId}/playlist.m3u8` :
-          `${env.R2_BASE_URL}/preview/${videoId}/playlist.m3u8`
+        title: video?.title ?? `Uploaded Video ${videoId}`,
+        fullDuration,
+        previewDuration,
+        playlistUrl
       },
       chapters: [
         {
           title: "Preview",
           startTime: 0,
-          endTime: video.preview_duration,
+          endTime: previewDuration,
           accessible: true
         },
         {
           title: "Full Content",
-          startTime: video.preview_duration,
-          endTime: video.full_duration,
-          accessible: hasPremiumAccess
+          startTime: previewDuration,
+          endTime: fullDuration,
+          accessible: hasAccess
         }
       ]
     };
@@ -103,6 +108,47 @@ async function handleVideoAccess(request, env, corsHeaders) {
       error: 'Internal server error',
       details: error.message 
     }, 500, corsHeaders);
+  }
+}
+
+function normalizeVideoId(input) {
+  const trimmed = (input ?? '').trim();
+
+  const pathMatch = trimmed.match(/^videos\/([^/]+)\/processed\/playlist\.m3u8$/i);
+  if (pathMatch) {
+    return pathMatch[1];
+  }
+
+  return trimmed;
+}
+
+async function resolvePlaylistUrl({ env, videoId, hasPremiumAccess }) {
+  const base = env.R2_BASE_URL;
+  const candidates = hasPremiumAccess
+    ? [
+        `${base}/full/${videoId}/playlist.m3u8`,
+        `${base}/videos/${videoId}/processed/playlist.m3u8`,
+      ]
+    : [
+        `${base}/preview/${videoId}/playlist.m3u8`,
+        `${base}/videos/${videoId}/processed/playlist.m3u8`,
+      ];
+
+  for (const candidate of candidates) {
+    if (await canLoadPlaylist(candidate)) {
+      return candidate;
+    }
+  }
+
+  return `${base}/videos/${videoId}/processed/playlist.m3u8`;
+}
+
+async function canLoadPlaylist(url) {
+  try {
+    const response = await fetch(url, { method: 'HEAD' });
+    return response.ok;
+  } catch (_) {
+    return false;
   }
 }
 
