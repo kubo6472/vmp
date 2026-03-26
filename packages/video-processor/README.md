@@ -3,7 +3,7 @@
 Simple admin interface for:
 
 - Drag-and-drop video uploads into Cloudflare R2 using the [tus resumable upload protocol](https://tus.io/).
-- Triggering processing logic in Cloudflare Pages Functions that writes `.ts` segment objects and an HLS playlist.
+- Triggering processing placeholder logic in Cloudflare Pages Functions.
 - Applying visibility tags (`private`, `unlisted`, `public`).
 - Listing processed videos.
 
