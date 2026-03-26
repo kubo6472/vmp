@@ -6,7 +6,7 @@ export default defineNuxtConfig({
   
   runtimeConfig: {
     public: {
-      apiUrl: process.env.API_URL || 'https://vmp-videos.tjm.sk'
+      apiUrl: process.env.API_URL || 'https://vmp-api.tjm.sk'
     }
   },
   
