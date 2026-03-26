@@ -134,7 +134,7 @@ onMounted(async () => {
     }
 
     videoData.value = await response.json()
-    console.log('[watch] video-access response', JSON.parse(JSON.stringify(videoData.value)))
+    console.log('[watch] video-access response', videoData.value)
 
     // Render video element before initializing the player
     loading.value = false
