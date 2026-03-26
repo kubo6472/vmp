@@ -74,7 +74,8 @@
 </template>
 
 <script setup lang="ts">
-import Hls from 'hls.js'
+type HlsModule = typeof import('hls.js')
+type HlsInstance = InstanceType<HlsModule['default']>
 
 const route = useRoute()
 const config = useRuntimeConfig()
@@ -83,7 +84,8 @@ const videoElement = ref<HTMLVideoElement | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
 const videoData = ref<any>(null)
-let hls: Hls | null = null
+let hls: HlsInstance | null = null
+let manifestObjectUrl: string | null = null
 
 const videoId = route.params.videoId as string
 const userId = route.query.userId as string || 'user_free'
@@ -102,9 +104,13 @@ onMounted(async () => {
     
     // Initialize HLS player
     await nextTick()
+    const Hls = (await import('hls.js')).default
+
     if (videoElement.value && Hls.isSupported()) {
+      const playableSource = await normalizePlaylistUrl(videoData.value.video.playlistUrl)
+
       hls = new Hls()
-      hls.loadSource(videoData.value.video.playlistUrl)
+      hls.loadSource(playableSource)
       hls.attachMedia(videoElement.value)
       
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -114,7 +120,7 @@ onMounted(async () => {
       hls.on(Hls.Events.ERROR, (event, data) => {
         console.error('HLS error:', data)
         if (data.fatal) {
-          error.value = 'Video playback error'
+          error.value = 'Video playback error. The current playlist may be invalid.'
         }
       })
     } else if (videoElement.value?.canPlayType('application/vnd.apple.mpegurl')) {
@@ -132,6 +138,10 @@ onMounted(async () => {
 onUnmounted(() => {
   if (hls) {
     hls.destroy()
+  }
+
+  if (manifestObjectUrl) {
+    URL.revokeObjectURL(manifestObjectUrl)
   }
 })
 
@@ -152,5 +162,51 @@ const seekToChapter = (startTime: number) => {
     videoElement.value.currentTime = startTime
     videoElement.value.play()
   }
+}
+
+const normalizePlaylistUrl = async (playlistUrl: string): Promise<string> => {
+  try {
+    const response = await fetch(playlistUrl)
+    if (!response.ok) {
+      return playlistUrl
+    }
+
+    const manifest = await response.text()
+    const normalized = rewriteManifestSegmentUrls(manifest, playlistUrl)
+    if (normalized === manifest) {
+      return playlistUrl
+    }
+
+    manifestObjectUrl = URL.createObjectURL(
+      new Blob([normalized], { type: 'application/vnd.apple.mpegurl' })
+    )
+
+    return manifestObjectUrl
+  } catch (e) {
+    console.warn('Unable to normalize playlist URL, using original playlist', e)
+    return playlistUrl
+  }
+}
+
+const rewriteManifestSegmentUrls = (manifest: string, playlistUrl: string): string => {
+  const playlist = new URL(playlistUrl)
+  const prefixToTrim = `${playlist.pathname.split('/').slice(1, -1).join('/')}/`
+  const lines = manifest.split('\n')
+
+  const rewritten = lines.map((line) => {
+    const trimmed = line.trim()
+
+    if (!trimmed || trimmed.startsWith('#') || /^https?:\/\//i.test(trimmed)) {
+      return line
+    }
+
+    if (!trimmed.startsWith(prefixToTrim)) {
+      return line
+    }
+
+    return trimmed.slice(prefixToTrim.length)
+  })
+
+  return rewritten.join('\n')
 }
 </script>
