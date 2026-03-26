@@ -2,7 +2,7 @@
 
 Simple admin interface for:
 
-- Drag-and-drop video uploads into Cloudflare R2.
+- Drag-and-drop video uploads into Cloudflare R2 using the [tus resumable upload protocol](https://tus.io/).
 - Triggering processing placeholder logic in Cloudflare Pages Functions.
 - Applying visibility tags (`private`, `unlisted`, `public`).
 - Listing processed videos.
@@ -18,6 +18,13 @@ npm run dev --workspace @vmp/video-processor
 ```bash
 npm run deploy --workspace @vmp/video-processor
 ```
+
+## Upload flow
+
+- Client uses `tus-js-client` in the admin page.
+- `POST /api/uploads` creates a multipart upload session in R2 and returns a tus upload URL.
+- `PATCH /api/uploads/:videoId` appends chunks as multipart parts.
+- `HEAD /api/uploads/:videoId` reports resumable offset.
 
 ## Required Cloudflare bindings
 
