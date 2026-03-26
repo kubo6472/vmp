@@ -15,8 +15,8 @@
       <!-- Video Player -->
       <div v-else-if="videoData">
         <!-- Subscription Banner -->
-        <div 
-          v-if="!videoData.hasAccess" 
+        <div
+          v-if="!videoData.hasAccess"
           class="bg-yellow-600 text-white p-4 rounded-t-lg"
         >
           <p class="font-semibold">🔒 Preview Mode</p>
@@ -25,25 +25,41 @@
 
         <!-- Video Element -->
         <div class="bg-black rounded-b-lg overflow-hidden">
-          <video 
-            ref="videoElement"
-            class="w-full"
-            controls
-            @timeupdate="handleTimeUpdate"
-          ></video>
+          <media-controller class="block w-full aspect-video">
+            <video
+              ref="videoElement"
+              slot="media"
+              class="video-js vjs-big-play-centered w-full h-full"
+              playsinline
+              @timeupdate="handleTimeUpdate"
+            ></video>
+
+            <media-loading-indicator slot="centered-chrome"></media-loading-indicator>
+
+            <media-control-bar>
+              <media-play-button></media-play-button>
+              <media-seek-backward-button seek-offset="10"></media-seek-backward-button>
+              <media-seek-forward-button seek-offset="10"></media-seek-forward-button>
+              <media-time-range></media-time-range>
+              <media-time-display show-duration></media-time-display>
+              <media-mute-button></media-mute-button>
+              <media-volume-range></media-volume-range>
+              <media-fullscreen-button></media-fullscreen-button>
+            </media-control-bar>
+          </media-controller>
         </div>
 
         <!-- Chapter Bar -->
         <div class="mt-4 bg-gray-800 rounded-lg p-4">
           <h3 class="text-white font-semibold mb-3">Chapters</h3>
           <div class="flex gap-2">
-            <div 
+            <div
               v-for="(chapter, index) in videoData.chapters"
               :key="index"
               :class="[
                 'flex-1 rounded p-3 text-center text-sm font-medium transition',
-                chapter.accessible 
-                  ? 'bg-green-600 text-white cursor-pointer hover:bg-green-700' 
+                chapter.accessible
+                  ? 'bg-green-600 text-white cursor-pointer hover:bg-green-700'
                   : 'bg-red-600 text-white cursor-not-allowed'
               ]"
               @click="chapter.accessible && seekToChapter(chapter.startTime)"
@@ -74,8 +90,10 @@
 </template>
 
 <script setup lang="ts">
-type HlsModule = typeof import('hls.js')
-type HlsInstance = InstanceType<HlsModule['default']>
+import 'video.js/dist/video-js.css'
+
+type VideoJsModule = typeof import('video.js')
+type VideoJsPlayer = ReturnType<VideoJsModule['default']>
 
 const route = useRoute()
 const config = useRuntimeConfig()
@@ -84,7 +102,7 @@ const videoElement = ref<HTMLVideoElement | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
 const videoData = ref<any>(null)
-let hls: HlsInstance | null = null
+let player: VideoJsPlayer | null = null
 let manifestObjectUrl: string | null = null
 
 const videoId = route.params.videoId as string
@@ -94,40 +112,39 @@ onMounted(async () => {
   try {
     // Fetch video access data
     const response = await fetch(`${config.public.apiUrl}/api/video-access/${userId}/${videoId}`)
-    
+
     if (!response.ok) {
       const errorBody = await response.text()
       throw new Error(`Failed to load video data (${response.status}): ${errorBody}`)
     }
-    
-    videoData.value = await response.json()
-    
-    // Initialize HLS player
-    await nextTick()
-    const Hls = (await import('hls.js')).default
 
-    if (videoElement.value && Hls.isSupported()) {
+    videoData.value = await response.json()
+
+    // Initialize Video.js with Media Chrome UI controls
+    await nextTick()
+    await import('media-chrome')
+    const videojs = (await import('video.js')).default
+
+    if (videoElement.value) {
       const playableSource = await normalizePlaylistUrl(videoData.value.video.playlistUrl)
 
-      hls = new Hls()
-      hls.loadSource(playableSource)
-      hls.attachMedia(videoElement.value)
-      
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        console.log('HLS manifest loaded')
+      player = videojs(videoElement.value, {
+        autoplay: false,
+        controls: false,
+        fluid: true,
+        preload: 'auto',
+        sources: [{ src: playableSource, type: 'application/x-mpegURL' }]
       })
-      
-      hls.on(Hls.Events.ERROR, (event, data) => {
-        console.error('HLS error:', data)
-        if (data.fatal) {
-          error.value = 'Video playback error. The current playlist may be invalid.'
-        }
+
+      player.ready(() => {
+        console.log('Video.js manifest loaded')
       })
-    } else if (videoElement.value?.canPlayType('application/vnd.apple.mpegurl')) {
-      // Native HLS support (Safari)
-      videoElement.value.src = videoData.value.video.playlistUrl
+
+      player.on('error', () => {
+        console.error('Video.js error:', player?.error())
+        error.value = 'Video playback error. The current playlist may be invalid.'
+      })
     }
-    
   } catch (e: any) {
     error.value = e.message
   } finally {
@@ -136,8 +153,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (hls) {
-    hls.destroy()
+  if (player) {
+    player.dispose()
   }
 
   if (manifestObjectUrl) {
@@ -148,7 +165,7 @@ onUnmounted(() => {
 const handleTimeUpdate = (event: Event) => {
   const video = event.target as HTMLVideoElement
   const currentTime = video.currentTime
-  
+
   // Check if user is trying to watch premium content without access
   if (!videoData.value.hasAccess && currentTime > videoData.value.video.previewDuration) {
     video.currentTime = videoData.value.video.previewDuration
@@ -158,9 +175,15 @@ const handleTimeUpdate = (event: Event) => {
 }
 
 const seekToChapter = (startTime: number) => {
+  if (player) {
+    player.currentTime(startTime)
+    void player.play()
+    return
+  }
+
   if (videoElement.value) {
     videoElement.value.currentTime = startTime
-    videoElement.value.play()
+    void videoElement.value.play()
   }
 }
 
