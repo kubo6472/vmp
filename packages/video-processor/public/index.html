@@ -56,7 +56,7 @@
         <button id="refreshBtn">Refresh list</button>
         <table>
           <thead>
-            <tr><th>Video ID</th><th>Status</th><th>Visibility</th><th>Updated</th></tr>
+            <tr><th>Video ID</th><th>Status</th><th>Visibility</th><th>Updated</th><th>Actions</th></tr>
           </thead>
           <tbody id="videosBody"></tbody>
         </table>
@@ -139,48 +139,67 @@
       processBtn.addEventListener('click', async () => {
         if (!uploadedVideoId) return;
         processBtn.disabled = true;
-        setStatus('Processing video in Cloudflare environment...');
+
+        const didProcess = await processVideo(uploadedVideoId, visibility.value);
+        if (!didProcess) processBtn.disabled = false;
+      });
+
+      async function processVideo(videoId, videoVisibility) {
+        if (!videoId) return;
+        setStatus(`Processing ${videoId} in Cloudflare environment...`);
 
         const res = await fetch('/api/process', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ videoId: uploadedVideoId, visibility: visibility.value })
+          body: JSON.stringify({ videoId, visibility: videoVisibility })
         });
 
         const data = await safeJson(res);
         if (!res.ok) {
           setStatus(`Processing failed: ${data.error || data.rawText || 'unknown error'}`);
-          processBtn.disabled = false;
-          return;
+          return false;
         }
 
-        setStatus(`Processed ${uploadedVideoId}. Playlist key: ${data.playlistKey}`);
+        setStatus(`Processed ${videoId}. Playlist key: ${data.playlistKey}`);
         await loadVideos();
-      });
+        return true;
+      }
 
       async function loadVideos() {
-        videosBody.innerHTML = '<tr><td colspan="4">Loading…</td></tr>';
+        videosBody.innerHTML = '<tr><td colspan="5">Loading…</td></tr>';
+        videosBody.querySelectorAll('button[data-video-id]').forEach((button) => button.disabled = true);
         const res = await fetch('/api/videos');
         const data = await res.json();
 
         if (!res.ok) {
-          videosBody.innerHTML = `<tr><td colspan="4">${data.error || 'Unable to load'}</td></tr>`;
+          videosBody.innerHTML = `<tr><td colspan="5">${data.error || 'Unable to load'}</td></tr>`;
           return;
         }
 
         if (!data.videos.length) {
-          videosBody.innerHTML = '<tr><td colspan="4">No videos yet.</td></tr>';
+          videosBody.innerHTML = '<tr><td colspan="5">No videos yet.</td></tr>';
           return;
         }
 
-        videosBody.innerHTML = data.videos.map((video) => `
-          <tr>
-            <td><code>${video.videoId}</code></td>
-            <td><span class="pill">${video.status}</span></td>
-            <td>${video.visibility}</td>
-            <td>${new Date(video.updatedAt).toLocaleString()}</td>
-          </tr>
-        `).join('');
+        videosBody.innerHTML = data.videos.map((video) => {
+          const canProcess = video.status === 'uploaded';
+          return `
+            <tr>
+              <td><code>${video.videoId}</code></td>
+              <td><span class="pill">${video.status}</span></td>
+              <td>${video.visibility}</td>
+              <td>${new Date(video.updatedAt).toLocaleString()}</td>
+              <td>${canProcess ? `<button data-video-id="${video.videoId}" data-visibility="${video.visibility}">Process video</button>` : ''}</td>
+            </tr>
+          `;
+        }).join('');
+
+        videosBody.querySelectorAll('button[data-video-id]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            button.disabled = true;
+            await processVideo(button.dataset.videoId, button.dataset.visibility || 'private');
+          });
+        });
       }
 
       refreshBtn.addEventListener('click', loadVideos);
