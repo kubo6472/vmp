@@ -52,7 +52,7 @@
       </section>
 
       <section class="card">
-        <h2>Processed videos</h2>
+        <h2>Videos (uploaded + processed)</h2>
         <button id="refreshBtn">Refresh list</button>
         <table>
           <thead>
@@ -169,7 +169,7 @@
         }
 
         if (!data.videos.length) {
-          videosBody.innerHTML = '<tr><td colspan="4">No processed videos yet.</td></tr>';
+          videosBody.innerHTML = '<tr><td colspan="4">No videos yet.</td></tr>';
           return;
         }
 
