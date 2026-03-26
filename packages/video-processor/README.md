@@ -31,3 +31,12 @@ npm run deploy --workspace @vmp/video-processor
 Set up an R2 bucket binding in `wrangler.toml`:
 
 - `VIDEO_BUCKET`
+
+
+## Processing output
+
+`POST /api/process` now emits:
+
+- `videos/:videoId/processed/segments/segment_0000.ts` style segment objects
+- `videos/:videoId/processed/playlist.m3u8` referencing those segment keys
+- `videos/:videoId/metadata.json` including the generated `segmentKeys`
