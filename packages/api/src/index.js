@@ -144,6 +144,25 @@ async function handleVideoProxy(request, env, corsHeaders) {
     headers: upstreamHeaders
   });
 
+  if (shouldRewriteManifest(objectPath, upstreamResponse)) {
+    const manifest = await upstreamResponse.text();
+    const rewrittenManifest = rewriteManifestForProxy(manifest);
+    const headers = new Headers(upstreamResponse.headers);
+
+    headers.set('Content-Type', 'application/vnd.apple.mpegurl');
+    headers.delete('Content-Length');
+
+    for (const [key, value] of Object.entries(corsHeaders)) {
+      headers.set(key, value);
+    }
+
+    return new Response(rewrittenManifest, {
+      status: upstreamResponse.status,
+      statusText: upstreamResponse.statusText,
+      headers
+    });
+  }
+
   const headers = new Headers(upstreamResponse.headers);
   for (const [key, value] of Object.entries(corsHeaders)) {
     headers.set(key, value);
@@ -154,6 +173,44 @@ async function handleVideoProxy(request, env, corsHeaders) {
     statusText: upstreamResponse.statusText,
     headers
   });
+}
+
+function shouldRewriteManifest(objectPath, upstreamResponse) {
+  if (objectPath.endsWith('.m3u8')) {
+    return true;
+  }
+
+  const contentType = upstreamResponse.headers.get('content-type') ?? '';
+  return /application\/(vnd\.apple\.mpegurl|x-mpegurl)|audio\/mpegurl/i.test(contentType);
+}
+
+function rewriteManifestForProxy(manifest) {
+  const lines = manifest.split('\n');
+
+  return lines
+    .map((line) => {
+      const trimmed = line.trim();
+
+      if (!trimmed || trimmed.startsWith('#')) {
+        return line;
+      }
+
+      if (/^https?:\/\//i.test(trimmed)) {
+        const sourceUrl = new URL(trimmed);
+        return `/api/video-proxy${sourceUrl.pathname}${sourceUrl.search}`;
+      }
+
+      if (trimmed.startsWith('/')) {
+        return `/api/video-proxy${trimmed}`;
+      }
+
+      if (/^(videos|preview|full)\//i.test(trimmed)) {
+        return `/api/video-proxy/${trimmed}`;
+      }
+
+      return line;
+    })
+    .join('\n');
 }
 
 function normalizeVideoId(input) {
