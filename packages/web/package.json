@@ -14,6 +14,7 @@
     "@vmp/shared": "*",
     "media-chrome": "^4.18.3",
     "nuxt": "^4.4.2",
+    "videojs-video-element": "^1.4.4",
     "video.js": "^8.23.7",
     "vue": "^3.5.13"
   },

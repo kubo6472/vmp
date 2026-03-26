@@ -3,7 +3,17 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   
   modules: ['@nuxtjs/tailwindcss'],
-  
+    vite: {
+    optimizeDeps: {
+      include: [
+        '@vue/devtools-core',
+        '@vue/devtools-kit',
+        'media-chrome',
+        'videojs-video-element',
+      ]
+    }
+  },
+
   runtimeConfig: {
     public: {
       apiUrl: process.env.API_URL || 'https://vmp-api.tjm.sk'
