@@ -34,26 +34,29 @@
 
         <!-- Video Element -->
         <div class="bg-black rounded-b-lg overflow-hidden">
-          <media-controller class="block w-full aspect-video">
+          <media-controller
+            id="watch-media-controller"
+            class="watch-media-controller block w-full aspect-video"
+          >
             <video
               ref="videoElement"
               slot="media"
-              class="video-js vjs-big-play-centered w-full h-full"
+              class="watch-media-element w-full h-full"
               playsinline
               @timeupdate="handleTimeUpdate"
             ></video>
 
             <media-loading-indicator slot="centered-chrome"></media-loading-indicator>
 
-            <media-control-bar>
-              <media-play-button></media-play-button>
-              <media-seek-backward-button seek-offset="10"></media-seek-backward-button>
-              <media-seek-forward-button seek-offset="10"></media-seek-forward-button>
-              <media-time-range></media-time-range>
-              <media-time-display show-duration></media-time-display>
-              <media-mute-button></media-mute-button>
-              <media-volume-range></media-volume-range>
-              <media-fullscreen-button></media-fullscreen-button>
+            <media-control-bar class="watch-media-control-bar" noautohide>
+              <media-play-button mediacontroller="watch-media-controller"></media-play-button>
+              <media-seek-backward-button mediacontroller="watch-media-controller" seek-offset="10"></media-seek-backward-button>
+              <media-seek-forward-button mediacontroller="watch-media-controller" seek-offset="10"></media-seek-forward-button>
+              <media-time-range mediacontroller="watch-media-controller"></media-time-range>
+              <media-time-display mediacontroller="watch-media-controller" show-duration></media-time-display>
+              <media-mute-button mediacontroller="watch-media-controller"></media-mute-button>
+              <media-volume-range mediacontroller="watch-media-controller"></media-volume-range>
+              <media-fullscreen-button mediacontroller="watch-media-controller"></media-fullscreen-button>
             </media-control-bar>
           </media-controller>
         </div>
@@ -140,7 +143,7 @@ onMounted(async () => {
     loading.value = false
     await nextTick()
 
-    // Initialize Video.js with Media Chrome UI controls
+    // Initialize Video.js and Media Chrome UI controls
     await import('media-chrome')
     const videojs = (await import('video.js')).default
 
@@ -159,6 +162,7 @@ onMounted(async () => {
 
       player.ready(() => {
         debugState.value.lastEvent = 'ready'
+        player?.addClass('vjs-big-play-centered')
         console.log('[watch] Video.js ready')
       })
 
@@ -307,3 +311,21 @@ const attachDebugListeners = (videoPlayer: VideoJsPlayer, element: HTMLVideoElem
   })
 }
 </script>
+
+
+<style scoped>
+.watch-media-controller {
+  --media-control-background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.2));
+  --media-control-color: #ffffff;
+}
+
+.watch-media-element {
+  position: relative;
+  z-index: 1;
+}
+
+.watch-media-control-bar {
+  position: relative;
+  z-index: 20;
+}
+</style>
