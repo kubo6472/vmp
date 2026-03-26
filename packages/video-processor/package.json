@@ -2,8 +2,9 @@
   "name": "@vmp/video-processor",
   "version": "1.0.0",
   "private": true,
-  "description": "FFmpeg scripts for HLS video processing",
+  "description": "Cloudflare Pages admin for R2 upload + processing workflow",
   "scripts": {
-    "process": "node src/processor.js"
+    "dev": "wrangler pages dev public --compatibility-date=2025-01-01",
+    "deploy": "wrangler pages deploy public --project-name vmp-video-processor-admin --branch main"
   }
 }
