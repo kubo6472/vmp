@@ -36,8 +36,10 @@ async function handleVideoAccess(request, env, corsHeaders) {
     const userId = pathParts[3];
     const videoId = pathParts[4];
 
+    const db = getDatabaseBinding(env);
+
     // Get subscription
-    const subscription = await env.DB.prepare(`
+    const subscription = await db.prepare(`
       SELECT s.*, u.email 
       FROM subscriptions s 
       JOIN users u ON u.id = s.user_id 
@@ -47,7 +49,7 @@ async function handleVideoAccess(request, env, corsHeaders) {
     `).bind(userId).first();
 
     // Get video metadata
-    const video = await env.DB.prepare(`
+    const video = await db.prepare(`
       SELECT * FROM videos WHERE id = ?
     `).bind(videoId).first();
 
@@ -102,6 +104,16 @@ async function handleVideoAccess(request, env, corsHeaders) {
       details: error.message 
     }, 500, corsHeaders);
   }
+}
+
+function getDatabaseBinding(env) {
+  const db = env.DB || env.video_subscription_db;
+
+  if (!db) {
+    throw new Error('Database binding is not configured. Expected env.DB or env.video_subscription_db');
+  }
+
+  return db;
 }
 
 function jsonResponse(data, status = 200, corsHeaders = {}) {
