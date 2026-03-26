@@ -40,5 +40,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: packages/web
-          command: pages deploy .output/public --project-name ${{ secrets.CF_PAGES_PROJECT_NAME }} --branch main
+          command: npm run deploy --workspace @vmp/web
