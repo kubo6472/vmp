@@ -136,8 +136,11 @@ onMounted(async () => {
     videoData.value = await response.json()
     console.log('[watch] video-access response', videoData.value)
 
-    // Initialize Video.js with Media Chrome UI controls
+    // Render video element before initializing the player
+    loading.value = false
     await nextTick()
+
+    // Initialize Video.js with Media Chrome UI controls
     await import('media-chrome')
     const videojs = (await import('video.js')).default
 
@@ -167,11 +170,13 @@ onMounted(async () => {
         console.error('[watch] Video.js error:', mediaError)
         error.value = 'Video playback error. The current playlist may be invalid.'
       })
+    } else {
+      debugState.value.lastError = 'Video element not mounted after loading state'
+      console.error('[watch] video element is unavailable after loading completed')
     }
   } catch (e: any) {
     debugState.value.lastError = e.message
     error.value = e.message
-  } finally {
     loading.value = false
   }
 })
