@@ -5,7 +5,8 @@ export default {
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range',
+      'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range, Content-Type',
     };
 
     if (request.method === 'OPTIONS') {
@@ -14,6 +15,10 @@ export default {
 
     if (url.pathname.startsWith('/api/video-access/')) {
       return handleVideoAccess(request, env, corsHeaders);
+    }
+
+    if (url.pathname.startsWith('/api/video-proxy/')) {
+      return handleVideoProxy(request, env, corsHeaders);
     }
 
     if (url.pathname === '/api/health') {
@@ -61,11 +66,12 @@ async function handleVideoAccess(request, env, corsHeaders) {
 
     const hasVideoMetadata = Boolean(video);
     const hasAccess = hasPremiumAccess || !hasVideoMetadata;
-    const playlistUrl = await resolvePlaylistUrl({
+    const resolvedPlaylistUrl = await resolvePlaylistUrl({
       env,
       videoId,
       hasPremiumAccess
     });
+    const playlistUrl = buildProxyPlaylistUrl(request, resolvedPlaylistUrl);
     const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0;
     const fullDuration = video?.full_duration ?? previewDuration;
 
@@ -111,6 +117,45 @@ async function handleVideoAccess(request, env, corsHeaders) {
   }
 }
 
+async function handleVideoProxy(request, env, corsHeaders) {
+  const requestUrl = new URL(request.url);
+  const proxyPrefix = '/api/video-proxy/';
+  const objectPath = requestUrl.pathname.slice(proxyPrefix.length);
+
+  if (!objectPath) {
+    return jsonResponse({ error: 'Missing proxied object path' }, 400, corsHeaders);
+  }
+
+  const allowedPrefix = ['videos/', 'preview/', 'full/'];
+  if (!allowedPrefix.some((prefix) => objectPath.startsWith(prefix))) {
+    return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders);
+  }
+
+  const upstreamUrl = new URL(`${env.R2_BASE_URL}/${objectPath}`);
+  const upstreamHeaders = new Headers();
+  const rangeHeader = request.headers.get('Range');
+
+  if (rangeHeader) {
+    upstreamHeaders.set('Range', rangeHeader);
+  }
+
+  const upstreamResponse = await fetch(upstreamUrl, {
+    method: request.method,
+    headers: upstreamHeaders
+  });
+
+  const headers = new Headers(upstreamResponse.headers);
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    headers.set(key, value);
+  }
+
+  return new Response(upstreamResponse.body, {
+    status: upstreamResponse.status,
+    statusText: upstreamResponse.statusText,
+    headers
+  });
+}
+
 function normalizeVideoId(input) {
   const trimmed = (input ?? '').trim();
 
@@ -141,6 +186,14 @@ async function resolvePlaylistUrl({ env, videoId, hasPremiumAccess }) {
   }
 
   return `${base}/videos/${videoId}/processed/playlist.m3u8`;
+}
+
+function buildProxyPlaylistUrl(request, playlistUrl) {
+  const requestUrl = new URL(request.url);
+  const upstreamUrl = new URL(playlistUrl);
+  const proxyUrl = new URL(requestUrl.origin);
+  proxyUrl.pathname = `/api/video-proxy${upstreamUrl.pathname}`;
+  return proxyUrl.toString();
 }
 
 async function canLoadPlaylist(url) {
