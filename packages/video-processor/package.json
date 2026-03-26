@@ -1,0 +1,9 @@
+{
+  "name": "@vmp/video-processor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FFmpeg scripts for HLS video processing",
+  "scripts": {
+    "process": "node src/processor.js"
+  }
+}

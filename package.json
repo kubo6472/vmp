@@ -1,0 +1,24 @@
+{
+  "name": "vmp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Video Monetization Platform - HLS video streaming with subscription-based access control",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "deploy:api": "npm run deploy --workspace=@vmp/api",
+    "deploy:web": "npm run deploy --workspace=@vmp/web",
+    "db:create": "cd packages/api && wrangler d1 execute video-subscription-db --file=./migrations/0001_initial.sql",
+    "db:seed": "cd packages/api && wrangler d1 execute video-subscription-db --file=./migrations/0002_seed.sql"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

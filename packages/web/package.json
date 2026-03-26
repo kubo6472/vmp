@@ -1,0 +1,23 @@
+{
+  "name": "@vmp/web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "deploy": "nuxt build && wrangler pages deploy .output/public"
+  },
+  "dependencies": {
+    "@vmp/shared": "workspace:*",
+    "hls.js": "^1.5.16",
+    "nuxt": "^4.4.2",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@nuxtjs/tailwindcss": "^6.12.2",
+    "wrangler": "^3.94.0"
+  }
+}

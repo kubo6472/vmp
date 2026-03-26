@@ -1,0 +1,15 @@
+{
+  "name": "vmp-api",
+  "main": "src/index.js",
+  "compatibility_date": "2024-08-14",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "video-subscription-db",
+      "database_id": "YOUR_DATABASE_ID_HERE"
+    }
+  ],
+  "vars": {
+    "R2_BASE_URL": "https://your-r2-domain.com"
+  }
+}
