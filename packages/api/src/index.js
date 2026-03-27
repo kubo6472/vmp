@@ -101,16 +101,19 @@ async function handleVideoAccess(request, env, corsHeaders) {
 
     const hasVideoMetadata = Boolean(video);
     const hasAccess = hasPremiumAccess || !hasVideoMetadata;
-    const resolvedPlaylistUrl = await resolvePlaylistUrl({
+    const requestedProtocol = normalizeProtocolOption(url.searchParams.get('protocol')) ?? 'hls';
+    const resolvedEntrypointUrl = await resolveMediaEntrypointUrl({
       env,
       videoId,
-      hasPremiumAccess: true
+      hasPremiumAccess: true,
+      protocol: requestedProtocol
     });
     const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0;
     const playlistUrl = buildProxyPlaylistUrl(
       request,
-      resolvedPlaylistUrl,
-      hasPremiumAccess ? null : previewDuration
+      resolvedEntrypointUrl,
+      hasPremiumAccess ? null : previewDuration,
+      requestedProtocol
     );
     const fullDuration = video?.full_duration ?? previewDuration;
 
@@ -160,6 +163,7 @@ async function handleVideoProxy(request, env, corsHeaders) {
   const requestUrl = new URL(request.url);
   const proxyPrefix = '/api/video-proxy/';
   const objectPath = requestUrl.pathname.slice(proxyPrefix.length);
+  const requestedProtocol = normalizeProtocolOption(requestUrl.searchParams.get('protocol'));
   const previewUntil = Number.parseFloat(requestUrl.searchParams.get('previewUntil') ?? '');
   const previewUntilSeconds = Number.isFinite(previewUntil) && previewUntil > 0 ? previewUntil : null;
 
@@ -185,12 +189,40 @@ async function handleVideoProxy(request, env, corsHeaders) {
     headers: upstreamHeaders
   });
 
-  if (shouldRewriteManifest(objectPath, upstreamResponse)) {
+  const manifestType = getManifestType(objectPath, upstreamResponse, requestedProtocol);
+  if (manifestType === 'hls') {
     const manifest = await upstreamResponse.text();
     const rewrittenManifest = rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds);
     const headers = new Headers(upstreamResponse.headers);
 
     headers.set('Content-Type', 'application/vnd.apple.mpegurl');
+    headers.delete('Content-Length');
+
+    for (const [key, value] of Object.entries(corsHeaders)) {
+      headers.set(key, value);
+    }
+
+    return new Response(rewrittenManifest, {
+      status: upstreamResponse.status,
+      statusText: upstreamResponse.statusText,
+      headers
+    });
+  }
+
+  if (manifestType === 'dash') {
+    if (previewUntilSeconds !== null) {
+      return jsonResponse(
+        { error: 'Preview lock is currently supported only for HLS media playlists' },
+        501,
+        corsHeaders
+      );
+    }
+
+    const manifest = await upstreamResponse.text();
+    const rewrittenManifest = rewriteDashManifestForProxy(manifest);
+    const headers = new Headers(upstreamResponse.headers);
+
+    headers.set('Content-Type', 'application/dash+xml');
     headers.delete('Content-Length');
 
     for (const [key, value] of Object.entries(corsHeaders)) {
@@ -216,13 +248,25 @@ async function handleVideoProxy(request, env, corsHeaders) {
   });
 }
 
-function shouldRewriteManifest(objectPath, upstreamResponse) {
+function getManifestType(objectPath, upstreamResponse, requestedProtocol) {
   if (objectPath.endsWith('.m3u8')) {
-    return true;
+    return 'hls';
+  }
+
+  if (objectPath.endsWith('.mpd')) {
+    return 'dash';
   }
 
   const contentType = upstreamResponse.headers.get('content-type') ?? '';
-  return /application\/(vnd\.apple\.mpegurl|x-mpegurl)|audio\/mpegurl/i.test(contentType);
+  if (/application\/dash\+xml/i.test(contentType)) {
+    return 'dash';
+  }
+
+  if (/application\/(vnd\.apple\.mpegurl|x-mpegurl)|audio\/mpegurl/i.test(contentType)) {
+    return 'hls';
+  }
+
+  return requestedProtocol;
 }
 
 function rewriteManifestForProxy(manifest) {
@@ -285,6 +329,24 @@ function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds) {
     .join('\n');
 }
 
+function rewriteDashManifestForProxy(mpdManifest) {
+  let rewritten = mpdManifest.replace(
+    /<BaseURL([^>]*)>([^<]+)<\/BaseURL>/gi,
+    (fullMatch, attrs, value) => {
+      const trimmedValue = value.trim();
+      if (!trimmedValue) return fullMatch;
+      return `<BaseURL${attrs}>${rewriteSegmentPath(trimmedValue, null)}</BaseURL>`;
+    }
+  );
+
+  rewritten = rewritten.replace(
+    /\b(initialization|media|sourceURL)=["']([^"']+)["']/gi,
+    (fullMatch, attributeName, value) => `${attributeName}="${rewriteSegmentPath(value, null)}"`
+  );
+
+  return rewritten;
+}
+
 function rewriteSegmentPath(trimmedPath, appendedQuery) {
   if (/^https?:\/\//i.test(trimmedPath)) {
     const sourceUrl = new URL(trimmedPath);
@@ -301,6 +363,13 @@ function rewriteSegmentPath(trimmedPath, appendedQuery) {
   }
 
   return trimmedPath;
+}
+
+function normalizeProtocolOption(value) {
+  if (value === 'hls' || value === 'dash') {
+    return value;
+  }
+  return null;
 }
 
 function appendQuery(path, queryString) {
@@ -320,32 +389,58 @@ function normalizeVideoId(input) {
   return trimmed;
 }
 
-async function resolvePlaylistUrl({ env, videoId, hasPremiumAccess }) {
+async function resolveMediaEntrypointUrl({ env, videoId, hasPremiumAccess, protocol = 'hls' }) {
   const base = env.R2_BASE_URL;
-  const candidates = hasPremiumAccess
-    ? [
-        `${base}/full/${videoId}/playlist.m3u8`,
-        `${base}/videos/${videoId}/processed/playlist.m3u8`,
-      ]
-    : [
-        `${base}/preview/${videoId}/playlist.m3u8`,
-        `${base}/videos/${videoId}/processed/playlist.m3u8`,
-      ];
+  const scopePath = hasPremiumAccess ? 'full' : 'preview';
+  const primaryProtocol = protocol === 'dash' ? 'dash' : 'hls';
+  const secondaryProtocol = primaryProtocol === 'hls' ? 'dash' : 'hls';
+  const candidates = [
+    ...buildEntrypointCandidates(base, videoId, scopePath, primaryProtocol),
+    ...buildEntrypointCandidates(base, videoId, 'videos', primaryProtocol),
+    ...buildEntrypointCandidates(base, videoId, scopePath, secondaryProtocol),
+    ...buildEntrypointCandidates(base, videoId, 'videos', secondaryProtocol),
+  ];
 
   for (const candidate of candidates) {
-    if (await canLoadPlaylist(candidate)) {
+    if (await canLoadEntrypoint(candidate)) {
       return candidate;
     }
   }
 
-  return `${base}/videos/${videoId}/processed/playlist.m3u8`;
+  return candidates[0];
 }
 
-function buildProxyPlaylistUrl(request, playlistUrl, previewUntilSeconds = null) {
+function buildEntrypointCandidates(base, videoId, scopePath, protocol) {
+  if (scopePath === 'videos') {
+    if (protocol === 'dash') {
+      return [
+        `${base}/videos/${videoId}/processed/manifest.mpd`,
+        `${base}/videos/${videoId}/processed/playlist.mpd`,
+      ];
+    }
+    return [
+      `${base}/videos/${videoId}/processed/playlist.m3u8`,
+    ];
+  }
+
+  if (protocol === 'dash') {
+    return [
+      `${base}/${scopePath}/${videoId}/manifest.mpd`,
+      `${base}/${scopePath}/${videoId}/playlist.mpd`,
+    ];
+  }
+
+  return [
+    `${base}/${scopePath}/${videoId}/playlist.m3u8`,
+  ];
+}
+
+function buildProxyPlaylistUrl(request, playlistUrl, previewUntilSeconds = null, protocol = 'hls') {
   const requestUrl = new URL(request.url);
   const upstreamUrl = new URL(playlistUrl);
   const proxyUrl = new URL(requestUrl.origin);
   proxyUrl.pathname = `/api/video-proxy${upstreamUrl.pathname}`;
+  proxyUrl.searchParams.set('protocol', protocol);
   if (previewUntilSeconds && previewUntilSeconds > 0) {
     proxyUrl.searchParams.set('previewUntil', String(Math.floor(previewUntilSeconds)));
   }
@@ -457,7 +552,7 @@ function normalizeHomepageConfig(config) {
   return { featuredVideoIds, layoutBlocks };
 }
 
-async function canLoadPlaylist(url) {
+async function canLoadEntrypoint(url) {
   try {
     const response = await fetch(url, { method: 'HEAD' });
     return response.ok;
