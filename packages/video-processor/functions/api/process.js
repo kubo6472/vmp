@@ -19,6 +19,12 @@ export async function onRequestPost(context) {
   const metadataKey = `videos/${videoId}/metadata.json`;
   const processedAt = new Date().toISOString();
 
+  const existingMetadataObject = await env.VIDEO_BUCKET.get(metadataKey);
+  const existingMetadata = existingMetadataObject
+    ? await existingMetadataObject.json().catch(() => null)
+    : null;
+  const durationSeconds = toNumberOrNull(existingMetadata?.durationSeconds);
+
   const hlsMaster = await env.VIDEO_BUCKET.get(hlsMasterKey);
   if (!hlsMaster) {
     return json({ error: `Missing required HLS master playlist at ${hlsMasterKey}` }, 404);
@@ -45,12 +51,22 @@ export async function onRequestPost(context) {
     status: 'processed'
   };
 
+  if (durationSeconds !== null) {
+    metadata.durationSeconds = durationSeconds;
+  }
+
   if (audioGroups.length > 0) {
     metadata.audioGroups = audioGroups;
   }
 
   await env.VIDEO_BUCKET.put(metadataKey, JSON.stringify(metadata, null, 2), {
     httpMetadata: { contentType: 'application/json' }
+  });
+
+  const durationSync = await syncVideoDurationToDb({
+    db: getVideoDatabaseBinding(env),
+    videoId,
+    durationSeconds
   });
 
   return json({
@@ -64,8 +80,32 @@ export async function onRequestPost(context) {
     metadataKey,
     processedAt,
     visibility,
-    status: metadata.status
+    status: metadata.status,
+    durationSeconds,
+    durationSync
   });
+}
+
+async function syncVideoDurationToDb({ db, videoId, durationSeconds }) {
+  if (!db) {
+    return { updated: false, reason: 'missing-d1-binding' };
+  }
+
+  if (durationSeconds === null) {
+    return { updated: false, reason: 'missing-duration-seconds' };
+  }
+
+  const normalizedDuration = Math.round(durationSeconds);
+  const result = await db
+    .prepare('UPDATE videos SET full_duration = ? WHERE id = ?')
+    .bind(normalizedDuration, videoId)
+    .run();
+
+  return {
+    updated: Number(result.meta?.changes || 0) > 0,
+    changes: Number(result.meta?.changes || 0),
+    durationSeconds: normalizedDuration
+  };
 }
 
 function parseHlsMasterPlaylist(content) {
@@ -158,6 +198,10 @@ function sanitizeVisibility(value) {
 function sanitizeProcessingMode(value) {
   if (value === 'legacy-process') return value;
   return 'register-existing-cmaf';
+}
+
+function getVideoDatabaseBinding(env) {
+  return env.video_subscription_db || env.VIDEO_SUBSCRIPTION_DB || env.DB || null;
 }
 
 function json(data, status = 200) {
