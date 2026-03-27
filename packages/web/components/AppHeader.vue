@@ -8,6 +8,11 @@
             Video Monetization Platform
           </span>
         </NuxtLink>
+
+        <nav class="flex items-center gap-5 text-sm font-medium">
+          <NuxtLink to="/" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Homepage</NuxtLink>
+          <NuxtLink to="/admin" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Admin overlay</NuxtLink>
+        </nav>
       </div>
     </div>
   </header>
