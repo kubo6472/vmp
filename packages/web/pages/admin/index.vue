@@ -107,10 +107,10 @@
             <div v-for="video in chronologicallySortedUploads" :key="video.id" class="grid grid-cols-[1fr_auto_auto] gap-3 items-center p-3 rounded-lg border border-gray-200 dark:border-gray-700">
               <div>
                 <p class="font-medium text-gray-900 dark:text-white">{{ video.title }}</p>
-                <p class="text-xs text-gray-600 dark:text-gray-400">{{ video.id }} · full {{ video.full_duration }}s</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">{{ video.id }} · full {{ getActualDuration(video) }}s</p>
               </div>
-              <input v-model.number="previewLockByVideoId[video.id]" type="number" min="0" :max="video.full_duration" class="w-24 px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900" />
-              <button class="text-xs text-gray-600 dark:text-gray-400 hover:underline" @click="previewLockByVideoId[video.id] = video.full_duration">Unlock full</button>
+              <input v-model.number="previewLockByVideoId[video.id]" type="number" min="0" :max="getActualDuration(video)" class="w-24 px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900" />
+              <button class="text-xs text-gray-600 dark:text-gray-400 hover:underline" @click="previewLockByVideoId[video.id] = getActualDuration(video)">Unlock full</button>
             </div>
           </div>
         </div>
@@ -182,6 +182,7 @@ const saving = ref(false)
 const saveMessage = ref('')
 const saveMessageClass = ref('')
 const previewLockByVideoId = ref<Record<string, number>>({})
+const actualDurationByVideoId = ref<Record<string, number>>({})
 
 const videoProcessorAdminUrl = computed(() => config.public.videoProcessorAdminUrl || 'https://vmp-video-processor-admin.pages.dev')
 const componentTypes: BlockType[] = ['hero', 'featured_row', 'cta', 'text_split', 'video_grid']
@@ -211,6 +212,52 @@ const swapFeatured = (video: Video) => {
 }
 
 const formatDate = (rawDate: string) => new Date(rawDate).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+const getActualDuration = (video: Video) => actualDurationByVideoId.value[video.id] ?? video.full_duration
+
+const resolvePlaylistDuration = async (playlistUrl: string, depth = 0): Promise<number | null> => {
+  if (!playlistUrl || depth > 2) return null
+
+  const response = await fetch(playlistUrl)
+  if (!response.ok) return null
+
+  const text = await response.text()
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
+  const extInfLines = lines.filter((line) => line.startsWith('#EXTINF:'))
+
+  if (extInfLines.length > 0) {
+    const totalSeconds = extInfLines.reduce((sum, line) => {
+      const parsed = Number.parseFloat(line.slice('#EXTINF:'.length))
+      return Number.isFinite(parsed) ? sum + parsed : sum
+    }, 0)
+    return Number.isFinite(totalSeconds) ? Math.round(totalSeconds) : null
+  }
+
+  const firstVariantIndex = lines.findIndex((line) => line.startsWith('#EXT-X-STREAM-INF'))
+  if (firstVariantIndex >= 0 && lines[firstVariantIndex + 1]) {
+    const variantUri = lines[firstVariantIndex + 1]
+    const nestedUrl = new URL(variantUri, playlistUrl).toString()
+    return resolvePlaylistDuration(nestedUrl, depth + 1)
+  }
+
+  return null
+}
+
+const hydrateActualDurations = async () => {
+  const durations = await Promise.all(uploads.value.map(async (video) => {
+    try {
+      const accessResponse = await fetch(`${config.public.apiUrl}/api/video-access/user_premium/${video.id}`)
+      if (!accessResponse.ok) return [video.id, video.full_duration] as const
+      const accessData = await accessResponse.json()
+      const playlistUrl = accessData?.video?.playlistUrl
+      const resolvedDuration = await resolvePlaylistDuration(playlistUrl)
+      return [video.id, resolvedDuration ?? video.full_duration] as const
+    } catch (_) {
+      return [video.id, video.full_duration] as const
+    }
+  }))
+
+  actualDurationByVideoId.value = Object.fromEntries(durations)
+}
 
 const addBlock = (type: BlockType) => {
   layoutBlocks.value.push({ id: crypto.randomUUID(), type, title: 'New block', body: 'Add block content here.' })
@@ -242,6 +289,7 @@ const loadVideos = async () => {
   for (const video of uploads.value) {
     previewLockByVideoId.value[video.id] = video.preview_duration
   }
+  await hydrateActualDurations()
 }
 
 const loadConfig = async () => {

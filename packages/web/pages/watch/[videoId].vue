@@ -67,31 +67,17 @@
                 <media-seek-backward-button seek-offset="10"></media-seek-backward-button>
                 <media-seek-forward-button seek-offset="10"></media-seek-forward-button>
                 
-                <!-- Custom Time Range with Lock Indicator -->
-                <div class="flex-1 flex items-center px-2 relative">
-                  <div class="relative w-full h-1.5 bg-gray-600 rounded-full overflow-visible group">
-                    <!-- Preview section (green) -->
-                    <div 
-                      class="absolute left-0 top-0 h-full bg-green-500"
-                      :style="{ width: previewPercentage + '%' }"
-                    ></div>
-                    
-                    <!-- Locked section (red) -->
-                    <div 
-                      class="absolute top-0 h-full bg-red-500 opacity-50"
-                      :style="{ left: previewPercentage + '%', width: (100 - previewPercentage) + '%' }"
-                    ></div>
-                    
-                    <!-- Lock icon at division point -->
-                    <div 
-                      v-if="!videoData.hasAccess"
-                      class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-8 h-8 bg-yellow-400 border-2 border-black rounded-full flex items-center justify-center shadow-[0_0_0_3px_rgba(250,204,21,0.45)] z-20"
-                      :style="{ left: previewPercentage + '%' }"
-                    >
-                      <svg class="w-4 h-4 text-black" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
-                      </svg>
-                    </div>
+                <!-- Functional seekbar with lock marker -->
+                <div class="flex-1 flex items-center px-2 relative watch-seekbar-wrap">
+                  <media-time-range class="w-full"></media-time-range>
+                  <div 
+                    v-if="!videoData.hasAccess"
+                    class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-8 h-8 bg-yellow-400 border-2 border-black rounded-full flex items-center justify-center shadow-[0_0_0_3px_rgba(250,204,21,0.45)] z-20 pointer-events-none"
+                    :style="{ left: previewPercentage + '%' }"
+                  >
+                    <svg class="w-4 h-4 text-black" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
+                    </svg>
                   </div>
                 </div>
                 
@@ -354,8 +340,11 @@ const teardownVideoListeners = () => {
   padding: 8px 16px;
 }
 
-/* Hide default time range since we're using custom */
 .watch-media-control-bar media-time-range {
   pointer-events: all;
+}
+
+.watch-seekbar-wrap media-time-range {
+  --media-range-track-background: rgba(255, 255, 255, 0.3);
 }
 </style>

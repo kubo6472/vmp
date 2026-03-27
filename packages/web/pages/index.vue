@@ -6,10 +6,10 @@
       <!-- Hero Section -->
       <div class="mb-12">
         <h1 class="text-4xl font-bold text-gray-900 dark:text-white mb-4">
-          Discover Premium Video Content
+          {{ heroBlock?.title || 'Discover Premium Video Content' }}
         </h1>
         <p class="text-lg text-gray-600 dark:text-gray-400">
-          Watch free previews or unlock full access with a premium subscription
+          {{ heroBlock?.body || 'Watch free previews or unlock full access with a premium subscription' }}
         </p>
       </div>
 
@@ -48,17 +48,67 @@
         <p class="text-red-700 dark:text-red-300">{{ error }}</p>
       </div>
 
-      <!-- Video Grid -->
-      <div v-else-if="videos.length > 0">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-6">Available Videos</h2>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          <VideoCard 
-            v-for="video in videos" 
-            :key="video.id"
-            :video="video"
-            :userId="selectedUser"
-          />
-        </div>
+      <!-- Configured Homepage Layout -->
+      <div v-else-if="videos.length > 0" class="space-y-10">
+        <section
+          v-for="block in renderedBlocks"
+          :key="block.id"
+          class="space-y-4"
+        >
+          <div v-if="block.type !== 'hero'">
+            <h2 class="text-2xl font-bold text-gray-900 dark:text-white">{{ block.title || blockLabelMap[block.type] }}</h2>
+            <p v-if="block.body" class="text-gray-600 dark:text-gray-400 mt-1">{{ block.body }}</p>
+          </div>
+
+          <div v-if="block.type === 'featured_row'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <VideoCard 
+              v-for="video in featuredVideos" 
+              :key="`featured-${video.id}`"
+              :video="video"
+              :userId="selectedUser"
+            />
+          </div>
+
+          <div v-else-if="block.type === 'video_grid'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <VideoCard 
+              v-for="video in videos" 
+              :key="`grid-${video.id}`"
+              :video="video"
+              :userId="selectedUser"
+            />
+          </div>
+
+          <div v-else-if="block.type === 'cta'" class="p-6 rounded-xl border border-blue-200 bg-blue-50 dark:bg-blue-950/40 dark:border-blue-800">
+            <p class="text-gray-800 dark:text-gray-200">{{ block.body || 'Upgrade to unlock complete videos and premium features.' }}</p>
+          </div>
+
+          <div v-else-if="block.type === 'text_split'" class="grid md:grid-cols-2 gap-4">
+            <div class="p-4 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
+              <h3 class="font-semibold text-gray-900 dark:text-white mb-2">{{ block.title || 'Why upgrade?' }}</h3>
+              <p class="text-gray-600 dark:text-gray-400">{{ block.body || 'Get full-length videos and uninterrupted viewing.' }}</p>
+            </div>
+            <div class="p-4 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
+              <h3 class="font-semibold text-gray-900 dark:text-white mb-2">Free vs Premium</h3>
+              <p class="text-gray-600 dark:text-gray-400">Free users can watch previews, premium users get complete access to every upload.</p>
+            </div>
+          </div>
+
+          <div v-else-if="block.type !== 'hero'" class="p-4 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+            <p class="text-gray-700 dark:text-gray-300">{{ block.body }}</p>
+          </div>
+        </section>
+
+        <section v-if="!hasVideoGridBlock" class="space-y-4">
+          <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Available Videos</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <VideoCard 
+              v-for="video in videos" 
+              :key="video.id"
+              :video="video"
+              :userId="selectedUser"
+            />
+          </div>
+        </section>
       </div>
 
       <!-- Empty State -->
@@ -76,11 +126,28 @@
 </template>
 
 <script setup lang="ts">
+interface LayoutBlock {
+  id: string
+  type: 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
+  title: string
+  body: string
+}
+
 const config = useRuntimeConfig()
 const selectedUser = ref('user_free')
 const loading = ref(true)
 const error = ref<string | null>(null)
 const videos = ref<any[]>([])
+const layoutBlocks = ref<LayoutBlock[]>([])
+const featuredVideoIds = ref<string[]>([])
+
+const blockLabelMap: Record<LayoutBlock['type'], string> = {
+  hero: 'Hero',
+  featured_row: 'Featured videos',
+  cta: 'Call to action',
+  text_split: 'Highlights',
+  video_grid: 'Available videos'
+}
 
 const testUsers = [
   { id: 'user_free', name: 'Free User', type: 'Preview access only' },
@@ -88,15 +155,35 @@ const testUsers = [
   { id: 'user_expired', name: 'Expired User', type: 'Expired premium' }
 ]
 
+const renderedBlocks = computed(() => layoutBlocks.value.length ? layoutBlocks.value : [{ id: 'fallback-grid', type: 'video_grid', title: 'Available Videos', body: '' } as LayoutBlock])
+const heroBlock = computed(() => renderedBlocks.value.find((block) => block.type === 'hero'))
+const hasVideoGridBlock = computed(() => renderedBlocks.value.some((block) => block.type === 'video_grid'))
+const featuredVideos = computed(() => {
+  if (!featuredVideoIds.value.length) return videos.value.slice(0, 4)
+  const byId = new Map(videos.value.map((video) => [video.id, video]))
+  return featuredVideoIds.value.map((id) => byId.get(id)).filter(Boolean)
+})
+
+const loadAdminConfig = async () => {
+  const response = await fetch(`${config.public.apiUrl}/api/admin/config`)
+  if (!response.ok) return
+  const data = await response.json()
+  layoutBlocks.value = Array.isArray(data?.config?.layoutBlocks) ? data.config.layoutBlocks : []
+  featuredVideoIds.value = Array.isArray(data?.config?.featuredVideoIds) ? data.config.featuredVideoIds : []
+}
+
 onMounted(async () => {
   try {
-    const response = await fetch(`${config.public.apiUrl}/api/videos`)
-    
-    if (!response.ok) {
+    const [videosResponse] = await Promise.all([
+      fetch(`${config.public.apiUrl}/api/videos`),
+      loadAdminConfig()
+    ])
+
+    if (!videosResponse.ok) {
       throw new Error('Failed to load videos')
     }
-    
-    const data = await response.json()
+
+    const data = await videosResponse.json()
     videos.value = data.videos || []
   } catch (e: any) {
     error.value = e.message
