@@ -1,8 +1,6 @@
 name = "vmp-video-processor-admin"
 compatibility_date = "2025-01-01"
 
-pages_build_output_dir = "public"
-
 [[r2_buckets]]
 binding = "VIDEO_BUCKET"
 bucket_name = "vmp-videos"
