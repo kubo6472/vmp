@@ -1,3 +1,6 @@
+DELETE FROM subscriptions;
+DELETE FROM users;
+DELETE FROM videos;
 -- Test users
 INSERT INTO users (id, email) VALUES 
   ('user_free', 'free@example.com'),
@@ -13,10 +16,10 @@ INSERT INTO subscriptions (user_id, plan_type, status, expires_at) VALUES
 -- Test videos with descriptions and thumbnails
 INSERT INTO videos (id, title, description, thumbnail_url, full_duration, preview_duration, upload_date) VALUES 
   (
-    'demo_video',
-    'Introduction to Video Monetization',
+    'test1',
+    'Samoživiteľka K. Putirková: “Nemáte šancu naplniť bežný chod, ísť k lekárovi, do sprchy.” E. Marková: "Najprv mi vadilo byť sama, stále som s niekým volala" ',
     'Learn the fundamentals of building a sustainable video monetization platform. This comprehensive guide covers subscription models, content protection, and best practices for engaging your audience.',
-    'https://placehold.co/1280x720',
+    'https://assets.tivio.studio/videos/0KvpNKPdtAYzJboVsYe9/cover',
     1800,
     300,
     '2026-03-20 10:00:00'
