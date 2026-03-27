@@ -15,6 +15,11 @@ export async function onRequestPost(context) {
 
   const videoId = body.videoId;
   const visibility = sanitizeVisibility(body.visibility);
+  const processingMode = sanitizeProcessingMode(body.processingMode);
+
+  if (processingMode === 'register-existing-cmaf') {
+    return registerExistingCmaf({ env, videoId, visibility });
+  }
 
   const list = await env.VIDEO_BUCKET.list({ prefix: `videos/${videoId}/source/`, limit: 1 });
   const source = list.objects[0];
@@ -93,7 +98,55 @@ export async function onRequestPost(context) {
     segmentKeys,
     metadataKey,
     processedAt,
-    visibility
+    visibility,
+    processingMode
+  });
+}
+
+async function registerExistingCmaf({ env, videoId, visibility }) {
+  const playlistKey = `videos/${videoId}/processed/playlist.m3u8`;
+  const metadataKey = `videos/${videoId}/metadata.json`;
+  const processedAt = new Date().toISOString();
+  const playlist = await env.VIDEO_BUCKET.get(playlistKey);
+
+  if (!playlist || !Number(playlist.size)) {
+    return json({
+      error: 'register-existing-cmaf mode requires an existing playlist.m3u8. Use legacy-process as fallback.'
+    }, 409);
+  }
+
+  const segmentObjects = await env.VIDEO_BUCKET.list({ prefix: `videos/${videoId}/processed/segments/`, limit: 1000 });
+  const segmentKeys = segmentObjects.objects
+    .filter((object) => object.key.endsWith('.ts') && Number(object.size) > 0)
+    .map((object) => object.key);
+
+  if (!segmentKeys.length) {
+    return json({
+      error: 'register-existing-cmaf mode requires existing processed segments. Use legacy-process as fallback.'
+    }, 409);
+  }
+
+  await env.VIDEO_BUCKET.put(metadataKey, JSON.stringify({
+    videoId,
+    playlistKey,
+    segmentKeys,
+    status: 'processed',
+    visibility,
+    processedAt,
+    processingMode: 'register-existing-cmaf'
+  }, null, 2), {
+    httpMetadata: { contentType: 'application/json' }
+  });
+
+  return json({
+    ok: true,
+    videoId,
+    playlistKey,
+    segmentKeys,
+    metadataKey,
+    processedAt,
+    visibility,
+    processingMode: 'register-existing-cmaf'
   });
 }
 
@@ -120,6 +173,11 @@ function sanitizeVisibility(value) {
     return value;
   }
   return 'private';
+}
+
+function sanitizeProcessingMode(value) {
+  if (value === 'legacy-process') return value;
+  return 'register-existing-cmaf';
 }
 
 function json(data, status = 200) {

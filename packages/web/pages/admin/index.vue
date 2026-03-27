@@ -29,19 +29,7 @@
         {{ saveMessage }}
       </div>
 
-      <div class="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden">
-        <button
-          v-for="tab in tabs"
-          :key="tab"
-          class="px-4 py-2 text-sm font-medium"
-          :class="activeTab === tab ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300'"
-          @click="activeTab = tab"
-        >
-          {{ tab }}
-        </button>
-      </div>
-
-      <section v-if="activeTab === 'Homepage Overlay'" class="space-y-8">
+      <section class="space-y-8">
         <div class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-xl font-bold text-gray-900 dark:text-white">Featured videos</h2>
@@ -116,12 +104,7 @@
         </div>
       </section>
 
-      <section v-else class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-4">
-        <h2 class="text-xl font-bold text-gray-900 dark:text-white">Uploader (legacy admin)</h2>
-        <p class="text-sm text-gray-600 dark:text-gray-400">The previous uploader remains available and is now linked from this unified admin surface.</p>
-        <a :href="videoProcessorAdminUrl" target="_blank" rel="noopener" class="inline-flex px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold">Open uploader in new tab</a>
-        <iframe :src="videoProcessorAdminUrl" class="w-full h-[65vh] rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100" title="Legacy uploader admin"></iframe>
-      </section>
+      <AdminUploaderPanel />
     </main>
 
     <div v-if="pickerOpen" class="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center p-4" @click.self="closePicker">
@@ -170,8 +153,6 @@ interface LayoutBlock {
 }
 
 const config = useRuntimeConfig()
-const activeTab = ref<'Homepage Overlay' | 'Uploader'>('Homepage Overlay')
-const tabs: Array<'Homepage Overlay' | 'Uploader'> = ['Homepage Overlay', 'Uploader']
 const loading = ref(true)
 const uploads = ref<Video[]>([])
 const pickerOpen = ref(false)
@@ -184,7 +165,6 @@ const saveMessageClass = ref('')
 const previewLockByVideoId = ref<Record<string, number>>({})
 const actualDurationByVideoId = ref<Record<string, number>>({})
 
-const videoProcessorAdminUrl = computed(() => config.public.videoProcessorAdminUrl || 'https://vmp-admin.tjm.sk')
 const componentTypes: BlockType[] = ['hero', 'featured_row', 'cta', 'text_split', 'video_grid']
 const layoutBlocks = ref<LayoutBlock[]>([])
 

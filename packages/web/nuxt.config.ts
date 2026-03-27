@@ -24,7 +24,8 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       apiUrl: process.env.API_URL || 'https://vmp-api.tjm.sk',
-      videoProcessorAdminUrl: process.env.VIDEO_PROCESSOR_ADMIN_URL || 'https://vmp-admin.tjm.sk'
+      videoProcessorAdminUrl: process.env.VIDEO_PROCESSOR_ADMIN_URL || 'https://vmp-admin.tjm.sk',
+      videoProcessorApiUrl: process.env.VIDEO_PROCESSOR_API_URL || process.env.VIDEO_PROCESSOR_ADMIN_URL || 'https://vmp-admin.tjm.sk'
     }
   },
   
