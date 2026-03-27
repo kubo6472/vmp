@@ -13,6 +13,11 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
+    // Add this new route
+    if (url.pathname === '/api/videos') {
+      return handleVideosList(request, env, corsHeaders);
+    }
+
     if (url.pathname.startsWith('/api/video-access/')) {
       return handleVideoAccess(request, env, corsHeaders);
     }
@@ -28,6 +33,28 @@ export default {
     return jsonResponse({ error: 'Not Found' }, 404, corsHeaders);
   }
 };
+
+async function handleVideosList(request, env, corsHeaders) {
+  try {
+    const db = getDatabaseBinding(env);
+    
+    const videos = await db.prepare(`
+      SELECT id, title, description, thumbnail_url, full_duration, preview_duration, upload_date
+      FROM videos
+      ORDER BY upload_date DESC
+    `).all();
+
+    return jsonResponse({
+      videos: videos.results || []
+    }, 200, corsHeaders);
+  } catch (error) {
+    console.error('Error:', error);
+    return jsonResponse({ 
+      error: 'Internal server error',
+      details: error.message 
+    }, 500, corsHeaders);
+  }
+}
 
 async function handleVideoAccess(request, env, corsHeaders) {
   try {

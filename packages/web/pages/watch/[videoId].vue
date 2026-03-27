@@ -1,99 +1,194 @@
 <template>
-  <div class="min-h-screen bg-gray-900">
-    <div class="max-w-5xl mx-auto px-4 py-8">
+  <div class="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <AppHeader />
+    
+    <div class="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <!-- Loading State -->
-      <div v-if="loading" class="text-white text-center py-20">
-        <p class="text-xl">Loading video...</p>
+      <div v-if="loading" class="flex items-center justify-center min-h-[60vh]">
+        <div class="text-center">
+          <div class="inline-block w-12 h-12 border-4 border-gray-300 border-t-blue-600 rounded-full animate-spin mb-4"></div>
+          <p class="text-gray-600 dark:text-gray-400">Loading video...</p>
+        </div>
       </div>
 
       <!-- Error State -->
-      <div v-else-if="error" class="bg-red-900 text-white rounded-lg p-6">
-        <h3 class="text-xl font-bold mb-2">Error</h3>
-        <p>{{ error }}</p>
+      <div v-else-if="error" class="max-w-4xl mx-auto">
+        <div class="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-6">
+          <h3 class="text-lg font-semibold text-red-900 dark:text-red-200 mb-2">Error</h3>
+          <p class="text-red-700 dark:text-red-300">{{ error }}</p>
+          <NuxtLink to="/" class="inline-block mt-4 text-blue-600 dark:text-blue-400 hover:underline">
+            ← Back to homepage
+          </NuxtLink>
+        </div>
       </div>
 
-      <!-- Video Player -->
-      <div v-else-if="videoData">
-        <div class="mb-4 bg-gray-800 text-gray-100 rounded-lg p-4 text-xs font-mono">
-          <p class="font-semibold text-sm mb-2">Playback Debug</p>
-          <p><span class="text-gray-400">videoId:</span> {{ videoId }}</p>
-          <p><span class="text-gray-400">resolved source:</span> {{ debugState.activeSource || 'n/a' }}</p>
-          <p><span class="text-gray-400">manifest fetch:</span> {{ debugState.manifestFetchStatus || 'not attempted' }}</p>
-          <p><span class="text-gray-400">last player event:</span> {{ debugState.lastEvent || 'n/a' }}</p>
-          <p><span class="text-gray-400">last player error:</span> {{ debugState.lastError || 'n/a' }}</p>
-        </div>
-
-        <!-- Subscription Banner -->
-        <div
-          v-if="!videoData.hasAccess"
-          class="bg-yellow-600 text-white p-4 rounded-t-lg"
-        >
-          <p class="font-semibold">🔒 Preview Mode</p>
-          <p class="text-sm">Upgrade to Premium to watch the full video</p>
-        </div>
-
-        <!-- Video Element -->
-        <div class="bg-black rounded-b-lg overflow-hidden">
-          <media-controller
-            id="watch-media-controller"
-            class="watch-media-controller block w-full aspect-video"
-          >
-            <videojs-video
-              ref="videoElement"
-              slot="media"
-              class="watch-media-element block w-full h-full"
-              playsinline
-              preload="auto"
-              @timeupdate="handleTimeUpdate"
-            ></videojs-video>
-
-            <media-loading-indicator slot="centered-chrome"></media-loading-indicator>
-
-            <media-control-bar class="watch-media-control-bar" noautohide>
-              <media-play-button mediacontroller="watch-media-controller"></media-play-button>
-              <media-seek-backward-button mediacontroller="watch-media-controller" seek-offset="10"></media-seek-backward-button>
-              <media-seek-forward-button mediacontroller="watch-media-controller" seek-offset="10"></media-seek-forward-button>
-              <media-time-range mediacontroller="watch-media-controller"></media-time-range>
-              <media-time-display mediacontroller="watch-media-controller" show-duration></media-time-display>
-              <media-mute-button mediacontroller="watch-media-controller"></media-mute-button>
-              <media-volume-range mediacontroller="watch-media-controller"></media-volume-range>
-              <media-fullscreen-button mediacontroller="watch-media-controller"></media-fullscreen-button>
-            </media-control-bar>
-          </media-controller>
-        </div>
-
-        <!-- Chapter Bar -->
-        <div class="mt-4 bg-gray-800 rounded-lg p-4">
-          <h3 class="text-white font-semibold mb-3">Chapters</h3>
-          <div class="flex gap-2">
-            <div
-              v-for="(chapter, index) in videoData.chapters"
-              :key="index"
-              :class="[
-                'flex-1 rounded p-3 text-center text-sm font-medium transition',
-                chapter.accessible
-                  ? 'bg-green-600 text-white cursor-pointer hover:bg-green-700'
-                  : 'bg-red-600 text-white cursor-not-allowed'
-              ]"
-              @click="chapter.accessible && seekToChapter(chapter.startTime)"
+      <!-- Main Content -->
+      <div v-else-if="videoData" class="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
+        <!-- Left Column: Player + Info -->
+        <div class="space-y-4">
+          <!-- Player Container -->
+          <div class="relative bg-black rounded-lg overflow-hidden">
+            <!-- Premium Banner -->
+            <div 
+              v-if="!videoData.hasAccess"
+              class="absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-yellow-500/90 to-yellow-600/90 backdrop-blur-sm text-black px-4 py-2 flex items-center justify-between"
             >
-              {{ chapter.title }}
-              {{ chapter.accessible ? '' : ' 🔒' }}
+              <div class="flex items-center space-x-2">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
+                </svg>
+                <span class="font-semibold">Preview Mode</span>
+              </div>
+              <span class="text-sm">Upgrade to watch full video</span>
             </div>
+
+            <!-- Video Player -->
+            <media-controller
+              id="watch-media-controller"
+              class="watch-media-controller block w-full aspect-video relative"
+            >
+              <videojs-video
+                ref="videoElement"
+                slot="media"
+                class="watch-media-element block w-full h-full"
+                playsinline
+                preload="auto"
+                @timeupdate="handleTimeUpdate"
+              ></videojs-video>
+
+              <media-loading-indicator slot="centered-chrome"></media-loading-indicator>
+
+              <!-- Premium Overlay -->
+              <PremiumOverlay :show="showPremiumOverlay" />
+
+              <!-- Custom Control Bar -->
+              <media-control-bar class="watch-media-control-bar relative" noautohide>
+                <media-play-button></media-play-button>
+                <media-seek-backward-button seek-offset="10"></media-seek-backward-button>
+                <media-seek-forward-button seek-offset="10"></media-seek-forward-button>
+                
+                <!-- Custom Time Range with Lock Indicator -->
+                <div class="flex-1 flex items-center px-2 relative">
+                  <div class="relative w-full h-1 bg-gray-600 rounded-full overflow-hidden group">
+                    <!-- Preview section (green) -->
+                    <div 
+                      class="absolute left-0 top-0 h-full bg-green-500"
+                      :style="{ width: previewPercentage + '%' }"
+                    ></div>
+                    
+                    <!-- Locked section (red) -->
+                    <div 
+                      class="absolute top-0 h-full bg-red-500 opacity-50"
+                      :style="{ left: previewPercentage + '%', width: (100 - previewPercentage) + '%' }"
+                    ></div>
+                    
+                    <!-- Lock icon at division point -->
+                    <div 
+                      v-if="!videoData.hasAccess"
+                      class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-6 bg-yellow-500 rounded-full flex items-center justify-center shadow-lg"
+                      :style="{ left: previewPercentage + '%' }"
+                    >
+                      <svg class="w-3 h-3 text-black" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
+                      </svg>
+                    </div>
+                    
+                    <!-- Progress bar -->
+                    <media-time-range class="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"></media-time-range>
+                  </div>
+                </div>
+                
+                <media-time-display show-duration></media-time-display>
+                <media-mute-button></media-mute-button>
+                <media-volume-range></media-volume-range>
+                <media-fullscreen-button></media-fullscreen-button>
+              </media-control-bar>
+            </media-controller>
+          </div>
+
+          <!-- Video Info -->
+          <div class="bg-white dark:bg-gray-900 rounded-lg p-6 border border-gray-200 dark:border-gray-800">
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+              {{ videoData.video.title }}
+            </h1>
+            
+            <div class="flex items-center space-x-4 text-sm text-gray-600 dark:text-gray-400 mb-4">
+              <span class="flex items-center space-x-1">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{{ formatDuration(videoData.video.fullDuration) }}</span>
+              </span>
+              
+              <span 
+                v-if="videoData.subscription.planType === 'premium'"
+                class="flex items-center space-x-1 text-yellow-600 dark:text-yellow-400 font-semibold"
+              >
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                </svg>
+                <span>Premium Access</span>
+              </span>
+              
+              <span 
+                v-else
+                class="flex items-center space-x-1"
+              >
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
+                </svg>
+                <span>Preview Only ({{ formatDuration(videoData.video.previewDuration) }})</span>
+              </span>
+            </div>
+
+            <p class="text-gray-700 dark:text-gray-300 leading-relaxed">
+              {{ videoDescription }}
+            </p>
           </div>
         </div>
 
-        <!-- Video Info -->
-        <div class="mt-6 bg-gray-800 rounded-lg p-6 text-white">
-          <h2 class="text-2xl font-bold mb-4">{{ videoData.video.title }}</h2>
-          <div class="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p class="text-gray-400">Subscription</p>
-              <p class="font-semibold">{{ videoData.subscription.planType }}</p>
-            </div>
-            <div>
-              <p class="text-gray-400">Access</p>
-              <p class="font-semibold">{{ videoData.hasAccess ? 'Full Access' : 'Preview Only' }}</p>
+        <!-- Right Column: Recommendations -->
+        <div class="space-y-4">
+          <h2 class="text-lg font-bold text-gray-900 dark:text-white px-2">
+            Up Next
+          </h2>
+          
+          <div class="space-y-3">
+            <div 
+              v-for="rec in recommendations"
+              :key="rec.id"
+              class="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden hover:border-gray-300 dark:hover:border-gray-700 transition-colors cursor-pointer"
+            >
+              <NuxtLink :to="`/watch/${rec.id}?userId=${userId}`" class="block">
+                <div class="flex space-x-3 p-3">
+                  <div class="relative w-40 h-24 flex-shrink-0 bg-gray-200 dark:bg-gray-800 rounded overflow-hidden">
+                    <img 
+                      v-if="rec.thumbnail_url"
+                      :src="rec.thumbnail_url"
+                      :alt="rec.title"
+                      class="w-full h-full object-cover"
+                    />
+                    <div class="absolute bottom-1 right-1 bg-black bg-opacity-80 text-white text-xs px-1.5 py-0.5 rounded">
+                      {{ formatDuration(rec.full_duration) }}
+                    </div>
+                    <div 
+                      v-if="rec.preview_duration < rec.full_duration"
+                      class="absolute top-1 left-1 bg-yellow-500 text-black text-xs font-semibold px-1.5 py-0.5 rounded"
+                    >
+                      PRO
+                    </div>
+                  </div>
+                  
+                  <div class="flex-1 min-w-0">
+                    <h3 class="font-semibold text-sm text-gray-900 dark:text-white line-clamp-2 mb-1">
+                      {{ rec.title }}
+                    </h3>
+                    <p class="text-xs text-gray-600 dark:text-gray-400 line-clamp-2">
+                      {{ rec.description }}
+                    </p>
+                  </div>
+                </div>
+              </NuxtLink>
             </div>
           </div>
         </div>
@@ -103,7 +198,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRuntimeConfig } from '#app'
 import 'media-chrome'
@@ -127,40 +222,53 @@ const videoElement = ref<MediaLikeElement | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
 const videoData = ref<any>(null)
-const debugState = ref({
-  activeSource: '',
-  manifestFetchStatus: '',
-  lastEvent: '',
-  lastError: ''
-})
+const recommendations = ref<any[]>([])
+const showPremiumOverlay = ref(false)
 
 const videoId = route.params.videoId as string
 const userId = (route.query.userId as string) || 'user_free'
 
+const previewPercentage = computed(() => {
+  if (!videoData.value) return 0
+  return (videoData.value.video.previewDuration / videoData.value.video.fullDuration) * 100
+})
+
+const videoDescription = computed(() => {
+  // This would come from the API, placeholder for now
+  return videoData.value?.video?.description || 'No description available.'
+})
+
+const formatDuration = (seconds: number) => {
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
 onMounted(async () => {
   try {
-    const response = await fetch(`${config.public.apiUrl}/api/video-access/${userId}/${videoId}`)
-    if (!response.ok) {
-      const errorBody = await response.text()
-      throw new Error(`Failed to load video data (${response.status}): ${errorBody}`)
+    // Load video data
+    const videoResponse = await fetch(`${config.public.apiUrl}/api/video-access/${userId}/${videoId}`)
+    if (!videoResponse.ok) {
+      throw new Error('Failed to load video data')
     }
-
-    videoData.value = await response.json()
-    console.log('[watch] video-access response', videoData.value)
-
-    const playlistUrl = videoData.value.video.playlistUrl
-    debugState.value.activeSource = playlistUrl
-    debugState.value.manifestFetchStatus = 'using proxied playlist URL'
+    videoData.value = await videoResponse.json()
+    
+    // Load recommendations
+    const recsResponse = await fetch(`${config.public.apiUrl}/api/videos`)
+    if (recsResponse.ok) {
+      const data = await recsResponse.json()
+      // Filter out current video and take first 5
+      recommendations.value = (data.videos || [])
+        .filter((v: any) => v.id !== videoId)
+        .slice(0, 5)
+    }
+    
     loading.value = false
     await nextTick()
-    initializeVideoElement(playlistUrl)
+    initializeVideoElement(videoData.value.video.playlistUrl)
   } catch (e: any) {
-    debugState.value.lastError = e?.message || String(e)
-    error.value = debugState.value.lastError
-  } finally {
-    if (!videoData.value || error.value) {
-      loading.value = false
-    }
+    error.value = e.message
+    loading.value = false
   }
 })
 
@@ -175,17 +283,12 @@ const handleTimeUpdate = (event: Event) => {
   if (!videoData.value?.hasAccess && currentTime > videoData.value?.video?.previewDuration) {
     video.currentTime = videoData.value.video.previewDuration
     video.pause()
-    alert('Please upgrade to Premium to continue watching')
+    showPremiumOverlay.value = true
+    
+    setTimeout(() => {
+      showPremiumOverlay.value = false
+    }, 5000)
   }
-
-  debugState.value.lastEvent = 'timeupdate'
-}
-
-const seekToChapter = (startTime: number) => {
-  if (!videoElement.value) return
-
-  videoElement.value.currentTime = startTime
-  void videoElement.value.play()
 }
 
 let handleLoadedMetadata: (() => void) | null = null
@@ -200,14 +303,11 @@ const initializeVideoElement = async (playlistUrl: string) => {
   teardownVideoListeners()
 
   handleLoadedMetadata = () => {
-    debugState.value.lastEvent = 'loadedmetadata'
+    console.log('Video metadata loaded')
   }
 
   handleMediaError = () => {
     const mediaError = (video as any).error ?? null
-    debugState.value.lastError = mediaError
-      ? `code=${mediaError.code}, message=${mediaError.message || 'n/a'}`
-      : 'unknown media element error'
     console.error('[watch] media element error', mediaError)
     error.value = 'Video playback error. The HLS stream could not be loaded.'
   }
@@ -218,7 +318,6 @@ const initializeVideoElement = async (playlistUrl: string) => {
   video.setAttribute('src', playlistUrl)
   video.setAttribute('playsinline', '')
   video.setAttribute('preload', 'auto')
-  debugState.value.lastEvent = 'initializing videojs-video-element'
 
   await customElements.whenDefined('videojs-video')
   video.load()
@@ -226,9 +325,7 @@ const initializeVideoElement = async (playlistUrl: string) => {
 
 const teardownVideoListeners = () => {
   const video = videoElement.value
-  if (!video) {
-    return
-  }
+  if (!video) return
 
   if (handleLoadedMetadata) {
     video.removeEventListener('loadedmetadata', handleLoadedMetadata)
@@ -242,11 +339,11 @@ const teardownVideoListeners = () => {
 }
 </script>
 
-
 <style scoped>
 .watch-media-controller {
-  --media-control-background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.2));
+  --media-control-background: linear-gradient(to top, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.3));
   --media-control-color: #ffffff;
+  --media-range-track-background: transparent;
 }
 
 .watch-media-element {
@@ -257,5 +354,11 @@ const teardownVideoListeners = () => {
 .watch-media-control-bar {
   position: relative;
   z-index: 20;
+  padding: 8px 16px;
+}
+
+/* Hide default time range since we're using custom */
+.watch-media-control-bar media-time-range {
+  pointer-events: all;
 }
 </style>

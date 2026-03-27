@@ -16,7 +16,8 @@
     "nuxt": "^4.4.2",
     "videojs-video-element": "^1.4.4",
     "video.js": "^8.23.7",
-    "vue": "^3.5.13"
+    "vue": "^3.5.13",
+    "@nuxtjs/color-mode": "^3.5.2"
   },
   "devDependencies": {
     "@nuxtjs/tailwindcss": "^6.12.2",

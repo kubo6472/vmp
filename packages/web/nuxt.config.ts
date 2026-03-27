@@ -2,8 +2,15 @@ export default defineNuxtConfig({
   compatibilityDate: '2024-11-01',
   devtools: { enabled: true },
   
-  modules: ['@nuxtjs/tailwindcss'],
-    vite: {
+  modules: ['@nuxtjs/tailwindcss', '@nuxtjs/color-mode'],
+  
+  colorMode: {
+    preference: 'system', // default value of $colorMode.preference
+    fallback: 'dark', // fallback value if not system preference found
+    classSuffix: '', // use just 'dark' and 'light' classes
+  },
+  
+  vite: {
     optimizeDeps: {
       include: [
         '@vue/devtools-core',
@@ -22,7 +29,7 @@ export default defineNuxtConfig({
   
   app: {
     head: {
-      title: 'VMP - Video Monetization Platform',
+      title: 'Video Monetization Platform',
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },

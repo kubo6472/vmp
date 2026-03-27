@@ -17,12 +17,15 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   FOREIGN KEY (user_id) REFERENCES users (id)
 );
 
--- Videos table
+-- Videos table (updated with new fields)
 CREATE TABLE IF NOT EXISTS videos (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
+  description TEXT,
+  thumbnail_url TEXT,
   full_duration INTEGER NOT NULL,
   preview_duration INTEGER NOT NULL,
+  upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
