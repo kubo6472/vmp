@@ -24,6 +24,7 @@ export async function onRequestGet(context) {
     .map((entry) => ({
       videoId: entry.videoId,
       status: entry.hasValidProcessedOutput ? 'processed' : 'uploaded',
+      packaging: entry.packaging,
       visibility: entry.visibility ?? 'private',
       updatedAt: entry.updatedAt
     }));
@@ -37,9 +38,8 @@ function newVideoEntry(videoId) {
   return {
     videoId,
     hasSource: false,
-    hasPlaylist: false,
-    hasSegments: false,
     hasValidProcessedOutput: false,
+    packaging: null,
     visibility: null,
     updatedAt: null
   };
@@ -47,22 +47,10 @@ function newVideoEntry(videoId) {
 
 function hydrateVideoEntry(entry, object) {
   const sourcePrefix = `videos/${entry.videoId}/source/`;
-  const playlistKey = `videos/${entry.videoId}/processed/playlist.m3u8`;
-  const segmentsPrefix = `videos/${entry.videoId}/processed/segments/`;
 
   if (object.key.startsWith(sourcePrefix)) {
     entry.hasSource = true;
   }
-
-  if (object.key === playlistKey && Number(object.size) > 0) {
-    entry.hasPlaylist = true;
-  }
-
-  if (object.key.startsWith(segmentsPrefix) && object.key.endsWith('.ts') && Number(object.size) > 0) {
-    entry.hasSegments = true;
-  }
-
-  entry.hasValidProcessedOutput = entry.hasPlaylist && entry.hasSegments;
   entry.updatedAt = maxDate(entry.updatedAt, object.uploaded);
 }
 
@@ -93,7 +81,63 @@ async function hydrateMetadata(byVideoId, env) {
     if (metadata.processedAt) {
       entry.updatedAt = maxDate(entry.updatedAt, metadata.processedAt);
     }
+
+    const packaging = getPackagingState(metadata, entry.videoId);
+    entry.packaging = packaging;
+    entry.hasValidProcessedOutput = packaging.isValid;
   }
+}
+
+function getPackagingState(metadata, videoId) {
+  const processedPrefix = `videos/${videoId}/processed/`;
+  const hlsMasterKey = `${processedPrefix}hls/master.m3u8`;
+  const dashManifestKey = `${processedPrefix}dash/manifest.mpd`;
+  const legacyPlaylistKey = `${processedPrefix}playlist.m3u8`;
+  const variantMediaPattern = new RegExp(`^videos/${escapeRegExp(videoId)}/processed/[^/]+/.+(?:\\.m4s|\\.mp4)$`);
+
+  const allProcessedKeys = Array.from(collectStringValues(metadata))
+    .filter((value) => value.startsWith(processedPrefix));
+
+  const keys = new Set(allProcessedKeys);
+  const hasHlsMaster = keys.has(hlsMasterKey);
+  const hasDashManifest = keys.has(dashManifestKey);
+  const hasLegacyPlaylist = keys.has(legacyPlaylistKey);
+  const hasVariantMedia = allProcessedKeys.some((key) => variantMediaPattern.test(key));
+  const hasModernPackaging = hasHlsMaster && hasVariantMedia;
+  const isValid = hasModernPackaging || hasLegacyPlaylist;
+
+  return {
+    mode: hasModernPackaging ? 'modern' : hasLegacyPlaylist ? 'legacy' : 'invalid',
+    isValid,
+    hasHlsMaster,
+    hasDashManifest,
+    hasVariantMedia,
+    hasLegacyPlaylist
+  };
+}
+
+function* collectStringValues(value) {
+  if (typeof value === 'string') {
+    yield value;
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      yield* collectStringValues(item);
+    }
+    return;
+  }
+
+  if (value && typeof value === 'object') {
+    for (const nestedValue of Object.values(value)) {
+      yield* collectStringValues(nestedValue);
+    }
+  }
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function json(data, status = 200) {
