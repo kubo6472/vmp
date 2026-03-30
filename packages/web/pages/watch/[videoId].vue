@@ -365,8 +365,7 @@ onMounted(async () => {
       const data = await videoResponse.json().catch(() => ({}))
       rateLimited.value = true
       rateLimitRetryAfter.value = data.retryAfter ?? null
-      // Show the limit value from the response (current count equals the limit)
-      rateLimitCount.value = data.current ?? 5
+      rateLimitCount.value = data.limit ?? data.current ?? 5
       loading.value = false
       return
     }

@@ -198,6 +198,8 @@ async function handleVideoAccess(request, env, corsHeaders) {
             error: 'rate_limit_exceeded',
             retryAfter: rateLimitResult.retryAfter,
             loginPrompt: true,
+            current: rateLimitResult.current,
+            limit: rateLimitResult.limit,
           }),
           {
             status: 429,
