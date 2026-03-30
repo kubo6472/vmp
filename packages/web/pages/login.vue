@@ -54,12 +54,14 @@
 </template>
 
 <script setup lang="ts">
+const route = useRoute()
 const { signIn, isLoggedIn } = useAuth()
-const router = useRouter()
 
-// If already logged in, redirect home immediately
+const redirectTarget = computed(() => (route.query.redirect as string) || '/')
+
+// If already logged in, redirect immediately
 if (isLoggedIn.value) {
-  await navigateTo('/')
+  await navigateTo(redirectTarget.value)
 }
 
 const email        = ref('')
@@ -73,7 +75,7 @@ async function submit() {
   errorMessage.value = ''
 
   try {
-    await signIn(email.value)
+    await signIn(email.value, redirectTarget.value)
     sent.value = true
   } catch (err: any) {
     errorMessage.value = err.message || 'Something went wrong. Please try again.'

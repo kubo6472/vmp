@@ -13,27 +13,9 @@
         </p>
       </div>
 
-      <!-- User Selection (temporary) -->
-      <div class="mb-12 p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
-        <h2 class="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">
-          Demo Mode - Select User Type
-        </h2>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <button
-            v-for="user in testUsers"
-            :key="user.id"
-            @click="selectedUser = user.id"
-            :class="[
-              'p-4 rounded-lg border-2 transition-all text-left',
-              selectedUser === user.id
-                ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-950'
-                : 'border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700'
-            ]"
-          >
-            <div class="font-semibold text-gray-900 dark:text-white mb-1">{{ user.name }}</div>
-            <div class="text-sm text-gray-600 dark:text-gray-400">{{ user.type }}</div>
-          </button>
-        </div>
+      <div class="mb-8 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+        <p v-if="isLoggedIn">Signed in as <span class="font-semibold">{{ user?.email }}</span>.</p>
+        <p v-else>Browsing as a guest. You can preview every video up to its lock point.</p>
       </div>
 
       <!-- Loading State -->
@@ -65,7 +47,6 @@
               v-for="video in featuredVideos" 
               :key="`featured-${video.id}`"
               :video="video"
-              :userId="selectedUser"
             />
           </div>
 
@@ -74,7 +55,6 @@
               v-for="video in videos" 
               :key="`grid-${video.id}`"
               :video="video"
-              :userId="selectedUser"
             />
           </div>
 
@@ -105,7 +85,6 @@
               v-for="video in videos" 
               :key="video.id"
               :video="video"
-              :userId="selectedUser"
             />
           </div>
         </section>
@@ -134,7 +113,6 @@ interface LayoutBlock {
 }
 
 const config = useRuntimeConfig()
-const selectedUser = ref('user_free')
 const loading = ref(true)
 const error = ref<string | null>(null)
 const videos = ref<any[]>([])
@@ -149,11 +127,7 @@ const blockLabelMap: Record<LayoutBlock['type'], string> = {
   video_grid: 'Available videos'
 }
 
-const testUsers = [
-  { id: 'user_free', name: 'Free User', type: 'Preview access only' },
-  { id: 'user_premium', name: 'Premium User', type: 'Full access' },
-  { id: 'user_expired', name: 'Expired User', type: 'Expired premium' }
-]
+const { user, isLoggedIn } = useAuth()
 
 const renderedBlocks = computed(() => layoutBlocks.value.length ? layoutBlocks.value : [{ id: 'fallback-grid', type: 'video_grid', title: 'Available Videos', body: '' } as LayoutBlock])
 const heroBlock = computed(() => renderedBlocks.value.find((block) => block.type === 'hero'))

@@ -90,12 +90,12 @@ export function useAuth() {
    * Sends a sign-in email. The user then clicks the link, which lands on
    * /auth/verify?token=... and this composable's verify() is called.
    */
-  async function signIn(email: string): Promise<{ ok: boolean; message: string }> {
+  async function signIn(email: string, redirectPath?: string): Promise<{ ok: boolean; message: string }> {
     const res = await fetch(`${apiUrl}/api/auth/magic-link`, {
       method:      'POST',
       credentials: 'include',          // needed so the Set-Cookie from verify() works
       headers:     { 'Content-Type': 'application/json' },
-      body:        JSON.stringify({ email }),
+      body:        JSON.stringify({ email, redirect: redirectPath }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Failed to send sign-in link')

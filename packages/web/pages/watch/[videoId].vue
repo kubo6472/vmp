@@ -196,7 +196,7 @@
               :key="rec.id"
               class="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden hover:border-gray-300 dark:hover:border-gray-700 transition-colors cursor-pointer"
             >
-              <NuxtLink :to="`/watch/${rec.id}?userId=${userId}`" class="block">
+              <NuxtLink :to="`/watch/${rec.id}`" class="block">
                 <div class="flex space-x-3 p-3">
                   <div class="relative w-40 h-24 flex-shrink-0 bg-gray-200 dark:bg-gray-800 rounded overflow-hidden">
                     <img 
@@ -243,6 +243,7 @@ import 'videojs-video-element'
 
 const route = useRoute()
 const config = useRuntimeConfig()
+const { authHeader } = useAuth()
 
 type MediaLikeElement = HTMLElement & {
   src: string
@@ -267,7 +268,6 @@ const showPremiumOverlay = ref(false)
 const currentTime = ref(0)
 
 const videoId = route.params.videoId as string
-const userId = (route.query.userId as string) || 'user_free'
 
 // ── Computed helpers ────────────────────────────────────────────────────────
 
@@ -374,7 +374,9 @@ const enforcePreviewLimit = (video: HTMLVideoElement) => {
 
 onMounted(async () => {
   try {
-    const videoResponse = await fetch(`${config.public.apiUrl}/api/video-access/${userId}/${videoId}`)
+    const videoResponse = await fetch(`${config.public.apiUrl}/api/video-access/${videoId}`, {
+      headers: authHeader()
+    })
     if (!videoResponse.ok) throw new Error('Failed to load video data')
     videoData.value = await videoResponse.json()
     

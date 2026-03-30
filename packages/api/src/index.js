@@ -133,26 +133,51 @@ async function handleVideosList(request, env, corsHeaders) {
 async function handleVideoAccess(request, env, corsHeaders) {
   try {
     const url = new URL(request.url)
-    const pathParts = url.pathname.split('/')
-    if (pathParts.length !== 5) {
-      return jsonResponse({ error: 'Invalid path format. Expected: /api/video-access/{userId}/{videoId}' }, 400, corsHeaders)
+    const pathParts = url.pathname.split('/').filter(Boolean)
+
+    // Supports both:
+    //   /api/video-access/{videoId}                 (preferred; user from JWT)
+    //   /api/video-access/{userId}/{videoId}        (legacy fallback)
+    let legacyUserId = null
+    let requestedVideoId = null
+
+    if (pathParts.length === 3) {
+      requestedVideoId = decodeURIComponent(pathParts[2] ?? '')
+    } else if (pathParts.length === 4) {
+      legacyUserId = pathParts[2]
+      requestedVideoId = decodeURIComponent(pathParts[3] ?? '')
+    } else {
+      return jsonResponse({ error: 'Invalid path format. Expected: /api/video-access/{videoId}' }, 400, corsHeaders)
     }
-    const userId = pathParts[3]
-    const requestedVideoId = decodeURIComponent(pathParts[4] ?? '')
+
     const videoId = normalizeVideoId(requestedVideoId)
+
+    let authUser = null
+    try {
+      authUser = await requireAuth(request, env)
+    } catch {
+      authUser = null
+    }
+
+    const userId = authUser?.sub ?? legacyUserId
     const db = getDatabaseBinding(env)
-    const subscription = await db.prepare(`
-      SELECT s.*, u.email
-      FROM subscriptions s
-      JOIN users u ON u.id = s.user_id
-      WHERE s.user_id = ? AND s.status = 'active'
-      ORDER BY s.created_at DESC
-      LIMIT 1
-    `).bind(userId).first()
+
+    const subscription = userId
+      ? await db.prepare(`
+        SELECT s.*, u.email
+        FROM subscriptions s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.user_id = ? AND s.status = 'active'
+        ORDER BY s.created_at DESC
+        LIMIT 1
+      `).bind(userId).first()
+      : null
+
     const video = await db.prepare('SELECT * FROM videos WHERE id = ?').bind(videoId).first()
-    const hasPremiumAccess = subscription &&
+    const hasPremiumAccess = Boolean(subscription &&
       subscription.plan_type === 'premium' &&
-      (subscription.expires_at === null || new Date(subscription.expires_at) > new Date())
+      (subscription.expires_at === null || new Date(subscription.expires_at) > new Date()))
+
     const hasVideoMetadata = Boolean(video)
     const hasAccess = hasPremiumAccess || !hasVideoMetadata
     const requestedProtocol = normalizeProtocolOption(url.searchParams.get('protocol')) ?? 'hls'
@@ -160,8 +185,11 @@ async function handleVideoAccess(request, env, corsHeaders) {
     const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0
     const playlistUrl = buildProxyPlaylistUrl(request, resolvedEntrypointUrl, hasPremiumAccess ? null : previewDuration, requestedProtocol)
     const fullDuration = video?.full_duration ?? previewDuration
+
     const response = {
-      userId, videoId, hasAccess,
+      userId: userId ?? null,
+      videoId,
+      hasAccess,
       subscription: {
         planType: subscription ? subscription.plan_type : 'free',
         status: subscription ? subscription.status : 'none',
@@ -221,6 +249,12 @@ async function handleVideoProxy(request, env, corsHeaders) {
 }
 
 async function handleAdminConfig(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch (error) {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
   const db = getDatabaseBinding(env)
   await ensureAdminSettingsTable(db)
   if (request.method === 'GET') {
@@ -237,6 +271,12 @@ async function handleAdminConfig(request, env, corsHeaders) {
 }
 
 async function handlePreviewLocks(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch (error) {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const body = await request.json().catch(() => null)
   if (!Array.isArray(body?.locks)) return jsonResponse({ error: 'locks array is required' }, 400, corsHeaders)

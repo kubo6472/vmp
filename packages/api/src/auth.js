@@ -288,18 +288,21 @@ export async function handleRequestMagicLink(request, env, corsHeaders) {
     return authJson({ error: 'Invalid email format' }, 400, corsHeaders)
   }
 
+  const redirect = normalizeRedirectPath(body.redirect)
   const db = getDb(env)
 
   try {
     const { token } = await createMagicLinkToken(email, db)
     const frontendUrl = (env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '')
-    const verifyUrl   = `${frontendUrl}/auth/verify?token=${token}`
+    const verifyUrl = new URL(`${frontendUrl}/auth/verify`)
+    verifyUrl.searchParams.set('token', token)
+    if (redirect) verifyUrl.searchParams.set('redirect', redirect)
 
     if (env.BREVO_API_KEY) {
-      await sendMagicLinkEmail(email, verifyUrl, env)
+      await sendMagicLinkEmail(email, verifyUrl.toString(), env)
     } else {
       // No Brevo key — log the link for local development.
-      console.log(`[DEV] Magic link for ${email}: ${verifyUrl}`)
+      console.log(`[DEV] Magic link for ${email}: ${verifyUrl.toString()}`)
     }
   } catch (err) {
     console.error('[auth] magic link error:', err)
@@ -483,6 +486,15 @@ export async function requireRole(request, env, ...roles) {
     throw new Error(`Insufficient role. Required: ${roles.join(' | ')}. Got: ${user.role}`)
   }
   return user
+}
+
+function normalizeRedirectPath(value) {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('/')) return null
+  if (trimmed.startsWith('//')) return null
+  if (trimmed.length > 1024) return null
+  return trimmed
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────

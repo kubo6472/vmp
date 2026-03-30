@@ -153,6 +153,9 @@ interface LayoutBlock {
 }
 
 const config = useRuntimeConfig()
+
+const { isLoggedIn, canEditContent, authHeader, initialise } = useAuth()
+const route = useRoute()
 const loading = ref(true)
 const uploads = ref<Video[]>([])
 const pickerOpen = ref(false)
@@ -225,7 +228,7 @@ const resolvePlaylistDuration = async (playlistUrl: string, depth = 0): Promise<
 const hydrateActualDurations = async () => {
   const durations = await Promise.all(uploads.value.map(async (video) => {
     try {
-      const accessResponse = await fetch(`${config.public.apiUrl}/api/video-access/user_premium/${video.id}`)
+      const accessResponse = await fetch(`${config.public.apiUrl}/api/video-access/${video.id}`, { headers: authHeader() })
       if (!accessResponse.ok) return [video.id, video.full_duration] as const
       const accessData = await accessResponse.json()
       const playlistUrl = accessData?.video?.playlistUrl
@@ -263,7 +266,7 @@ const getDefaultBlocks = (): LayoutBlock[] => ([
 ])
 
 const loadVideos = async () => {
-  const response = await fetch(`${config.public.apiUrl}/api/videos`)
+  const response = await fetch(`${config.public.apiUrl}/api/videos`, { headers: authHeader() })
   const data = await response.json()
   uploads.value = data.videos || []
   for (const video of uploads.value) {
@@ -273,7 +276,7 @@ const loadVideos = async () => {
 }
 
 const loadConfig = async () => {
-  const response = await fetch(`${config.public.apiUrl}/api/admin/config`)
+  const response = await fetch(`${config.public.apiUrl}/api/admin/config`, { headers: authHeader() })
   if (!response.ok) {
     layoutBlocks.value = getDefaultBlocks()
     featuredSlots.value = [...chronologicallySortedUploads.value.slice(0, 4)]
@@ -307,12 +310,12 @@ const saveAll = async () => {
     const [configResponse, locksResponse] = await Promise.all([
       fetch(`${config.public.apiUrl}/api/admin/config`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({ config: { featuredVideoIds, layoutBlocks: layoutBlocks.value } })
       }),
       fetch(`${config.public.apiUrl}/api/admin/preview-locks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
           locks: Object.entries(previewLockByVideoId.value).map(([videoId, previewDuration]) => ({ videoId, previewDuration }))
         })
@@ -344,5 +347,19 @@ const reloadAll = async () => {
   }
 }
 
-onMounted(reloadAll)
+onMounted(async () => {
+  await initialise()
+
+  if (!isLoggedIn.value) {
+    await navigateTo(`/login?redirect=${encodeURIComponent(route.fullPath || '/admin')}`)
+    return
+  }
+
+  if (!canEditContent.value) {
+    await navigateTo('/')
+    return
+  }
+
+  await reloadAll()
+})
 </script>
