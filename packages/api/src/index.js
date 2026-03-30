@@ -405,8 +405,7 @@ async function handleAdminVideosList(request, env, corsHeaders) {
       }).filter(Boolean)
 
       for (const r2Id of r2VideoIds) {
-        const playlistKey = `videos/${r2Id}/processed/playlist.m3u8`
-        const exists = await env.BUCKET.head(playlistKey)
+        const exists = await hasProcessedPlaybackArtifact(env.BUCKET, r2Id)
         if (!exists) continue
         // Insert only if no row exists for this id
         await db.prepare(`
@@ -428,8 +427,7 @@ async function handleAdminVideosList(request, env, corsHeaders) {
     const annotated = await Promise.all((videos.results || []).map(async (video) => {
       let r2Exists = null
       if (env.BUCKET) {
-        const obj = await env.BUCKET.head(`videos/${video.id}/processed/playlist.m3u8`)
-        r2Exists = obj !== null
+        r2Exists = await hasProcessedPlaybackArtifact(env.BUCKET, video.id)
       }
       return { ...video, r2_exists: r2Exists }
     }))
@@ -508,6 +506,20 @@ async function handleAdminVideoUpdate(request, env, corsHeaders) {
     console.error('Error:', error)
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
+}
+
+async function hasProcessedPlaybackArtifact(bucket, videoId) {
+  const candidateKeys = [
+    `videos/${videoId}/processed/hls/master.m3u8`,
+    `videos/${videoId}/processed/playlist.m3u8`,
+    `videos/${videoId}/processed/dash/manifest.mpd`,
+  ]
+
+  for (const key of candidateKeys) {
+    const object = await bucket.head(key)
+    if (object) return true
+  }
+  return false
 }
 
 // ─── All the unchanged helper functions from the original index.js ─────────────
