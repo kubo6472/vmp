@@ -409,12 +409,12 @@ const saveAll = async () => {
     const [configRes, locksRes] = await Promise.all([
       fetch(`${config.public.apiUrl}/api/admin/config`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({ config: { featuredVideoIds, layoutBlocks: layoutBlocks.value } }),
       }),
       fetch(`${config.public.apiUrl}/api/admin/preview-locks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
           locks: Object.entries(previewLockByVideoId.value).map(([videoId, previewDuration]) => ({ videoId, previewDuration })),
         }),
