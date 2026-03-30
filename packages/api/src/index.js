@@ -405,12 +405,12 @@ async function handleAdminVideosList(request, env, corsHeaders) {
       }).filter(Boolean)
 
       for (const r2Id of r2VideoIds) {
-        const exists = await hasProcessedPlaybackArtifact(env.BUCKET, r2Id)
-        if (!exists) continue
-        // Insert only if no row exists for this id
+        // Register every R2 video folder as a draft regardless of whether
+        // processed artifacts exist yet — source-only and mid-processing
+        // videos should still appear in the admin list.
         await db.prepare(`
-          INSERT OR IGNORE INTO videos (id, title, publish_status, upload_date)
-          VALUES (?, 'Untitled upload', 'draft', CURRENT_TIMESTAMP)
+          INSERT OR IGNORE INTO videos (id, title, publish_status, upload_date, full_duration, preview_duration)
+          VALUES (?, 'Untitled upload', 'draft', CURRENT_TIMESTAMP, 0, 0)
         `).bind(r2Id).run()
       }
     }
