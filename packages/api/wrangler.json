@@ -9,6 +9,12 @@
 			"database_id": "e4e14e46-fcf2-4eb4-9eda-accf732c44f8"
 		}
 	],
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "vmp-videos"
+		}
+	],
 	"vars": {
 		"R2_BASE_URL": "https://vmp-videos.tjm.sk",
 		"FRONTEND_URL": "https://vmp.tjm.sk",

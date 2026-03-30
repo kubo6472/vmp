@@ -127,12 +127,26 @@ function parseAllowedOrigins(envValue) {
 async function handleVideosList(request, env, corsHeaders) {
   try {
     const db = getDatabaseBinding(env)
-    const videos = await db.prepare(`
-      SELECT id, title, description, thumbnail_url, full_duration, preview_duration, upload_date
-      FROM videos
-      WHERE visibility = 'public'
-      ORDER BY upload_date DESC
-    `).all()
+
+    // Editors and above see all statuses; everyone else only sees published videos.
+    let isEditor = false
+    try {
+      await requireRole(request, env, 'editor', 'admin', 'super_admin')
+      isEditor = true
+    } catch {
+      isEditor = false
+    }
+
+    const query = isEditor
+      ? `SELECT id, title, description, thumbnail_url, full_duration, preview_duration, upload_date, publish_status
+         FROM videos
+         ORDER BY upload_date DESC`
+      : `SELECT id, title, description, thumbnail_url, full_duration, preview_duration, upload_date, publish_status
+         FROM videos
+         WHERE publish_status = 'published'
+         ORDER BY upload_date DESC`
+
+    const videos = await db.prepare(query).all()
     return jsonResponse({ videos: videos.results || [] }, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
@@ -353,13 +367,46 @@ async function handleAdminVideosList(request, env, corsHeaders) {
   if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const db = getDatabaseBinding(env)
   try {
+    // ── 1. Auto-register any R2 uploads that have no D1 row ──────────────────
+    if (env.BUCKET) {
+      const listed = await env.BUCKET.list({ prefix: 'videos/', delimiter: '/' })
+      const r2VideoIds = (listed.delimitedPrefixes ?? []).map(prefix => {
+        // prefix looks like "videos/abc123/" — extract the folder name
+        const parts = prefix.replace(/\/$/, '').split('/')
+        return parts[parts.length - 1]
+      }).filter(Boolean)
+
+      for (const r2Id of r2VideoIds) {
+        const playlistKey = `videos/${r2Id}/processed/playlist.m3u8`
+        const exists = await env.BUCKET.head(playlistKey)
+        if (!exists) continue
+        // Insert only if no row exists for this id
+        await db.prepare(`
+          INSERT OR IGNORE INTO videos (id, title, publish_status, upload_date)
+          VALUES (?, 'Untitled upload', 'draft', CURRENT_TIMESTAMP)
+        `).bind(r2Id).run()
+      }
+    }
+
+    // ── 2. Fetch all videos from D1 ──────────────────────────────────────────
     const videos = await db.prepare(`
       SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
-             upload_date, visibility, status, published_at, updated_at
+             upload_date, visibility, status, publish_status, published_at, updated_at
       FROM videos
       ORDER BY upload_date DESC
     `).all()
-    return jsonResponse({ videos: videos.results || [] }, 200, corsHeaders)
+
+    // ── 3. Annotate each row with r2_exists ──────────────────────────────────
+    const annotated = await Promise.all((videos.results || []).map(async (video) => {
+      let r2Exists = null
+      if (env.BUCKET) {
+        const obj = await env.BUCKET.head(`videos/${video.id}/processed/playlist.m3u8`)
+        r2Exists = obj !== null
+      }
+      return { ...video, r2_exists: r2Exists }
+    }))
+
+    return jsonResponse({ videos: annotated }, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
@@ -379,30 +426,54 @@ async function handleAdminVideoUpdate(request, env, corsHeaders) {
   if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
 
   const body = await request.json().catch(() => null)
-  const allowed = ['private', 'unlisted', 'public']
-  if (!body || !allowed.includes(body.visibility)) {
-    return jsonResponse({ error: 'visibility must be one of: private, unlisted, public' }, 400, corsHeaders)
+  const allowedStatuses = ['draft', 'published', 'archived']
+  if (!body || !allowedStatuses.includes(body.status)) {
+    return jsonResponse({ error: 'status must be one of: draft, published, archived' }, 400, corsHeaders)
+  }
+
+  // Map publish_status to visibility so both stay in sync:
+  //   published  → visibility=public  (appears on homepage)
+  //   draft      → visibility=private (hidden from homepage)
+  //   archived   → visibility=unlisted (hidden but URL still works for editors)
+  const visibilityMap = { published: 'public', draft: 'private', archived: 'unlisted' }
+  const newVisibility = visibilityMap[body.status]
+
+  // Guard: refuse to publish if the processed playlist is missing from R2.
+  if (body.status === 'published' && env.BUCKET) {
+    const exists = await env.BUCKET.head(`videos/${videoId}/processed/playlist.m3u8`)
+    if (!exists) {
+      return jsonResponse({
+        error: 'Cannot publish: processed media not found in R2. Upload and process the video first.',
+        code: 'r2_missing',
+      }, 422, corsHeaders)
+    }
   }
 
   const db = getDatabaseBinding(env)
   try {
-    if (body.visibility === 'public') {
+    if (body.status === 'published') {
       // Stamp published_at only on first publish; preserve it on re-publish
       await db.prepare(`
         UPDATE videos
-        SET visibility = 'public',
+        SET publish_status = 'published',
+            visibility = 'public',
             published_at = COALESCE(published_at, CURRENT_TIMESTAMP),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(videoId).run()
     } else {
       await db.prepare(`
-        UPDATE videos SET visibility = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-      `).bind(body.visibility, videoId).run()
+        UPDATE videos
+        SET publish_status = ?,
+            visibility = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(body.status, newVisibility, videoId).run()
     }
-    const video = await db.prepare(
-      'SELECT id, title, visibility, status, published_at, updated_at FROM videos WHERE id = ?'
-    ).bind(videoId).first()
+    const video = await db.prepare(`
+      SELECT id, title, visibility, status, publish_status, published_at, updated_at
+      FROM videos WHERE id = ?
+    `).bind(videoId).first()
     if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
     return jsonResponse({ ok: true, video }, 200, corsHeaders)
   } catch (error) {

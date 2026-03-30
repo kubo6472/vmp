@@ -100,17 +100,111 @@
           </div>
         </div>
 
+        <!-- Video Management — tabbed panel -->
         <div class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
-          <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">Preview lock timestamps</h2>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Set where free previews lock for each video (seconds).</p>
-          <div class="space-y-3 max-h-[32rem] overflow-auto pr-1">
-            <div v-for="video in chronologicallySortedUploads" :key="video.id" class="grid grid-cols-[1fr_auto_auto] gap-3 items-center p-3 rounded-lg border border-gray-200 dark:border-gray-700">
-              <div>
-                <p class="font-medium text-gray-900 dark:text-white">{{ video.title }}</p>
-                <p class="text-xs text-gray-600 dark:text-gray-400">{{ video.id }} · full {{ getActualDuration(video) }}s</p>
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">Video management</h2>
+
+          <!-- Tab bar -->
+          <div class="flex gap-1 mb-5 border-b border-gray-200 dark:border-gray-700">
+            <button
+              v-for="tab in videoTabs"
+              :key="tab.id"
+              class="px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors"
+              :class="activeVideoTab === tab.id
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'"
+              @click="activeVideoTab = tab.id"
+            >
+              {{ tab.label }}
+            </button>
+          </div>
+
+          <!-- All videos -->
+          <div v-if="activeVideoTab === 'all'">
+            <div v-if="videosLoading" class="space-y-3">
+              <div v-for="n in 4" :key="n" class="h-14 rounded-lg bg-gray-100 dark:bg-gray-800 animate-pulse" />
+            </div>
+            <div v-else-if="!chronologicallySortedUploads.length" class="text-sm text-gray-500 dark:text-gray-400 py-4">
+              No videos found. Upload via rclone — they'll appear here as drafts.
+            </div>
+            <div v-else class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+                    <th class="pb-2 pr-4 font-medium w-16">Thumb</th>
+                    <th class="pb-2 pr-4 font-medium">Title</th>
+                    <th class="pb-2 pr-4 font-medium">Status</th>
+                    <th class="pb-2 pr-4 font-medium">Duration</th>
+                    <th class="pb-2 pr-4 font-medium">Uploaded</th>
+                    <th class="pb-2 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                  <tr v-for="video in chronologicallySortedUploads" :key="video.id">
+                    <td class="py-3 pr-4">
+                      <div class="w-14 aspect-video rounded overflow-hidden bg-gray-200 dark:bg-gray-800 relative">
+                        <img v-if="video.thumbnail_url" :src="video.thumbnail_url" :alt="video.title" class="w-full h-full object-cover" />
+                        <span v-if="video.r2_exists === false" class="absolute inset-0 flex items-center justify-center bg-red-900/60 text-white text-xs">⚠</span>
+                      </div>
+                    </td>
+                    <td class="py-3 pr-4 max-w-[12rem]">
+                      <p class="font-medium text-gray-900 dark:text-white line-clamp-2">{{ video.title }}</p>
+                      <p class="text-xs text-gray-400 dark:text-gray-500 truncate">{{ video.id }}</p>
+                    </td>
+                    <td class="py-3 pr-4">
+                      <span
+                        class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+                        :class="statusBadgeClass(video.publish_status)"
+                      >
+                        {{ video.publish_status ?? 'draft' }}
+                      </span>
+                    </td>
+                    <td class="py-3 pr-4 text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                      {{ formatSeconds(getActualDuration(video)) }}
+                    </td>
+                    <td class="py-3 pr-4 text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                      {{ formatDate(video.upload_date) }}
+                    </td>
+                    <td class="py-3">
+                      <div class="flex flex-wrap gap-2">
+                        <button
+                          v-if="video.publish_status !== 'published'"
+                          class="px-2 py-1 text-xs rounded bg-green-600 hover:bg-green-700 text-white font-medium disabled:opacity-50"
+                          :disabled="statusUpdating[video.id]"
+                          @click="updateVideoStatus(video, 'published')"
+                        >Publish</button>
+                        <button
+                          v-if="video.publish_status !== 'draft'"
+                          class="px-2 py-1 text-xs rounded bg-amber-500 hover:bg-amber-600 text-white font-medium disabled:opacity-50"
+                          :disabled="statusUpdating[video.id]"
+                          @click="updateVideoStatus(video, 'draft')"
+                        >Revert to draft</button>
+                        <button
+                          v-if="video.publish_status !== 'archived'"
+                          class="px-2 py-1 text-xs rounded bg-gray-400 hover:bg-gray-500 text-white font-medium disabled:opacity-50"
+                          :disabled="statusUpdating[video.id]"
+                          @click="updateVideoStatus(video, 'archived')"
+                        >Archive</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Preview locks -->
+          <div v-else-if="activeVideoTab === 'locks'">
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Set where free previews lock for each video (seconds).</p>
+            <div class="space-y-3 max-h-[32rem] overflow-auto pr-1">
+              <div v-for="video in chronologicallySortedUploads" :key="video.id" class="grid grid-cols-[1fr_auto_auto] gap-3 items-center p-3 rounded-lg border border-gray-200 dark:border-gray-700">
+                <div>
+                  <p class="font-medium text-gray-900 dark:text-white">{{ video.title }}</p>
+                  <p class="text-xs text-gray-600 dark:text-gray-400">{{ video.id }} · full {{ getActualDuration(video) }}s</p>
+                </div>
+                <input v-model.number="previewLockByVideoId[video.id]" type="number" min="0" :max="getActualDuration(video)" class="w-24 px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900" />
+                <button class="text-xs text-gray-600 dark:text-gray-400 hover:underline" @click="previewLockByVideoId[video.id] = getActualDuration(video)">Unlock full</button>
               </div>
-              <input v-model.number="previewLockByVideoId[video.id]" type="number" min="0" :max="getActualDuration(video)" class="w-24 px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900" />
-              <button class="text-xs text-gray-600 dark:text-gray-400 hover:underline" @click="previewLockByVideoId[video.id] = getActualDuration(video)">Unlock full</button>
             </div>
           </div>
         </div>
@@ -160,6 +254,8 @@ interface Video {
   upload_date: string
   full_duration: number
   preview_duration: number
+  publish_status: 'draft' | 'published' | 'archived' | null
+  r2_exists: boolean | null
 }
 
 type BlockType = 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
@@ -173,6 +269,7 @@ interface LayoutBlock {
 const config = useRuntimeConfig()
 const { authHeader } = useAuth()
 const loading = ref(true)
+const videosLoading = ref(false)
 const uploads = ref<Video[]>([])
 const pickerOpen = ref(false)
 const activeSlotIndex = ref(0)
@@ -183,6 +280,12 @@ const saveMessage = ref('')
 const saveMessageClass = ref('')
 const previewLockByVideoId = ref<Record<string, number>>({})
 const actualDurationByVideoId = ref<Record<string, number>>({})
+const statusUpdating = ref<Record<string, boolean>>({})
+const activeVideoTab = ref<'all' | 'locks'>('all')
+const videoTabs = [
+  { id: 'all' as const, label: 'All videos' },
+  { id: 'locks' as const, label: 'Preview locks' },
+]
 
 const componentTypes: BlockType[] = ['hero', 'featured_row', 'cta', 'text_split', 'video_grid']
 const layoutBlocks = ref<LayoutBlock[]>([])
@@ -264,13 +367,18 @@ const getDefaultBlocks = (): LayoutBlock[] => ([
 ])
 
 const loadVideos = async () => {
-  const res  = await fetch(`${config.public.apiUrl}/api/admin/videos`, { headers: authHeader() })
-  const data = await res.json()
-  uploads.value = data.videos || []
-  for (const video of uploads.value) {
-    previewLockByVideoId.value[video.id] = video.preview_duration
+  videosLoading.value = true
+  try {
+    const res  = await fetch(`${config.public.apiUrl}/api/admin/videos`, { headers: authHeader() })
+    const data = await res.json()
+    uploads.value = data.videos || []
+    for (const video of uploads.value) {
+      previewLockByVideoId.value[video.id] = video.preview_duration
+    }
+    await hydrateActualDurations()
+  } finally {
+    videosLoading.value = false
   }
-  await hydrateActualDurations()
 }
 
 const loadConfig = async () => {
@@ -328,6 +436,45 @@ const reloadAll = async () => {
   loading.value = true
   try { await loadVideos(); await loadConfig() }
   finally { loading.value = false }
+}
+
+function statusBadgeClass(status: string | null) {
+  if (status === 'published') return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+  if (status === 'archived')  return 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+  return 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' // draft
+}
+
+function formatSeconds(total: number): string {
+  if (!total || !Number.isFinite(total)) return '--'
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = Math.floor(total % 60)
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`
+}
+
+async function updateVideoStatus(video: Video, newStatus: 'draft' | 'published' | 'archived') {
+  statusUpdating.value[video.id] = true
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ status: newStatus }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    const { video: updated } = await res.json()
+    const idx = uploads.value.findIndex(v => v.id === video.id)
+    if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], ...updated }
+  } catch (e: any) {
+    saveMessage.value = `Failed to update "${video.title}": ${e.message}`
+    saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    statusUpdating.value[video.id] = false
+  }
 }
 
 onMounted(reloadAll)
