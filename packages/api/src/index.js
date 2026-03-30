@@ -71,6 +71,9 @@ export default {
     if (url.pathname.startsWith('/api/video-proxy/')) {
       return handleVideoProxy(request, env, corsHeaders)
     }
+    if (url.pathname === '/api/admin/bootstrap' && request.method === 'POST') {
+      return handleBootstrap(request, env, corsHeaders)
+    }
     if (url.pathname === '/api/admin/config') {
       return handleAdminConfig(request, env, corsHeaders)
     }
@@ -255,6 +258,46 @@ async function handleVideoProxy(request, env, corsHeaders) {
   const headers = new Headers(upstreamResponse.headers)
   for (const [k, v] of Object.entries(corsHeaders)) headers.set(k, v)
   return new Response(upstreamResponse.body, { status: upstreamResponse.status, headers })
+}
+
+async function handleBootstrap(request, env, corsHeaders) {
+  const body = await request.json().catch(() => null)
+  if (!body?.email || typeof body.email !== 'string') {
+    return jsonResponse({ error: 'email is required' }, 400, corsHeaders)
+  }
+  const email = body.email.toLowerCase().trim()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return jsonResponse({ error: 'Invalid email format' }, 400, corsHeaders)
+  }
+
+  const db = getDatabaseBinding(env)
+
+  // Guard: only allow bootstrap when no super_admin exists
+  const existingAdmin = await db
+    .prepare("SELECT id FROM users WHERE role = 'super_admin' LIMIT 1")
+    .first()
+  if (existingAdmin) {
+    return jsonResponse({ error: 'Bootstrap already completed — a super_admin already exists.' }, 409, corsHeaders)
+  }
+
+  // Upsert: promote existing user or create new one
+  const existingUser = await db
+    .prepare('SELECT id FROM users WHERE email = ?')
+    .bind(email)
+    .first()
+  if (existingUser) {
+    await db
+      .prepare("UPDATE users SET role = 'super_admin' WHERE id = ?")
+      .bind(existingUser.id)
+      .run()
+  } else {
+    await db
+      .prepare("INSERT INTO users (id, email, role) VALUES (?, ?, 'super_admin')")
+      .bind(crypto.randomUUID(), email)
+      .run()
+  }
+
+  return jsonResponse({ ok: true, message: `${email} is now super_admin. Sign in via magic link to access admin features.` }, 200, corsHeaders)
 }
 
 async function handleAdminConfig(request, env, corsHeaders) {
