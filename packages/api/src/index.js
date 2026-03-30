@@ -174,9 +174,11 @@ async function handleVideoAccess(request, env, corsHeaders) {
       : null
 
     const video = await db.prepare('SELECT * FROM videos WHERE id = ?').bind(videoId).first()
-    const hasPremiumAccess = Boolean(subscription &&
+    const hasElevatedRole = ['editor', 'admin', 'super_admin'].includes(authUser?.role ?? '')
+    const hasPremiumSubscription = Boolean(subscription &&
       subscription.plan_type === 'premium' &&
       (subscription.expires_at === null || new Date(subscription.expires_at) > new Date()))
+    const hasPremiumAccess = hasElevatedRole || hasPremiumSubscription
 
     const hasVideoMetadata = Boolean(video)
     const hasAccess = hasPremiumAccess || !hasVideoMetadata
@@ -418,12 +420,18 @@ function normalizeHomepageConfig(config) {
     layoutBlocks: Array.isArray(config.layoutBlocks)
       ? config.layoutBlocks.filter(b => b && typeof b === 'object').map(b => ({
           id:    typeof b.id    === 'string' ? b.id    : crypto.randomUUID(),
-          type:  typeof b.type  === 'string' ? b.type  : 'hero',
+          type:  normalizeLayoutBlockType(b.type),
           title: typeof b.title === 'string' ? b.title : '',
           body:  typeof b.body  === 'string' ? b.body  : '',
         }))
       : [],
   }
+}
+
+function normalizeLayoutBlockType(type) {
+  if (type === 'featured') return 'featured_row'
+  const allowedTypes = new Set(['hero', 'featured_row', 'cta', 'text_split', 'video_grid'])
+  return allowedTypes.has(type) ? type : 'hero'
 }
 
 async function canLoadEntrypoint(url) {

@@ -42,7 +42,7 @@
             <p v-if="block.body" class="text-gray-600 dark:text-gray-400 mt-1">{{ block.body }}</p>
           </div>
 
-          <div v-if="block.type === 'featured_row'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div v-if="block.type === 'featured_row' || block.type === 'featured'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             <VideoCard 
               v-for="video in featuredVideos" 
               :key="`featured-${video.id}`"
@@ -107,7 +107,7 @@
 <script setup lang="ts">
 interface LayoutBlock {
   id: string
-  type: 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
+  type: 'hero' | 'featured' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
   title: string
   body: string
 }
@@ -121,6 +121,7 @@ const featuredVideoIds = ref<string[]>([])
 
 const blockLabelMap: Record<LayoutBlock['type'], string> = {
   hero: 'Hero',
+  featured: 'Featured videos',
   featured_row: 'Featured videos',
   cta: 'Call to action',
   text_split: 'Highlights',
@@ -135,7 +136,8 @@ const hasVideoGridBlock = computed(() => renderedBlocks.value.some((block) => bl
 const featuredVideos = computed(() => {
   if (!featuredVideoIds.value.length) return videos.value.slice(0, 4)
   const byId = new Map(videos.value.map((video) => [video.id, video]))
-  return featuredVideoIds.value.map((id) => byId.get(id)).filter(Boolean)
+  const mapped = featuredVideoIds.value.map((id) => byId.get(id)).filter(Boolean)
+  return mapped.length ? mapped : videos.value.slice(0, 4)
 })
 
 const loadAdminConfig = async () => {

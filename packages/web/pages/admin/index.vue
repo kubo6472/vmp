@@ -144,7 +144,7 @@ interface Video {
   preview_duration: number
 }
 
-type BlockType = 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
+type BlockType = 'hero' | 'featured' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
 interface LayoutBlock {
   id: string
   type: BlockType
@@ -168,7 +168,7 @@ const saveMessageClass = ref('')
 const previewLockByVideoId = ref<Record<string, number>>({})
 const actualDurationByVideoId = ref<Record<string, number>>({})
 
-const componentTypes: BlockType[] = ['hero', 'featured_row', 'cta', 'text_split', 'video_grid']
+const componentTypes: BlockType[] = ['hero', 'featured', 'featured_row', 'cta', 'text_split', 'video_grid']
 const layoutBlocks = ref<LayoutBlock[]>([])
 
 const chronologicallySortedUploads = computed(() => {
