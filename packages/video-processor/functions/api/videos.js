@@ -28,11 +28,12 @@ export async function onRequestGet(context) {
   const entries = Array.from(byVideoId.values())
     .filter((entry) => entry.hasSource || entry.hasAnyProcessedArtifact)
     .map((entry) => {
-      const hasPlaylist = entry.packaging.hasHlsMaster || entry.packaging.hasLegacyPlaylist;
-      const needsProcessing = entry.hasSource && !hasPlaylist;
+      // isValid = true only when HLS master + variant media exist, or a legacy playlist exists.
+      // A master.m3u8 with no segment files is NOT considered ready.
+      const needsProcessing = !entry.packaging.isValid;
       return {
         videoId: entry.videoId,
-        status: hasPlaylist ? 'processed' : 'uploaded',
+        status: entry.packaging.isValid ? 'processed' : 'uploaded',
         needsProcessing,
         packaging: entry.packaging,
         visibility: entry.visibility ?? 'private',
