@@ -194,7 +194,11 @@ const swapFeatured = (video: Video) => {
   closePicker()
 }
 
-const formatDate = (rawDate: string) => new Date(rawDate).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+const formatDate = (rawDate: string) => {
+  const date = new Date(rawDate)
+  if (Number.isNaN(date.getTime())) return rawDate
+  return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(date)
+}
 const getActualDuration = (video: Video) => actualDurationByVideoId.value[video.id] ?? video.full_duration
 
 const resolvePlaylistDuration = async (playlistUrl: string, depth = 0): Promise<number | null> => {

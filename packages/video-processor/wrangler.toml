@@ -7,3 +7,8 @@ pages_build_output_dir = "public"
 binding = "VIDEO_BUCKET"
 bucket_name = "vmp-videos"
 preview_bucket_name = "vmp-videos-preview"
+
+[[d1_databases]]
+binding = "VIDEO_SUBSCRIPTION_DB"
+database_name = "video-subscription-db"
+database_id = "e4e14e46-fcf2-4eb4-9eda-accf732c44f8"

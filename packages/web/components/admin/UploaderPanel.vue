@@ -91,7 +91,7 @@
             <td class="py-3 pr-3">{{ formatTimestamp(video.updatedAt) }}</td>
             <td class="py-3">
               <button
-                v-if="video.status === 'uploaded'"
+                v-if="video.needsProcessing"
                 class="px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold disabled:opacity-50"
                 :disabled="processing"
                 @click="processVideo(video.videoId, video.visibility)"
@@ -113,6 +113,7 @@ type ProcessingMode = 'register-existing-cmaf' | 'legacy-process'
 interface VideoListItem {
   videoId: string
   status: 'uploaded' | 'processed'
+  needsProcessing?: boolean
   visibility: Visibility
   updatedAt: string
 }
