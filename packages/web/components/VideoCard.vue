@@ -8,7 +8,7 @@
         v-if="video.thumbnail_url"
         :src="video.thumbnail_url"
         :alt="video.title"
-        class="w-full h-full object-cover transition-transform group-hover:scale-105"
+        class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
       />
       <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all"></div>
 
@@ -17,7 +17,7 @@
         {{ formatDuration(video.full_duration) }}
       </div>
 
-      <!-- Premium Badge (if preview only) -->
+      <!-- Premium Badge -->
       <div
         v-if="video.preview_duration < video.full_duration"
         class="absolute top-2 left-2 bg-yellow-500 text-black text-xs font-semibold px-2 py-1 rounded"
@@ -47,9 +47,7 @@ interface Video {
   upload_date: string
 }
 
-defineProps<{
-  video: Video
-}>()
+defineProps<{ video: Video }>()
 
 const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60)

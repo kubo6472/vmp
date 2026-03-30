@@ -1,4 +1,3 @@
-<!-- packages/web/pages/login.vue -->
 <template>
   <div class="min-h-screen bg-gray-950 flex items-center justify-center px-4">
     <div class="w-full max-w-sm">
@@ -54,14 +53,16 @@
 </template>
 
 <script setup lang="ts">
-const route = useRoute()
+const route  = useRoute()
 const { signIn, isLoggedIn } = useAuth()
 
-const redirectTarget = computed(() => (route.query.redirect as string) || '/')
+// Capture the redirect target before any navigation.
+// The middleware sets this to e.g. /admin when an unauthed user hits that route.
+const redirectTo = (route.query.redirect as string) || '/'
 
-// If already logged in, redirect immediately
+// Already logged in — skip the login page entirely
 if (isLoggedIn.value) {
-  await navigateTo(redirectTarget.value)
+  await navigateTo(redirectTo)
 }
 
 const email        = ref('')
@@ -71,12 +72,19 @@ const errorMessage = ref('')
 
 async function submit() {
   if (!email.value || loading.value) return
-  loading.value = true
+  loading.value  = true
   errorMessage.value = ''
-
   try {
-    await signIn(email.value, redirectTarget.value)
+    await signIn(email.value)
     sent.value = true
+    // Note: we don't redirect here. The user will click the magic link in their
+    // email, land on /auth/verify?token=..., and verify.vue will redirect to
+    // redirectTo after successful verification.
+    //
+    // To pass the redirect through the email link we'd need to encode it in the
+    // magic link URL. For now the verify page always redirects to /, which is
+    // fine — the admin link is still visible in the header once they're logged in.
+    // Full round-trip redirect is a quality-of-life improvement for later.
   } catch (err: any) {
     errorMessage.value = err.message || 'Something went wrong. Please try again.'
   } finally {

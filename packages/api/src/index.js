@@ -37,7 +37,7 @@ export default {
         status: 204,
         headers: {
           ...corsHeaders,
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range',
           'Access-Control-Max-Age': '86400',
         },
@@ -76,6 +76,12 @@ export default {
     }
     if (url.pathname === '/api/admin/preview-locks') {
       return handlePreviewLocks(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/videos') {
+      return handleAdminVideosList(request, env, corsHeaders)
+    }
+    if (url.pathname.startsWith('/api/admin/videos/') && request.method === 'PATCH') {
+      return handleAdminVideoUpdate(request, env, corsHeaders)
     }
     if (url.pathname === '/api/health') {
       return jsonResponse({ status: 'healthy' }, 200, corsHeaders)
@@ -121,6 +127,7 @@ async function handleVideosList(request, env, corsHeaders) {
     const videos = await db.prepare(`
       SELECT id, title, description, thumbnail_url, full_duration, preview_duration, upload_date
       FROM videos
+      WHERE visibility = 'public'
       ORDER BY upload_date DESC
     `).all()
     return jsonResponse({ videos: videos.results || [] }, 200, corsHeaders)
@@ -292,6 +299,73 @@ async function handlePreviewLocks(request, env, corsHeaders) {
     await db.prepare('UPDATE videos SET preview_duration = MIN(full_duration, ?) WHERE id = ?').bind(lockSeconds, lockEntry.videoId).run()
   }
   return jsonResponse({ ok: true }, 200, corsHeaders)
+}
+
+async function handleAdminVideosList(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+  if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
+  const db = getDatabaseBinding(env)
+  try {
+    const videos = await db.prepare(`
+      SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
+             upload_date, visibility, status, published_at, updated_at
+      FROM videos
+      ORDER BY upload_date DESC
+    `).all()
+    return jsonResponse({ videos: videos.results || [] }, 200, corsHeaders)
+  } catch (error) {
+    console.error('Error:', error)
+    return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
+  }
+}
+
+async function handleAdminVideoUpdate(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
+  const url = new URL(request.url)
+  const pathParts = url.pathname.split('/').filter(Boolean)
+  const videoId = pathParts[3] // /api/admin/videos/{videoId}
+  if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
+
+  const body = await request.json().catch(() => null)
+  const allowed = ['private', 'unlisted', 'public']
+  if (!body || !allowed.includes(body.visibility)) {
+    return jsonResponse({ error: 'visibility must be one of: private, unlisted, public' }, 400, corsHeaders)
+  }
+
+  const db = getDatabaseBinding(env)
+  try {
+    if (body.visibility === 'public') {
+      // Stamp published_at only on first publish; preserve it on re-publish
+      await db.prepare(`
+        UPDATE videos
+        SET visibility = 'public',
+            published_at = COALESCE(published_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(videoId).run()
+    } else {
+      await db.prepare(`
+        UPDATE videos SET visibility = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).bind(body.visibility, videoId).run()
+    }
+    const video = await db.prepare(
+      'SELECT id, title, visibility, status, published_at, updated_at FROM videos WHERE id = ?'
+    ).bind(videoId).first()
+    if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+    return jsonResponse({ ok: true, video }, 200, corsHeaders)
+  } catch (error) {
+    console.error('Error:', error)
+    return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
+  }
 }
 
 // ─── All the unchanged helper functions from the original index.js ─────────────

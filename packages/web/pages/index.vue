@@ -1,7 +1,7 @@
 <template>
   <div class="min-h-screen bg-gray-50 dark:bg-gray-950">
     <AppHeader />
-    
+
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <!-- Hero Section -->
       <div class="mb-12">
@@ -11,11 +11,6 @@
         <p class="text-lg text-gray-600 dark:text-gray-400">
           {{ heroBlock?.body || 'Watch free previews or unlock full access with a premium subscription' }}
         </p>
-      </div>
-
-      <div class="mb-8 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
-        <p v-if="isLoggedIn">Signed in as <span class="font-semibold">{{ user?.email }}</span>.</p>
-        <p v-else>Browsing as a guest. You can preview every video up to its lock point.</p>
       </div>
 
       <!-- Loading State -->
@@ -42,17 +37,17 @@
             <p v-if="block.body" class="text-gray-600 dark:text-gray-400 mt-1">{{ block.body }}</p>
           </div>
 
-          <div v-if="block.type === 'featured_row' || block.type === 'featured'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            <VideoCard 
-              v-for="video in featuredVideos" 
+          <div v-if="block.type === 'featured_row'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <VideoCard
+              v-for="video in featuredVideos"
               :key="`featured-${video.id}`"
               :video="video"
             />
           </div>
 
           <div v-else-if="block.type === 'video_grid'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            <VideoCard 
-              v-for="video in videos" 
+            <VideoCard
+              v-for="video in videos"
               :key="`grid-${video.id}`"
               :video="video"
             />
@@ -81,8 +76,8 @@
         <section v-if="!hasVideoGridBlock" class="space-y-4">
           <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Available Videos</h2>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            <VideoCard 
-              v-for="video in videos" 
+            <VideoCard
+              v-for="video in videos"
               :key="video.id"
               :video="video"
             />
@@ -107,59 +102,59 @@
 <script setup lang="ts">
 interface LayoutBlock {
   id: string
-  type: 'hero' | 'featured' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
+  type: 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
   title: string
   body: string
 }
 
 const config = useRuntimeConfig()
 const loading = ref(true)
-const error = ref<string | null>(null)
-const videos = ref<any[]>([])
-const layoutBlocks = ref<LayoutBlock[]>([])
-const featuredVideoIds = ref<string[]>([])
+const error   = ref<string | null>(null)
+const videos  = ref<any[]>([])
+const layoutBlocks       = ref<LayoutBlock[]>([])
+const featuredVideoIds   = ref<string[]>([])
 
 const blockLabelMap: Record<LayoutBlock['type'], string> = {
-  hero: 'Hero',
-  featured: 'Featured videos',
+  hero:         'Hero',
   featured_row: 'Featured videos',
-  cta: 'Call to action',
-  text_split: 'Highlights',
-  video_grid: 'Available videos'
+  cta:          'Call to action',
+  text_split:   'Highlights',
+  video_grid:   'Available videos',
 }
 
-const { user, isLoggedIn } = useAuth()
-
-const renderedBlocks = computed(() => layoutBlocks.value.length ? layoutBlocks.value : [{ id: 'fallback-grid', type: 'video_grid', title: 'Available Videos', body: '' } as LayoutBlock])
-const heroBlock = computed(() => renderedBlocks.value.find((block) => block.type === 'hero'))
-const hasVideoGridBlock = computed(() => renderedBlocks.value.some((block) => block.type === 'video_grid'))
+const renderedBlocks = computed(() =>
+  layoutBlocks.value.length
+    ? layoutBlocks.value
+    : [{ id: 'fallback-grid', type: 'video_grid', title: 'Available Videos', body: '' } as LayoutBlock]
+)
+const heroBlock = computed(() =>
+  renderedBlocks.value.find(b => b.type === 'hero')
+)
+const hasVideoGridBlock = computed(() =>
+  renderedBlocks.value.some(b => b.type === 'video_grid')
+)
 const featuredVideos = computed(() => {
   if (!featuredVideoIds.value.length) return videos.value.slice(0, 4)
-  const byId = new Map(videos.value.map((video) => [video.id, video]))
-  const mapped = featuredVideoIds.value.map((id) => byId.get(id)).filter(Boolean)
-  return mapped.length ? mapped : videos.value.slice(0, 4)
+  const byId = new Map(videos.value.map(v => [v.id, v]))
+  return featuredVideoIds.value.map(id => byId.get(id)).filter(Boolean)
 })
 
 const loadAdminConfig = async () => {
-  const response = await fetch(`${config.public.apiUrl}/api/admin/config`)
-  if (!response.ok) return
-  const data = await response.json()
-  layoutBlocks.value = Array.isArray(data?.config?.layoutBlocks) ? data.config.layoutBlocks : []
+  const res = await fetch(`${config.public.apiUrl}/api/admin/config`)
+  if (!res.ok) return
+  const data = await res.json()
+  layoutBlocks.value     = Array.isArray(data?.config?.layoutBlocks)    ? data.config.layoutBlocks    : []
   featuredVideoIds.value = Array.isArray(data?.config?.featuredVideoIds) ? data.config.featuredVideoIds : []
 }
 
 onMounted(async () => {
   try {
-    const [videosResponse] = await Promise.all([
+    const [videosRes] = await Promise.all([
       fetch(`${config.public.apiUrl}/api/videos`),
-      loadAdminConfig()
+      loadAdminConfig(),
     ])
-
-    if (!videosResponse.ok) {
-      throw new Error('Failed to load videos')
-    }
-
-    const data = await videosResponse.json()
+    if (!videosRes.ok) throw new Error('Failed to load videos')
+    const data = await videosRes.json()
     videos.value = data.videos || []
   } catch (e: any) {
     error.value = e.message

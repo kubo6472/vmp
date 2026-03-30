@@ -75,6 +75,7 @@
             <th class="py-2 pr-3">Visibility</th>
             <th class="py-2 pr-3">Updated</th>
             <th class="py-2">Actions</th>
+            <th class="py-2 pl-3">Publish</th>
           </tr>
         </thead>
         <tbody>
@@ -87,7 +88,12 @@
           <tr v-for="video in videos" :key="video.videoId" class="border-b border-gray-100 dark:border-gray-800">
             <td class="py-3 pr-3 font-mono text-xs">{{ video.videoId }}</td>
             <td class="py-3 pr-3"><span class="px-2 py-1 rounded-full bg-gray-200 dark:bg-gray-800">{{ video.status }}</span></td>
-            <td class="py-3 pr-3">{{ video.visibility }}</td>
+            <td class="py-3 pr-3">
+              <span
+                class="px-2 py-1 rounded-full text-xs font-medium"
+                :class="video.visibility === 'public' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300'"
+              >{{ video.visibility }}</span>
+            </td>
             <td class="py-3 pr-3">{{ formatTimestamp(video.updatedAt) }}</td>
             <td class="py-3">
               <button
@@ -97,6 +103,24 @@
                 @click="processVideo(video.videoId, video.visibility)"
               >
                 Process video
+              </button>
+            </td>
+            <td class="py-3 pl-3">
+              <button
+                v-if="video.visibility !== 'public'"
+                class="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold disabled:opacity-50"
+                :disabled="publishingId === video.videoId"
+                @click="setVisibility(video.videoId, 'public')"
+              >
+                {{ publishingId === video.videoId ? '…' : 'Publish' }}
+              </button>
+              <button
+                v-else
+                class="px-3 py-1 rounded-md bg-white dark:bg-gray-950 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 text-xs font-semibold disabled:opacity-50"
+                :disabled="publishingId === video.videoId"
+                @click="setVisibility(video.videoId, 'private')"
+              >
+                {{ publishingId === video.videoId ? '…' : 'Unpublish' }}
               </button>
             </td>
           </tr>
@@ -120,6 +144,7 @@ interface VideoListItem {
 
 const config = useRuntimeConfig()
 const { isUploading, uploadFile } = useTusUpload()
+const { authHeader } = useAuth()
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const isDragActive = ref(false)
@@ -131,6 +156,7 @@ const processing = ref(false)
 const uploadStatus = ref('Select a video to upload.')
 const videos = ref<VideoListItem[]>([])
 const loadingVideos = ref(false)
+const publishingId = ref<string | null>(null)
 
 const uploaderApiBaseUrl = computed(() => {
   const configuredUrl = config.public.videoProcessorApiUrl || config.public.videoProcessorAdminUrl
@@ -247,6 +273,29 @@ const loadVideos = async () => {
     setStatus(`Unable to load videos: ${error?.message || 'Unknown error'}`)
   } finally {
     loadingVideos.value = false
+  }
+}
+
+const setVisibility = async (videoId: string, visibility: Visibility) => {
+  publishingId.value = videoId
+  try {
+    const response = await fetch(`${config.public.apiUrl}/api/admin/videos/${videoId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ visibility })
+    })
+    const data = await safeJson(response)
+    if (!response.ok) {
+      throw new Error(data.error || `Failed to update visibility (${response.status})`)
+    }
+    // Reflect the change locally without a full reload
+    const video = videos.value.find(v => v.videoId === videoId)
+    if (video) video.visibility = visibility as Visibility
+    setStatus(`${videoId} is now ${visibility}.`)
+  } catch (error: any) {
+    setStatus(`Publish failed: ${error?.message || 'Unknown error'}`)
+  } finally {
+    publishingId.value = null
   }
 }
 
