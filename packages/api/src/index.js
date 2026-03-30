@@ -15,6 +15,7 @@ import {
   requireAuth,
   requireRole,
 } from './auth.js'
+import { checkAnonymousRateLimit } from './rateLimit.js'
 
 export default {
   async fetch(request, env, ctx) {
@@ -184,6 +185,33 @@ async function handleVideoAccess(request, env, corsHeaders) {
     }
 
     const userId = authUser?.sub ?? legacyUserId
+
+    // ── Anonymous rate limiting ────────────────────────────────────────────────
+    // Only applied when there is no authenticated user (anonymous viewer).
+    // Logged-in users — even on the free plan — are never rate-limited here.
+    const isAnonymous = !authUser && (!userId || userId === 'anonymous')
+    if (isAnonymous) {
+      const rateLimitResult = await checkAnonymousRateLimit(request, env)
+      if (rateLimitResult?.limited) {
+        return new Response(
+          JSON.stringify({
+            error: 'rate_limit_exceeded',
+            retryAfter: rateLimitResult.retryAfter,
+            loginPrompt: true,
+            current: rateLimitResult.current,
+            limit: rateLimitResult.limit,
+          }),
+          {
+            status: 429,
+            headers: {
+              'Content-Type': 'application/json',
+              'Retry-After': String(rateLimitResult.retryAfter),
+              ...corsHeaders,
+            },
+          }
+        )
+      }
+    }
     const db = getDatabaseBinding(env)
 
     const subscription = userId
