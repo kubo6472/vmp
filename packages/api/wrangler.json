@@ -15,5 +15,11 @@
 		"SENDER_EMAIL": "vmp@tjm.sk",
 		"SENDER_NAME": "VMP",
 		"ALLOWED_ORIGINS": "https://vmp.tjm.sk,http://localhost:3000"
-	}
+	},
+	"observability": {
+		"logs": {
+			"enabled": true,
+			"invocation_logs": true
+		}
+	}	
 }
