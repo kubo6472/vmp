@@ -466,7 +466,7 @@ async function handleAdminVideoUpdate(request, env, corsHeaders) {
 
   // Guard: refuse to publish if the processed playlist is missing from R2.
   if (body.status === 'published' && env.BUCKET) {
-    const exists = await env.BUCKET.head(`videos/${videoId}/processed/playlist.m3u8`)
+    const exists = await hasProcessedPlaybackArtifact(env.BUCKET, videoId)
     if (!exists) {
       return jsonResponse({
         error: 'Cannot publish: processed media not found in R2. Upload and process the video first.',
@@ -637,11 +637,13 @@ function buildEntrypointCandidates(base, videoId, scope, protocol) {
     return protocol === 'dash'
       ? [
           `${base}/videos/${videoId}/manifest.mpd`,
+          `${base}/videos/${videoId}/processed/dash/manifest.mpd`,
           `${base}/videos/${videoId}/processed/manifest.mpd`,
           `${base}/videos/${videoId}/processed/playlist.mpd`,
         ]
       : [
           `${base}/videos/${videoId}/master.m3u8`,
+          `${base}/videos/${videoId}/processed/hls/master.m3u8`,
           `${base}/videos/${videoId}/processed/playlist.m3u8`,
         ]
   }
