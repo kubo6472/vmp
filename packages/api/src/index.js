@@ -280,7 +280,7 @@ async function handleVideoProxy(request, env, corsHeaders) {
   const manifestType = getManifestType(objectPath, upstreamResponse, requestedProtocol)
   if (manifestType === 'hls') {
     const manifest = await upstreamResponse.text()
-    const rewrittenManifest = rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds)
+    const rewrittenManifest = rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds, objectPath)
     const headers = new Headers(upstreamResponse.headers)
     headers.set('Content-Type', 'application/vnd.apple.mpegurl')
     headers.delete('Content-Length')
@@ -510,8 +510,13 @@ async function handleAdminVideoUpdate(request, env, corsHeaders) {
 
 async function hasProcessedPlaybackArtifact(bucket, videoId) {
   const candidateKeys = [
-    `videos/${videoId}/processed/hls/master.m3u8`,
+    // Flat layout produced by the current upload script (rclone copies TMP_DIR
+    // directly into videos/{id}/ with no processed/ subdirectory)
+    `videos/${videoId}/master.m3u8`,
+    `videos/${videoId}/manifest.mpd`,
+    // Legacy / processed-subdirectory layouts kept for backwards compatibility
     `videos/${videoId}/processed/playlist.m3u8`,
+    `videos/${videoId}/processed/hls/master.m3u8`,
     `videos/${videoId}/processed/dash/manifest.mpd`,
   ]
 
@@ -533,12 +538,18 @@ function getManifestType(objectPath, upstreamResponse, requestedProtocol) {
   return requestedProtocol
 }
 
-function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds) {
+function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds, objectPath = '') {
   const lines = manifest.split('\n')
   const hasPreviewLimit = typeof previewUntilSeconds === 'number' && previewUntilSeconds > 0
   const isMediaPlaylist = lines.some(l => l.trim().startsWith('#EXTINF:'))
   const isMasterPlaylist = lines.some(l => l.trim().startsWith('#EXT-X-STREAM-INF'))
   const previewQuery = hasPreviewLimit ? `previewUntil=${Math.floor(previewUntilSeconds)}` : null
+
+  // Base directory of the manifest in the proxy URL space, e.g. "videos/abc/".
+  // Used to resolve relative paths in master playlists so that previewUntil
+  // can be propagated to variant playlist requests.
+  const manifestDir = objectPath.includes('/') ? objectPath.slice(0, objectPath.lastIndexOf('/') + 1) : ''
+
   if (hasPreviewLimit && isMediaPlaylist) {
     let elapsed = 0, pending = null
     const out = []
@@ -560,6 +571,16 @@ function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds) {
   return lines.map(line => {
     const t = line.trim()
     if (!t || t.startsWith('#')) return line
+    if (isMasterPlaylist && hasPreviewLimit) {
+      // For relative paths in master playlists we must resolve them to an
+      // absolute proxy path so the previewUntil param is carried through to
+      // the variant playlist request (hls.js fetches the URL verbatim).
+      const isRelative = !/^https?:\/\//i.test(t) && !t.startsWith('/')
+      if (isRelative && manifestDir) {
+        const absolutePath = `${manifestDir}${t}`
+        return rewriteSegmentPath(absolutePath, previewQuery)
+      }
+    }
     return rewriteSegmentPath(t, isMasterPlaylist && hasPreviewLimit ? previewQuery : null)
   }).join('\n')
 }
@@ -611,9 +632,18 @@ async function resolveMediaEntrypointUrl({ env, videoId, hasPremiumAccess, proto
 
 function buildEntrypointCandidates(base, videoId, scope, protocol) {
   if (scope === 'videos') {
+    // Flat layout (upload script copies TMP_DIR directly under videos/{id}/)
+    // checked first; processed/ subdirectory kept for backwards compatibility.
     return protocol === 'dash'
-      ? [`${base}/videos/${videoId}/processed/manifest.mpd`, `${base}/videos/${videoId}/processed/playlist.mpd`]
-      : [`${base}/videos/${videoId}/processed/playlist.m3u8`]
+      ? [
+          `${base}/videos/${videoId}/manifest.mpd`,
+          `${base}/videos/${videoId}/processed/manifest.mpd`,
+          `${base}/videos/${videoId}/processed/playlist.mpd`,
+        ]
+      : [
+          `${base}/videos/${videoId}/master.m3u8`,
+          `${base}/videos/${videoId}/processed/playlist.m3u8`,
+        ]
   }
   return protocol === 'dash'
     ? [`${base}/${scope}/${videoId}/manifest.mpd`, `${base}/${scope}/${videoId}/playlist.mpd`]
