@@ -1,25 +1,22 @@
-export async function onRequest(context) {
-  const { request, env } = context;
+export async function onRequestOptions(context) {
+  const corsHeaders = buildCorsHeaders(context.request);
+  return new Response(null, { status: 204, headers: corsHeaders });
+}
 
-  if (request.method === 'OPTIONS') {
-    return withCors(new Response(null, { status: 204 }), request);
-  }
-
-  if (request.method !== 'GET') {
-    return withCors(json({ error: 'Method not allowed' }, 405), request);
-  }
+export async function onRequestGet(context) {
+  const { env, request } = context;
+  const corsHeaders = buildCorsHeaders(request);
 
   if (!env.VIDEO_BUCKET) {
-    return withCors(json({ error: 'VIDEO_BUCKET binding is required' }, 500), request);
+    return json({ error: 'VIDEO_BUCKET binding is required' }, 500, corsHeaders);
   }
 
-  try {
-    const objects = await listAllVideoObjects(env.VIDEO_BUCKET);
-    const byVideoId = new Map();
+  const objects = await listAllVideoObjects(env.VIDEO_BUCKET);
+  const byVideoId = new Map();
 
-    for (const object of objects) {
-      const videoId = getVideoIdFromKey(object.key);
-      if (!videoId) continue;
+  for (const object of objects) {
+    const videoId = getVideoIdFromKey(object.key);
+    if (!videoId) continue;
 
       const entry = byVideoId.get(videoId) ?? newVideoEntry(videoId);
       hydrateVideoEntry(entry, object);
@@ -28,32 +25,29 @@ export async function onRequest(context) {
 
     await hydrateMetadata(byVideoId, env);
 
-    const entries = Array.from(byVideoId.values())
-      .filter((entry) => entry.hasSource || entry.hasAnyProcessedArtifact)
-      .map((entry) => {
-        const hasPlaylist = entry.packaging.hasHlsMaster || entry.packaging.hasLegacyPlaylist;
-        const needsProcessing = entry.hasSource && !hasPlaylist;
-        return {
-          videoId: entry.videoId,
-          status: hasPlaylist ? 'processed' : 'uploaded',
-          needsProcessing,
-          packaging: entry.packaging,
-          visibility: entry.visibility ?? 'private',
-          sourceKey: entry.sourceKey,
-          updatedAt: entry.updatedAt
-        };
-      });
+  const entries = Array.from(byVideoId.values())
+    .filter((entry) => entry.hasSource || entry.hasAnyProcessedArtifact)
+    .map((entry) => {
+      const hasPlaylist = entry.packaging.hasHlsMaster || entry.packaging.hasLegacyPlaylist;
+      const needsProcessing = entry.hasSource && !hasPlaylist;
+      return {
+        videoId: entry.videoId,
+        status: hasPlaylist ? 'processed' : 'uploaded',
+        needsProcessing,
+        packaging: entry.packaging,
+        visibility: entry.visibility ?? 'private',
+        sourceKey: entry.sourceKey,
+        updatedAt: entry.updatedAt
+      };
+    });
 
-    await syncVideosTable(entries, env);
+  await syncVideosTable(entries, env);
 
-    entries.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  entries.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
-    return withCors(json({ videos: entries }), request);
-  } catch (error) {
-    console.error('Failed to build admin videos inventory', error);
-    return withCors(json({ error: 'Failed to load videos', details: String(error?.message || error) }, 500), request);
-  }
+  return json({ videos: entries });
 }
+
 
 async function listAllVideoObjects(bucket) {
   const objects = [];
@@ -67,7 +61,6 @@ async function listAllVideoObjects(bucket) {
 
   return objects;
 }
-
 function newVideoEntry(videoId) {
   return {
     videoId,
@@ -100,10 +93,18 @@ function hydrateVideoEntry(entry, object) {
 
   if (object.key.startsWith(processedPrefix)) {
     entry.hasAnyProcessedArtifact = true;
-    if (object.key.endsWith('/hls/master.m3u8')) entry.packaging.hasHlsMaster = true;
-    if (object.key.endsWith('/dash/manifest.mpd')) entry.packaging.hasDashManifest = true;
-    if (object.key.endsWith('/playlist.m3u8')) entry.packaging.hasLegacyPlaylist = true;
-    if (/\.m4s$|\.mp4$/i.test(object.key) && /\/processed\//.test(object.key)) entry.packaging.hasVariantMedia = true;
+    if (object.key.endsWith('/hls/master.m3u8')) {
+      entry.packaging.hasHlsMaster = true;
+    }
+    if (object.key.endsWith('/dash/manifest.mpd')) {
+      entry.packaging.hasDashManifest = true;
+    }
+    if (object.key.endsWith('/playlist.m3u8')) {
+      entry.packaging.hasLegacyPlaylist = true;
+    }
+    if (/\.m4s$|\.mp4$/i.test(object.key) && /\/processed\//.test(object.key)) {
+      entry.packaging.hasVariantMedia = true;
+    }
   }
 
   entry.updatedAt = maxDate(entry.updatedAt, object.uploaded);
@@ -156,7 +157,12 @@ async function hydrateMetadata(byVideoId, env) {
 function finalizePackaging(entry) {
   const hasModernPackaging = entry.packaging.hasHlsMaster && entry.packaging.hasVariantMedia;
   const isValid = hasModernPackaging || entry.packaging.hasLegacyPlaylist;
-  entry.packaging.mode = hasModernPackaging ? 'modern' : entry.packaging.hasLegacyPlaylist ? 'legacy' : 'invalid';
+
+  entry.packaging.mode = hasModernPackaging
+    ? 'modern'
+    : entry.packaging.hasLegacyPlaylist
+      ? 'legacy'
+      : 'invalid';
   entry.packaging.isValid = isValid;
 }
 
@@ -170,13 +176,10 @@ function getPackagingStateFromMetadata(metadata, videoId) {
   const allProcessedKeys = Array.from(collectStringValues(metadata)).filter((value) => value.startsWith(processedPrefix));
 
   const keys = new Set(allProcessedKeys);
-  return {
-    hasHlsMaster: keys.has(hlsMasterKey),
-    hasDashManifest: keys.has(dashManifestKey),
-    hasLegacyPlaylist: keys.has(legacyPlaylistKey),
-    hasVariantMedia: allProcessedKeys.some((key) => variantMediaPattern.test(key))
-  };
-}
+  const hasHlsMaster = keys.has(hlsMasterKey);
+  const hasDashManifest = keys.has(dashManifestKey);
+  const hasLegacyPlaylist = keys.has(legacyPlaylistKey);
+  const hasVariantMedia = allProcessedKeys.some((key) => variantMediaPattern.test(key));
 
 async function syncVideosTable(entries, env) {
   const db = getVideoDatabaseBinding(env);
@@ -278,27 +281,77 @@ function getVideoDatabaseBinding(env) {
   return env.video_subscription_db || env.VIDEO_SUBSCRIPTION_DB || env.DB || null;
 }
 
-
-function withCors(response, request) {
-  const headers = new Headers(response.headers);
+function buildCorsHeaders(request) {
   const origin = request.headers.get('Origin');
+  return {
+    hasHlsMaster,
+    hasDashManifest,
+    hasLegacyPlaylist,
+    hasVariantMedia
+  };
+}
 
-  if (origin) {
-    headers.set('Access-Control-Allow-Origin', origin);
-    headers.set('Access-Control-Allow-Credentials', 'true');
-    headers.set('Vary', 'Origin');
-  } else {
-    headers.set('Access-Control-Allow-Origin', '*');
+async function syncVideosTable(entries, env) {
+  const db = getVideoDatabaseBinding(env);
+  if (!db) {
+    return;
   }
 
-  headers.set('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata');
+  for (const entry of entries) {
+    const sourceName = entry.sourceKey?.split('/').pop() || entry.videoId;
+    const title = sourceName.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || `Uploaded video ${entry.videoId}`;
+    const status = entry.needsProcessing ? 'uploaded' : 'processed';
+    const now = entry.updatedAt || new Date().toISOString();
 
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers
-  });
+    await db.prepare(`
+      INSERT INTO videos (
+        id, title, description, thumbnail_url, full_duration, preview_duration, upload_date, created_at,
+        source_key, visibility, status, updated_at, processed_at, managed_by_r2
+      )
+      VALUES (?, ?, '', NULL, 0, 0, ?, COALESCE((SELECT created_at FROM videos WHERE id = ?), ?), ?, ?, ?, ?,
+        CASE WHEN ? = 'processed' THEN ? ELSE NULL END,
+        1
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        title = CASE WHEN videos.managed_by_r2 = 1 OR videos.title IS NULL OR videos.title = '' THEN excluded.title ELSE videos.title END,
+        source_key = excluded.source_key,
+        visibility = excluded.visibility,
+        status = excluded.status,
+        updated_at = excluded.updated_at,
+        processed_at = CASE
+          WHEN excluded.status = 'processed' THEN COALESCE(videos.processed_at, excluded.processed_at)
+          ELSE NULL
+        END,
+        managed_by_r2 = 1
+    `).bind(
+      entry.videoId,
+      title,
+      now,
+      entry.videoId,
+      now,
+      entry.sourceKey,
+      entry.visibility,
+      status,
+      now,
+      status,
+      now
+    ).run();
+  }
+
+  if (!entries.length) {
+    await db.prepare('DELETE FROM videos WHERE managed_by_r2 = 1').run();
+    return;
+  }
+
+  const placeholders = entries.map(() => '?').join(',');
+  const statement = db.prepare(`DELETE FROM videos WHERE managed_by_r2 = 1 AND id NOT IN (${placeholders})`).bind(
+    ...entries.map((entry) => entry.videoId)
+  );
+  await statement.run();
+}
+
+function getVideoDatabaseBinding(env) {
+  return env.video_subscription_db || env.VIDEO_SUBSCRIPTION_DB || env.DB || null;
 }
 
 function* collectStringValues(value) {
@@ -325,9 +378,12 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function json(data, status = 200) {
+function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json' }
+    headers: {
+      'content-type': 'application/json',
+      ...extraHeaders
+    }
   });
 }
