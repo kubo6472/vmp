@@ -11,6 +11,41 @@
         </div>
       </div>
 
+      <!-- Rate Limit State -->
+      <div v-else-if="rateLimited" class="max-w-4xl mx-auto">
+        <div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-6">
+          <div class="flex items-start space-x-4">
+            <div class="flex-shrink-0 w-10 h-10 bg-amber-100 dark:bg-amber-900 rounded-full flex items-center justify-center">
+              <svg class="w-5 h-5 text-amber-600 dark:text-amber-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 102 0V6zm-1 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <div class="flex-1">
+              <h3 class="text-lg font-semibold text-amber-900 dark:text-amber-200 mb-1">
+                Free preview limit reached
+              </h3>
+              <p class="text-amber-800 dark:text-amber-300 mb-4">
+                You've watched {{ rateLimitCount }} free previews this hour. Sign in for unlimited previews — it's free.
+              </p>
+              <div class="flex items-center space-x-3">
+                <NuxtLink
+                  :to="`/login?redirect=/watch/${videoId}`"
+                  class="inline-flex items-center px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition-colors"
+                >
+                  Sign in
+                </NuxtLink>
+                <NuxtLink to="/" class="text-amber-700 dark:text-amber-400 hover:underline text-sm">
+                  ← Back to homepage
+                </NuxtLink>
+              </div>
+              <p v-if="rateLimitRetryAfter" class="mt-3 text-xs text-amber-600 dark:text-amber-500">
+                Or wait {{ formatRetryAfter(rateLimitRetryAfter) }} for your limit to reset.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Error State -->
       <div v-else-if="error" class="max-w-4xl mx-auto">
         <div class="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-6">
@@ -230,13 +265,16 @@ type MediaLikeElement = HTMLElement & {
   removeEventListener: HTMLElement['removeEventListener']
 }
 
-const videoElement       = ref<MediaLikeElement | null>(null)
-const loading            = ref(true)
-const error              = ref<string | null>(null)
-const videoData          = ref<any>(null)
-const recommendations    = ref<any[]>([])
-const showPremiumOverlay = ref(false)
-const currentTime        = ref(0)
+const videoElement        = ref<MediaLikeElement | null>(null)
+const loading             = ref(true)
+const error               = ref<string | null>(null)
+const videoData           = ref<any>(null)
+const recommendations     = ref<any[]>([])
+const showPremiumOverlay  = ref(false)
+const currentTime         = ref(0)
+const rateLimited         = ref(false)
+const rateLimitRetryAfter = ref<number | null>(null)
+const rateLimitCount      = ref(0)
 
 const videoId = route.params.videoId as string
 
@@ -261,6 +299,12 @@ const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60)
   const secs = seconds % 60
   return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+const formatRetryAfter = (seconds: number) => {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
 }
 
 // ── Event handlers ────────────────────────────────────────────────────────────
@@ -316,6 +360,17 @@ onMounted(async () => {
     const videoResponse = await fetch(
       `${config.public.apiUrl}/api/video-access/${resolvedUserId}/${videoId}`
     )
+
+    if (videoResponse.status === 429) {
+      const data = await videoResponse.json().catch(() => ({}))
+      rateLimited.value = true
+      rateLimitRetryAfter.value = data.retryAfter ?? null
+      // Show the limit value from the response (current count equals the limit)
+      rateLimitCount.value = data.current ?? 5
+      loading.value = false
+      return
+    }
+
     if (!videoResponse.ok) throw new Error('Failed to load video data')
     videoData.value = await videoResponse.json()
 
