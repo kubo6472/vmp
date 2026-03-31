@@ -410,6 +410,15 @@ async function handleAdminVideosList(request, env, corsHeaders) {
         return parts[parts.length - 1]
       }).filter(Boolean)
 
+      // ── 1b. Remove D1 rows for videos whose R2 folder no longer exists ────────
+      const r2VideoIdSet = new Set(r2VideoIds)
+      const allD1Rows = await db.prepare('SELECT id FROM videos').all()
+      for (const { id } of (allD1Rows.results || [])) {
+        if (!r2VideoIdSet.has(id)) {
+          await db.prepare('DELETE FROM videos WHERE id = ?').bind(id).run()
+        }
+      }
+
       for (const r2Id of r2VideoIds) {
         // Register every R2 video folder as a draft regardless of whether
         // processed artifacts exist yet — source-only and mid-processing

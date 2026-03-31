@@ -153,23 +153,11 @@ for i in {1..5}; do
     fi
 
     # Verify the full segmented artifact set is present on R2
-    # Retry rclone lsf to handle transient failures
-    REMOTE=""
-    for lsf_attempt in {1..3}; do
-        if REMOTE=$(rclone lsf "${R2_BUCKET}:/videos/${VIDEO_ID}" 2>/dev/null); then
-            break
-        else
-            log "⚠️ rclone lsf attempt $lsf_attempt failed"
-            [ "$lsf_attempt" -lt 3 ] && sleep 2
-        fi
-    done
-
-    if [ -z "$REMOTE" ]; then
-        log "⚠️ Upload attempt $i failed (rclone lsf exhausted)"
+    if ! REMOTE=$(rclone lsf "${R2_BUCKET}:/videos/${VIDEO_ID}" 2>/dev/null); then
+        log "⚠️ Upload attempt $i: rclone lsf failed — retrying upload"
         sleep 3
         continue
     fi
-
     MISSING=""
 
     for required in master.m3u8 manifest.mpd init_1080.mp4 init_720.mp4 init_480.mp4; do
