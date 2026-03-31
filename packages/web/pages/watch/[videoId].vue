@@ -95,7 +95,7 @@
               <media-loading-indicator slot="centered-chrome"></media-loading-indicator>
 
               <!-- Premium Overlay -->
-              <PremiumOverlay :show="showPremiumOverlay" />
+              <PremiumOverlay :show="showPremiumOverlay" :video-id="videoId" />
 
               <!-- Custom Control Bar -->
               <media-control-bar class="watch-media-control-bar relative" noautohide>

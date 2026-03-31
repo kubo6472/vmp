@@ -239,8 +239,8 @@ async function handleVideoAccess(request, env, corsHeaders) {
     const subscription = userId
       ? await db.prepare(`
           SELECT * FROM subscriptions
-          WHERE user_id = ? AND status = 'active'
-            AND (current_period_end IS NULL OR current_period_end > CURRENT_TIMESTAMP)
+          WHERE user_id = ? AND status IN ('active', 'trialing')
+            AND (current_period_end IS NULL OR datetime(current_period_end) > CURRENT_TIMESTAMP)
           ORDER BY created_at DESC
           LIMIT 1
         `).bind(userId).first()
@@ -267,7 +267,7 @@ async function handleVideoAccess(request, env, corsHeaders) {
       subscription: {
         planType: subscription ? subscription.plan_type : 'free',
         status: subscription ? subscription.status : 'none',
-        expiresAt: subscription ? subscription.expires_at : null,
+        expiresAt: subscription ? subscription.current_period_end : null,
       },
       video: { title: video?.title ?? `Uploaded Video ${videoId}`, fullDuration, previewDuration, playlistUrl },
       chapters: [

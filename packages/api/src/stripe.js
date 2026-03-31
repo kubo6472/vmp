@@ -77,16 +77,24 @@ async function stripeGet(path, env) {
 async function verifyStripeWebhook(rawBody, sigHeader, secret) {
   if (!sigHeader || !secret) return false
 
-  // Parse "t=...,v1=..." into { t: '...', v1: '...' }
-  const parts = {}
+  // Parse "t=<timestamp>,v1=<sig1>,v1=<sig2>" — multiple v1= values are valid
+  // when Stripe rotates webhook signing secrets.
+  let ts = null
+  const v1s = []
   for (const segment of sigHeader.split(',')) {
     const eq = segment.indexOf('=')
     if (eq === -1) continue
-    parts[segment.slice(0, eq)] = segment.slice(eq + 1)
+    const k = segment.slice(0, eq)
+    const v = segment.slice(eq + 1)
+    if (k === 't') ts = Number(v)
+    else if (k === 'v1') v1s.push(v)
   }
-  if (!parts.t || !parts.v1) return false
+  if (!ts || v1s.length === 0) return false
 
-  const signedPayload = `${parts.t}.${rawBody}`
+  // Reject events older than 5 minutes to prevent replay attacks
+  if (Math.abs(Date.now() / 1000 - ts) > 300) return false
+
+  const signedPayload = `${ts}.${rawBody}`
 
   const key = await crypto.subtle.importKey(
     'raw',
@@ -102,13 +110,16 @@ async function verifyStripeWebhook(rawBody, sigHeader, secret) {
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
 
-  // Constant-time comparison (prevent timing attacks)
-  if (expected.length !== parts.v1.length) return false
-  let diff = 0
-  for (let i = 0; i < expected.length; i++) {
-    diff |= expected.charCodeAt(i) ^ parts.v1.charCodeAt(i)
+  // Constant-time comparison against each signature in the header
+  for (const candidate of v1s) {
+    if (expected.length !== candidate.length) continue
+    let diff = 0
+    for (let i = 0; i < expected.length; i++) {
+      diff |= expected.charCodeAt(i) ^ candidate.charCodeAt(i)
+    }
+    if (diff === 0) return true
   }
-  return diff === 0
+  return false
 }
 
 // ─── D1 / admin_settings helpers ─────────────────────────────────────────────
@@ -233,6 +244,21 @@ export async function handleCheckout(request, env, corsHeaders) {
 
   try {
     const db = getDb(env)
+
+    // Guard: don't create a new checkout session if the user already has an
+    // active or trialing subscription. Return a 409 pointing them to the portal.
+    const existingSub = await db.prepare(`
+      SELECT id FROM subscriptions
+      WHERE user_id = ? AND status IN ('active', 'trialing', 'past_due')
+      LIMIT 1
+    `).bind(user.sub).first()
+    if (existingSub) {
+      return jsonResponse({
+        error: 'You already have an active subscription. Use the customer portal to manage it.',
+        code: 'subscription_exists',
+      }, 409, corsHeaders)
+    }
+
     const priceId = await getAdminSetting(db, `stripe_price_${body.planType}`)
     if (!priceId) {
       return jsonResponse({
@@ -344,8 +370,8 @@ export async function handleWebhook(request, env, corsHeaders) {
     return jsonResponse({ ok: true }, 200, corsHeaders)
   } catch (err) {
     console.error('handleWebhook error:', err)
-    // Return 200 to prevent Stripe from retrying on our internal errors
-    return jsonResponse({ ok: true, warning: 'Internal processing error' }, 200, corsHeaders)
+    // Return 500 so Stripe retries the event on transient failures
+    return jsonResponse({ error: 'Internal server error' }, 500, corsHeaders)
   }
 }
 

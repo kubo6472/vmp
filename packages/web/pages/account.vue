@@ -115,13 +115,24 @@ if (!isLoggedIn.value) {
   await navigateTo(`/login?redirect=/account`)
 }
 
-const loadingSub      = ref(true)
-const openingPortal   = ref(false)
-const portalError     = ref<string | null>(null)
+const loadingSub        = ref(true)
+const openingPortal     = ref(false)
+const portalError       = ref<string | null>(null)
 const showWelcomeBanner = ref(route.query.subscribed === '1')
 
 onMounted(async () => {
-  await fetchSubscription()
+  if (showWelcomeBanner.value) {
+    // After a Stripe checkout redirect the webhook may not have fired yet.
+    // Poll up to 5 times (at 2 s intervals) until we see an active subscription.
+    const MAX_ATTEMPTS = 5
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      await fetchSubscription()
+      if (subscription.value?.status === 'active' || subscription.value?.status === 'trialing') break
+      if (attempt < MAX_ATTEMPTS - 1) await new Promise(r => setTimeout(r, 2000))
+    }
+  } else {
+    await fetchSubscription()
+  }
   loadingSub.value = false
 })
 

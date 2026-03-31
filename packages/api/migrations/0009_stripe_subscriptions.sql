@@ -24,7 +24,21 @@ CREATE TABLE subscriptions (
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user   ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe ON subscriptions(stripe_subscription_id);
 
--- Old test data used integer PKs and incompatible plan values — discard it.
+-- Migrate any real subscription rows before dropping the old table.
+-- Maps legacy plan_type ('premium' → 'monthly') and status ('expired' → 'cancelled').
+-- Free-tier rows (plan_type = 'free') have no entitlements and are skipped.
+-- Integer PKs are cast to TEXT. Stripe columns default to NULL.
+INSERT OR IGNORE INTO subscriptions (id, user_id, plan_type, status, created_at, updated_at)
+SELECT
+  CAST(id AS TEXT),
+  user_id,
+  CASE plan_type WHEN 'premium' THEN 'monthly' ELSE plan_type END,
+  CASE status    WHEN 'expired' THEN 'cancelled' ELSE status END,
+  created_at,
+  updated_at
+FROM subscriptions_v1
+WHERE plan_type != 'free';
+
 DROP TABLE subscriptions_v1;
 
 -- Ensure admin_settings table exists (created in 0003, but guard for safety).

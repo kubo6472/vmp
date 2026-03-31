@@ -199,9 +199,13 @@ export function useAuth() {
       if (res.ok) {
         const data = await res.json()
         subscription.value = data.subscription ?? null
+      } else {
+        // Non-OK response (e.g. 401 after token expiry) — clear stale entitlements
+        subscription.value = null
       }
     } catch {
-      // Silent — subscription state defaults to null (free-tier experience)
+      // Network error — clear stale entitlements rather than showing wrong access
+      subscription.value = null
     }
   }
 
