@@ -762,19 +762,19 @@ function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds, objec
   // Helper to rewrite URLs in HLS tag attributes
   function rewriteTagAttributes(line, query) {
     // Handle #EXT-X-MAP:URI="..."
-    line = line.replace(/(#EXT-X-MAP:[^,]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
+    line = line.replace(/(#EXT-X-MAP:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
       return prefix + rewriteSegmentPath(url, query) + suffix
     })
     // Handle #EXT-X-KEY:URI="..."
-    line = line.replace(/(#EXT-X-KEY:[^,]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
+    line = line.replace(/(#EXT-X-KEY:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
       return prefix + rewriteSegmentPath(url, query) + suffix
     })
     // Handle #EXT-X-MEDIA:URI="..."
-    line = line.replace(/(#EXT-X-MEDIA:[^,]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
+    line = line.replace(/(#EXT-X-MEDIA:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
       return prefix + rewriteSegmentPath(url, query) + suffix
     })
     // Handle #EXT-X-I-FRAME-STREAM-INF:URI="..."
-    line = line.replace(/(#EXT-X-I-FRAME-STREAM-INF:[^,]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
+    line = line.replace(/(#EXT-X-I-FRAME-STREAM-INF:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
       return prefix + rewriteSegmentPath(url, query) + suffix
     })
     return line
