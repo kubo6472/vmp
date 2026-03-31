@@ -720,7 +720,7 @@ export async function handleTotpConfirm(request, env, corsHeaders) {
     return authJson({ error: 'Invalid code. Make sure your device clock is correct and try again.' }, 400, corsHeaders)
   }
 
-  const totpKey = env.TOTP_ENCRYPTION_KEY || env.JWT_SECRET
+  const totpKey = getTotpEncryptionKey(env)
   const encryptedSecret = await encryptTotpSecret(secret, totpKey)
   const db = getDb(env)
 
@@ -825,7 +825,7 @@ export async function handleTotpVerify(request, env, corsHeaders) {
     return authJson({ error: '2FA is not configured for this account.' }, 400, corsHeaders)
   }
 
-  const totpKey = env.TOTP_ENCRYPTION_KEY || env.JWT_SECRET
+  const totpKey = getTotpEncryptionKey(env)
   let plainSecret
   try {
     plainSecret = await decryptTotpSecret(userRow.totp_secret, totpKey)
@@ -836,19 +836,29 @@ export async function handleTotpVerify(request, env, corsHeaders) {
   // ── Verify TOTP code ──────────────────────────────────────────────────────
   const valid = await verifyTotp(plainSecret, code)
   if (!valid) {
-    // Increment failed attempts — reject next request if limit hit.
-    await db
-      .prepare('UPDATE totp_challenges SET failed_attempts = failed_attempts + 1 WHERE jti = ?')
-      .bind(pending.jti)
+    // Guard: only increment if not already used and below the cap.
+    // A zero changes count means a concurrent request beat us — treat as expired.
+    const incrResult = await db
+      .prepare(`UPDATE totp_challenges
+                SET failed_attempts = failed_attempts + 1
+                WHERE jti = ? AND used_at IS NULL AND failed_attempts < ?`)
+      .bind(pending.jti, MAX_FAILED_ATTEMPTS)
       .run()
+    if (!incrResult.meta.changes) {
+      return authJson({ error: 'Sign-in session is no longer valid. Please start again.', code: 'session_expired' }, 401, corsHeaders)
+    }
     return authJson({ error: 'Invalid code. Please try again.' }, 400, corsHeaders)
   }
 
-  // Mark challenge as used (prevents replay of the same pendingToken).
-  await db
-    .prepare('UPDATE totp_challenges SET used_at = CURRENT_TIMESTAMP WHERE jti = ?')
+  // Mark challenge as used — guard ensures only one concurrent success wins.
+  // A zero changes count means another request already consumed this token.
+  const consumeResult = await db
+    .prepare('UPDATE totp_challenges SET used_at = CURRENT_TIMESTAMP WHERE jti = ? AND used_at IS NULL')
     .bind(pending.jti)
     .run()
+  if (!consumeResult.meta.changes) {
+    return authJson({ error: 'This sign-in link has already been used.', code: 'session_expired' }, 401, corsHeaders)
+  }
 
   const user         = { id: userRow.id, email: userRow.email, role: userRow.role, totp_enabled: userRow.totp_enabled }
   const accessToken  = await createAccessToken(user, env.JWT_SECRET)
@@ -865,6 +875,16 @@ export async function handleTotpVerify(request, env, corsHeaders) {
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
+
+// Fail fast if the dedicated TOTP encryption key is not configured.
+// Using JWT_SECRET as a fallback would re-couple TOTP storage to JWT signing,
+// meaning a JWT key rotation could silently break decryption for enrolled users.
+function getTotpEncryptionKey(env) {
+  if (!env.TOTP_ENCRYPTION_KEY) {
+    throw new Error('TOTP_ENCRYPTION_KEY secret is required but not set. Run: wrangler secret put TOTP_ENCRYPTION_KEY')
+  }
+  return env.TOTP_ENCRYPTION_KEY
+}
 
 function getDb(env) {
   const db = env.DB || env.video_subscription_db
