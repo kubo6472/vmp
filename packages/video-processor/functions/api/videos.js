@@ -104,6 +104,18 @@ function hydrateVideoEntry(entry, object) {
     }
   }
 
+  // Flat layout — shell script rclones TMP_DIR directly into videos/{id}/
+  // (no processed/ subdirectory). Detect master.m3u8 and CMAF segment files.
+  if (object.key === `videos/${entry.videoId}/master.m3u8`) {
+    entry.hasAnyProcessedArtifact = true;
+    entry.packaging.hasHlsMaster = true;
+  }
+  const isNotSource = !object.key.startsWith(`videos/${entry.videoId}/source/`);
+  if (isNotSource && (/\.m4s$/i.test(object.key) || /\/init_[^/]+\.mp4$/i.test(object.key))) {
+    entry.hasAnyProcessedArtifact = true;
+    entry.packaging.hasVariantMedia = true;
+  }
+
   entry.updatedAt = maxDate(entry.updatedAt, object.uploaded);
 }
 
@@ -172,12 +184,17 @@ function getPackagingStateFromMetadata(metadata, videoId) {
   const legacyPlaylistKey = `${processedPrefix}playlist.m3u8`;
   const variantMediaPattern = new RegExp(`^videos/${escapeRegExp(videoId)}/processed/[^/]+/.+(?:\\.m4s|\\.mp4)$`);
 
-  const allProcessedKeys = Array.from(collectStringValues(metadata)).filter((v) => v.startsWith(processedPrefix));
+  const allStringValues = Array.from(collectStringValues(metadata));
+  const allProcessedKeys = allStringValues.filter((v) => v.startsWith(processedPrefix));
   const keys = new Set(allProcessedKeys);
 
+  // Also accept flat-layout master key written by the updated process.js
+  const flatHlsMasterKey = `videos/${videoId}/master.m3u8`;
+  const flatDashManifestKey = `videos/${videoId}/manifest.mpd`;
+
   return {
-    hasHlsMaster: keys.has(hlsMasterKey),
-    hasDashManifest: keys.has(dashManifestKey),
+    hasHlsMaster: keys.has(hlsMasterKey) || allStringValues.includes(flatHlsMasterKey),
+    hasDashManifest: keys.has(dashManifestKey) || allStringValues.includes(flatDashManifestKey),
     hasLegacyPlaylist: keys.has(legacyPlaylistKey),
     hasVariantMedia: allProcessedKeys.some((key) => variantMediaPattern.test(key))
   };

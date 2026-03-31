@@ -23,8 +23,6 @@ export async function onRequest(context) {
     const visibility = sanitizeVisibility(body.visibility);
     const validateDash = Boolean(body.validateDash);
 
-    const hlsMasterKey = `videos/${videoId}/processed/hls/master.m3u8`;
-    const dashManifestKey = `videos/${videoId}/processed/dash/manifest.mpd`;
     const metadataKey = `videos/${videoId}/metadata.json`;
     const processedAt = new Date().toISOString();
 
@@ -32,22 +30,63 @@ export async function onRequest(context) {
     const existingMetadata = existingMetadataObject
       ? await existingMetadataObject.json().catch(() => null)
       : null;
-    const durationSeconds = toNumberOrNull(existingMetadata?.durationSeconds);
+    let durationSeconds = toNumberOrNull(existingMetadata?.durationSeconds);
 
-    const hlsMaster = await env.VIDEO_BUCKET.get(hlsMasterKey);
+    // Try flat layout (shell-script output) first, then the processed/hls/ path
+    const hlsMasterCandidates = [
+      `videos/${videoId}/master.m3u8`,
+      `videos/${videoId}/processed/hls/master.m3u8`,
+    ];
+    let hlsMasterKey = null;
+    let hlsMaster = null;
+    for (const candidate of hlsMasterCandidates) {
+      const obj = await env.VIDEO_BUCKET.get(candidate);
+      if (obj) { hlsMasterKey = candidate; hlsMaster = obj; break; }
+    }
     if (!hlsMaster) {
-      return withCors(json({ error: `Missing required HLS master playlist at ${hlsMasterKey}` }, 404), request);
+      return withCors(json({ error: `Missing required HLS master playlist. Tried: ${hlsMasterCandidates.join(', ')}` }, 404), request);
     }
 
     const hlsMasterContent = await hlsMaster.text();
     const { variants, audioGroups } = parseHlsMasterPlaylist(hlsMasterContent);
 
-    const dashManifest = await env.VIDEO_BUCKET.get(dashManifestKey);
-    if (validateDash && !dashManifest) {
-      return withCors(json({ error: `DASH validation requested but manifest not found at ${dashManifestKey}` }, 404), request);
+    // Derive duration by summing #EXTINF from the first variant media playlist
+    // when metadata.json has no durationSeconds (e.g. shell-script uploads)
+    if (durationSeconds === null && variants.length > 0) {
+      const firstUri = variants[0].uri;
+      if (firstUri) {
+        const masterDir = hlsMasterKey.slice(0, hlsMasterKey.lastIndexOf('/') + 1);
+        const variantKey = firstUri.startsWith('videos/') ? firstUri : `${masterDir}${firstUri}`;
+        const variantObj = await env.VIDEO_BUCKET.get(variantKey);
+        if (variantObj) {
+          const text = await variantObj.text();
+          const total = text.split('\n')
+            .filter(l => l.trim().startsWith('#EXTINF:'))
+            .reduce((s, l) => {
+              const n = Number.parseFloat(l.trim().slice('#EXTINF:'.length));
+              return Number.isFinite(n) ? s + n : s;
+            }, 0);
+          if (total > 0) durationSeconds = total;
+        }
+      }
     }
 
-    const resolvedDashManifestKey = dashManifest ? dashManifestKey : null;
+    // Try flat layout for DASH manifest, then processed/dash/
+    const dashManifestCandidates = [
+      `videos/${videoId}/manifest.mpd`,
+      `videos/${videoId}/processed/dash/manifest.mpd`,
+    ];
+    let dashManifestKey = null;
+    for (const c of dashManifestCandidates) {
+      const obj = await env.VIDEO_BUCKET.get(c);
+      if (obj) { dashManifestKey = c; break; }
+    }
+    const dashManifest = dashManifestKey ? true : null;
+    if (validateDash && !dashManifest) {
+      return withCors(json({ error: `DASH validation requested but manifest not found. Tried: ${dashManifestCandidates.join(', ')}` }, 404), request);
+    }
+
+    const resolvedDashManifestKey = dashManifestKey ?? null;
 
     const metadata = {
       videoId,
