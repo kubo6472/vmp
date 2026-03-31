@@ -108,11 +108,14 @@ async function submit() {
     await verifyTotp(code.value, pendingToken.value)
     await navigateTo(redirect.value)
   } catch (err: any) {
-    const msg = err.message || ''
-    if (msg.includes('expired') || msg.includes('session')) {
+    // Check structured error code first; fall back to message substring for compat.
+    const isExpired = err.code === 'session_expired'
+      || err.message?.includes('expired')
+      || err.message?.includes('session')
+    if (isExpired) {
       sessionExpired.value = true
     } else {
-      errorMessage.value = msg || 'Invalid code. Please try again.'
+      errorMessage.value = err.message || 'Invalid code. Please try again.'
       code.value = ''
     }
   } finally {

@@ -132,7 +132,10 @@ const otpAuthUrl   = ref('')
 const confirmCode  = ref('')
 const confirmError = ref('')
 const confirming   = ref(false)
-const qrCanvas     = ref<HTMLCanvasElement | null>(null)
+const qrCanvas      = ref<HTMLCanvasElement | null>(null)
+let   redirectTimer: ReturnType<typeof setTimeout> | null = null
+
+onUnmounted(() => { if (redirectTimer) clearTimeout(redirectTimer) })
 
 // Format the base32 secret with spaces every 4 chars for readability
 const formattedSecret = computed(() =>
@@ -187,7 +190,7 @@ async function confirm() {
     state.value = 'done'
 
     // Brief success flash before navigating
-    setTimeout(() => navigateTo('/admin'), 1500)
+    redirectTimer = setTimeout(() => navigateTo('/admin'), 1500)
   } catch (err: any) {
     confirmError.value = err.message || 'Invalid code. Please try again.'
     confirmCode.value  = ''

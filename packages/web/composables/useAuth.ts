@@ -150,7 +150,11 @@ export function useAuth() {
       body:        JSON.stringify({ code, pendingToken }),
     })
     const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Verification failed')
+    if (!res.ok) {
+      const err = new Error(data.error || 'Verification failed') as Error & { code?: string }
+      err.code = data.code
+      throw err
+    }
 
     setAccessToken(data.accessToken, data.user)
     return data.user
