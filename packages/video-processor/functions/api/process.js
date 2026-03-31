@@ -125,7 +125,7 @@ export async function onRequest(context) {
     }), request);
   } catch (error) {
     console.error('Failed to process video metadata registration', error);
-    return withCors(json({ error: 'Failed to process video', details: String(error?.message || error) }, 500), request);
+    return withCors(json({ error: 'Failed to process video' }, 500), request);
   }
 }
 
