@@ -106,9 +106,9 @@ process_video() {
         HAS_AUDIO=${HAS_AUDIO:-0}
 
         SHAKA_CMD=(shaka-packager
-            input="$TMP_DIR/1080p.mp4",stream=video,output="$TMP_DIR/video_1080.mp4"
-            input="$TMP_DIR/720p.mp4",stream=video,output="$TMP_DIR/video_720.mp4"
-            input="$TMP_DIR/480p.mp4",stream=video,output="$TMP_DIR/video_480.mp4"
+            "input=$TMP_DIR/1080p.mp4,stream=video,init_segment=$TMP_DIR/init_1080.mp4,segment_template=$TMP_DIR/seg_1080_\$Number\$.m4s"
+            "input=$TMP_DIR/720p.mp4,stream=video,init_segment=$TMP_DIR/init_720.mp4,segment_template=$TMP_DIR/seg_720_\$Number\$.m4s"
+            "input=$TMP_DIR/480p.mp4,stream=video,init_segment=$TMP_DIR/init_480.mp4,segment_template=$TMP_DIR/seg_480_\$Number\$.m4s"
             --segment_duration 2
             --fragment_duration 2
             --mpd_output "$TMP_DIR/manifest.mpd"
@@ -116,7 +116,7 @@ process_video() {
         )
 
         [ "$HAS_AUDIO" -gt 0 ] && \
-            SHAKA_CMD+=(input="$TMP_DIR/1080p.mp4",stream=audio,output="$TMP_DIR/audio.mp4")
+            SHAKA_CMD+=("input=$TMP_DIR/1080p.mp4,stream=audio,init_segment=$TMP_DIR/init_audio.mp4,segment_template=$TMP_DIR/seg_audio_\$Number\$.m4s")
 
         for i in {1..3}; do
             if "${SHAKA_CMD[@]}"; then
@@ -140,6 +140,9 @@ UPLOAD_OK=false
 
 for i in {1..5}; do
     if rclone copy "$TMP_DIR" "${R2_BUCKET}:/videos/${VIDEO_ID}" \
+        --exclude "1080p.mp4" \
+        --exclude "720p.mp4" \
+        --exclude "480p.mp4" \
         --ignore-existing \
         --transfers 8 \
         --checkers 16; then
