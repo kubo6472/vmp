@@ -621,16 +621,16 @@ async function verifyTotp(base32Secret, code) {
 // ─── TOTP secret encryption (AES-256-GCM) ────────────────────────────────────
 //
 // The raw TOTP secret must not be stored in plain text in D1.
-// We derive a 256-bit AES key from JWT_SECRET via SHA-256, then encrypt
-// with a random IV.  Storage format: "<iv_hex>:<ciphertext_hex>".
+// We derive a 256-bit AES key from the TOTP_ENCRYPTION_KEY secret via SHA-256,
+// then encrypt with a random IV.  Storage format: "<iv_hex>:<ciphertext_hex>".
 
-async function deriveAesKey(jwtSecret) {
-  const raw = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(jwtSecret))
+async function deriveAesKey(encryptionKey) {
+  const raw = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(encryptionKey))
   return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
 }
 
-async function encryptTotpSecret(plainSecret, jwtSecret) {
-  const key = await deriveAesKey(jwtSecret)
+async function encryptTotpSecret(plainSecret, encryptionKey) {
+  const key = await deriveAesKey(encryptionKey)
   const iv  = crypto.getRandomValues(new Uint8Array(12))
   const enc = new TextEncoder()
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(plainSecret))
@@ -640,12 +640,12 @@ async function encryptTotpSecret(plainSecret, jwtSecret) {
   return `${ivHex}:${ctHex}`
 }
 
-async function decryptTotpSecret(stored, jwtSecret) {
+async function decryptTotpSecret(stored, encryptionKey) {
   const [ivHex, ctHex] = stored.split(':')
   const iv = new Uint8Array(ivHex.match(/.{2}/g).map(b => parseInt(b, 16)))
   const ct = new Uint8Array(ctHex.match(/.{2}/g).map(b => parseInt(b, 16)))
 
-  const key   = await deriveAesKey(jwtSecret)
+  const key   = await deriveAesKey(encryptionKey)
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct)
   return new TextDecoder().decode(plain)
 }
