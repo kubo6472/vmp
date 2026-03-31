@@ -77,6 +77,14 @@
               <span class="text-sm">Upgrade to watch full video</span>
             </div>
 
+            <!-- Buffering Spinner -->
+            <div
+              v-if="buffering"
+              class="absolute inset-0 z-20 flex items-center justify-center pointer-events-none"
+            >
+              <div class="w-14 h-14 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
+            </div>
+
             <!-- Video Player -->
             <media-controller
               id="watch-media-controller"
@@ -272,6 +280,7 @@ const error               = ref<string | null>(null)
 const videoData           = ref<any>(null)
 const recommendations     = ref<any[]>([])
 const showPremiumOverlay  = ref(false)
+const buffering           = ref(false)
 const currentTime         = ref(0)
 const rateLimited         = ref(false)
 const rateLimitRetryAfter = ref<number | null>(null)
@@ -415,8 +424,17 @@ onUnmounted(teardownVideoListeners)
 
 let handleLoadedMetadata: (() => void) | null = null
 let handleMediaError:     (() => void) | null = null
+let handleWaiting:        (() => void) | null = null
+let handlePlaying:        (() => void) | null = null
+let handleCanPlay:        (() => void) | null = null
 
 const initializeVideoElement = async (playlistUrl: string) => {
+  // Wait for the custom element to be fully upgraded before touching it.
+  // Setting src before this resolves causes "this.api is undefined" inside
+  // the videojs-video element because its internal Video.js instance isn't
+  // created until connectedCallback runs.
+  await customElements.whenDefined('videojs-video')
+
   const video = videoElement.value
   if (!video) throw new Error('Video element is unavailable')
 
@@ -426,14 +444,20 @@ const initializeVideoElement = async (playlistUrl: string) => {
   handleMediaError = () => {
     error.value = 'Video playback error. The HLS stream could not be loaded.'
   }
+  handleWaiting  = () => { buffering.value = true }
+  handlePlaying  = () => { buffering.value = false }
+  handleCanPlay  = () => { buffering.value = false }
 
   video.addEventListener('loadedmetadata', handleLoadedMetadata, { once: true })
   video.addEventListener('error', handleMediaError)
+  video.addEventListener('waiting', handleWaiting)
+  video.addEventListener('playing', handlePlaying)
+  video.addEventListener('canplay', handleCanPlay)
+
+  buffering.value = true
   video.setAttribute('src', playlistUrl)
   video.setAttribute('playsinline', '')
   video.setAttribute('preload', 'auto')
-
-  await customElements.whenDefined('videojs-video')
   video.load()
 }
 
@@ -442,6 +466,9 @@ function teardownVideoListeners() {
   if (!video) return
   if (handleLoadedMetadata) { video.removeEventListener('loadedmetadata', handleLoadedMetadata); handleLoadedMetadata = null }
   if (handleMediaError)     { video.removeEventListener('error', handleMediaError);               handleMediaError     = null }
+  if (handleWaiting)        { video.removeEventListener('waiting', handleWaiting);                handleWaiting        = null }
+  if (handlePlaying)        { video.removeEventListener('playing', handlePlaying);                handlePlaying        = null }
+  if (handleCanPlay)        { video.removeEventListener('canplay', handleCanPlay);                handleCanPlay        = null }
 }
 </script>
 

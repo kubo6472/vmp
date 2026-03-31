@@ -426,8 +426,6 @@ async function handleVideoProxy(request, env, corsHeaders) {
     }
   }
 
-  // ── Step 4b: Real-time throttling for .ts/.m4s segments ──────────────────
-  const segFetchStart = isSegment ? Date.now() : 0
   const upstreamResponse = await fetch(upstreamUrl, { method: request.method, headers: upstreamHeaders })
 
   const manifestType = getManifestType(objectPath, upstreamResponse, requestedProtocol)
@@ -449,20 +447,6 @@ async function handleVideoProxy(request, env, corsHeaders) {
     headers.delete('Content-Length')
     for (const [k, v] of Object.entries(corsHeaders)) headers.set(k, v)
     return new Response(rewrittenManifest, { status: upstreamResponse.status, headers })
-  }
-
-  // Segment response — apply real-time throttle
-  if (isSegment && segFetchStart > 0) {
-    const elapsed = Date.now() - segFetchStart
-    let avgDur  = await getAvgSegmentDuration(proxyVideoId, env)
-    // Fallback to 6 seconds if avgDur is null
-    if (!avgDur) {
-      avgDur = 6
-    }
-    const targetMs = avgDur * 1000
-    if (elapsed < targetMs) {
-      await new Promise(r => setTimeout(r, targetMs - elapsed))
-    }
   }
 
   const headers = new Headers(upstreamResponse.headers)
