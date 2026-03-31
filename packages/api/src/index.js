@@ -12,6 +12,9 @@ import {
   handleRefreshToken,
   handleLogout,
   handleGetMe,
+  handleTotpSetup,
+  handleTotpConfirm,
+  handleTotpVerify,
   requireAuth,
   requireRole,
 } from './auth.js'
@@ -118,6 +121,15 @@ export default {
     }
     if (url.pathname === '/api/auth/me' && request.method === 'GET') {
       return handleGetMe(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/auth/2fa/setup' && request.method === 'GET') {
+      return handleTotpSetup(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/auth/2fa/confirm' && request.method === 'POST') {
+      return handleTotpConfirm(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/auth/2fa/verify' && request.method === 'POST') {
+      return handleTotpVerify(request, env, corsHeaders)
     }
 
     // ── Existing routes ───────────────────────────────────────────────────────

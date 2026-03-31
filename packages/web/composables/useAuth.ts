@@ -24,9 +24,10 @@
 export type Role = 'super_admin' | 'admin' | 'editor' | 'analyst' | 'moderator' | 'viewer'
 
 export interface AuthUser {
-  id:    string
-  email: string
-  role:  Role
+  id:          string
+  email:       string
+  role:        Role
+  totpEnabled: boolean
 }
 
 export interface SubscriptionData {
@@ -76,7 +77,7 @@ export function useAuth() {
    */
   function setAccessToken(token: string, authUser: AuthUser) {
     accessToken.value = token
-    user.value = authUser
+    user.value = { ...authUser, totpEnabled: !!authUser.totpEnabled }
 
     if (refreshTimer) clearTimeout(refreshTimer)
 
@@ -118,10 +119,35 @@ export function useAuth() {
    * GET /api/auth/verify?token=<raw>
    * Called from the /auth/verify page after the user clicks the magic link.
    * On success, stores the access token and schedules renewal.
+   * If the user requires 2FA, returns { requiresTwoFactor: true, pendingToken }
+   * instead of an AuthUser — the caller must redirect to /auth/2fa.
    */
-  async function verify(token: string): Promise<AuthUser> {
+  async function verify(token: string): Promise<AuthUser | { requiresTwoFactor: true; pendingToken: string }> {
     const res = await fetch(`${apiUrl}/api/auth/verify?token=${encodeURIComponent(token)}`, {
       credentials: 'include',    // lets the browser store the Set-Cookie refresh token
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Verification failed')
+
+    if (data.requiresTwoFactor) {
+      return { requiresTwoFactor: true, pendingToken: data.pendingToken }
+    }
+
+    setAccessToken(data.accessToken, data.user)
+    return data.user
+  }
+
+  /**
+   * POST /api/auth/2fa/verify
+   * Called from /auth/2fa after the user enters their TOTP code.
+   * Exchanges a pending token + code for a real session.
+   */
+  async function verifyTotp(code: string, pendingToken: string): Promise<AuthUser> {
+    const res = await fetch(`${apiUrl}/api/auth/2fa/verify`, {
+      method:      'POST',
+      credentials: 'include',
+      headers:     { 'Content-Type': 'application/json' },
+      body:        JSON.stringify({ code, pendingToken }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Verification failed')
@@ -219,6 +245,10 @@ export function useAuth() {
     await refreshSession()
   }
 
+  function markTotpEnabled() {
+    if (user.value) user.value = { ...user.value, totpEnabled: true }
+  }
+
   return {
     // State
     user:         readonly(user),
@@ -229,11 +259,13 @@ export function useAuth() {
     // Methods
     signIn,
     verify,
+    verifyTotp,
     refreshSession,
     fetchSubscription,
     logout,
     authHeader,
     initialise,
+    markTotpEnabled,
 
     // Role / subscription helpers
     isLoggedIn:     computed(() => user.value !== null),

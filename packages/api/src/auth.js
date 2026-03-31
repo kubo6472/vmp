@@ -38,8 +38,12 @@
 const ACCESS_TOKEN_TTL  = 15 * 60            // 15 minutes (seconds)
 const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60  // 30 days    (seconds)
 const MAGIC_LINK_TTL    = 15 * 60            // 15 minutes (seconds)
+const PENDING_2FA_TTL   =  5 * 60            //  5 minutes (seconds)
 
 export const ROLES = ['super_admin', 'admin', 'editor', 'analyst', 'moderator', 'viewer']
+
+// Roles that must complete TOTP 2FA on login (once enabled).
+const ROLES_REQUIRING_2FA = ['editor', 'admin', 'super_admin']
 
 // ─── Base64url helpers ────────────────────────────────────────────────────────
 //
@@ -123,11 +127,12 @@ export async function verifyJwt(token, secret) {
 export function createAccessToken(user, secret) {
   const now = Math.floor(Date.now() / 1000)
   return signJwt({
-    sub:   user.id,
-    email: user.email,
-    role:  user.role,
-    iat:   now,
-    exp:   now + ACCESS_TOKEN_TTL,
+    sub:         user.id,
+    email:       user.email,
+    role:        user.role,
+    totpEnabled: user.totp_enabled ?? user.totpEnabled ?? 0,
+    iat:         now,
+    exp:         now + ACCESS_TOKEN_TTL,
   }, secret)
 }
 
@@ -330,7 +335,8 @@ export async function handleVerifyMagicLink(request, env, corsHeaders) {
 
   const record = await db
     .prepare(`
-      SELECT t.id, t.expires_at, t.used_at, u.id AS user_id, u.email, u.role
+      SELECT t.id, t.expires_at, t.used_at, u.id AS user_id, u.email, u.role,
+             u.totp_enabled, u.totp_secret
       FROM magic_link_tokens t
       JOIN users u ON u.id = t.user_id
       WHERE t.token_hash = ?
@@ -354,7 +360,25 @@ export async function handleVerifyMagicLink(request, env, corsHeaders) {
     .bind(record.id)
     .run()
 
-  const user         = { id: record.user_id, email: record.email, role: record.role }
+  const user = {
+    id:           record.user_id,
+    email:        record.email,
+    role:         record.role,
+    totp_enabled: record.totp_enabled,
+  }
+
+  // If this user's role requires 2FA and they have it enabled, issue a short-lived
+  // pending token instead of a full session. The frontend must complete TOTP at
+  // /api/auth/2fa/verify before getting a real access token.
+  if (ROLES_REQUIRING_2FA.includes(user.role) && user.totp_enabled) {
+    const now = Math.floor(Date.now() / 1000)
+    const pendingToken = await signJwt(
+      { sub: user.id, email: user.email, role: user.role, pending: true, iat: now, exp: now + PENDING_2FA_TTL },
+      env.JWT_SECRET
+    )
+    return authJson({ requiresTwoFactor: true, pendingToken }, 200, corsHeaders)
+  }
+
   const accessToken  = await createAccessToken(user, env.JWT_SECRET)
   const refreshToken = await issueRefreshToken(user.id, db)
 
@@ -362,9 +386,9 @@ export async function handleVerifyMagicLink(request, env, corsHeaders) {
   headers.set('Set-Cookie', buildRefreshCookie(refreshToken, REFRESH_TOKEN_TTL))
 
   return new Response(JSON.stringify({
-    ok: true,
+    ok:          true,
     accessToken,
-    user: { id: user.id, email: user.email, role: user.role },
+    user: { id: user.id, email: user.email, role: user.role, totpEnabled: !!user.totp_enabled },
   }), { status: 200, headers })
 }
 
@@ -386,7 +410,7 @@ export async function handleRefreshToken(request, env, corsHeaders) {
 
   const record = await db
     .prepare(`
-      SELECT r.id, r.expires_at, u.id AS user_id, u.email, u.role
+      SELECT r.id, r.expires_at, u.id AS user_id, u.email, u.role, u.totp_enabled
       FROM refresh_tokens r
       JOIN users u ON u.id = r.user_id
       WHERE r.token_hash = ?
@@ -410,7 +434,7 @@ export async function handleRefreshToken(request, env, corsHeaders) {
     .bind(record.id)
     .run()
 
-  const user            = { id: record.user_id, email: record.email, role: record.role }
+  const user            = { id: record.user_id, email: record.email, role: record.role, totp_enabled: record.totp_enabled }
   const newAccessToken  = await createAccessToken(user, env.JWT_SECRET)
   const newRefreshToken = await issueRefreshToken(user.id, db)
 
@@ -420,7 +444,7 @@ export async function handleRefreshToken(request, env, corsHeaders) {
   return new Response(JSON.stringify({
     ok: true,
     accessToken: newAccessToken,
-    user: { id: user.id, email: user.email, role: user.role },
+    user: { id: user.id, email: user.email, role: user.role, totpEnabled: !!user.totp_enabled },
   }), { status: 200, headers })
 }
 
@@ -477,7 +501,12 @@ export async function requireAuth(request, env) {
   if (!header.startsWith('Bearer ')) throw new Error('Missing Bearer token')
 
   const token = header.slice(7)
-  return verifyJwt(token, env.JWT_SECRET)
+  const payload = await verifyJwt(token, env.JWT_SECRET)
+
+  // Pending 2FA tokens may only be used at /api/auth/2fa/verify — not anywhere else.
+  if (payload.pending) throw new Error('2FA verification required')
+
+  return payload
 }
 
 export async function requireRole(request, env, ...roles) {
@@ -495,6 +524,260 @@ function normalizeRedirectPath(value) {
   if (trimmed.startsWith('//')) return null
   if (trimmed.length > 1024) return null
   return trimmed
+}
+
+// ─── TOTP (RFC 6238) — SubtleCrypto only, no library ─────────────────────────
+//
+// TOTP = HOTP with counter = floor(unixTime / 30).
+// HOTP = truncate(HMAC-SHA1(key, counter_big_endian), 6 digits).
+// The secret is stored as base32 (the format authenticator apps expect).
+
+const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+
+function base32Encode(bytes) {
+  let bits = 0, value = 0, output = ''
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i]
+    bits  += 8
+    while (bits >= 5) {
+      output += BASE32_CHARS[(value >>> (bits - 5)) & 31]
+      bits   -= 5
+    }
+  }
+  if (bits > 0) output += BASE32_CHARS[(value << (5 - bits)) & 31]
+  return output
+}
+
+function base32Decode(str) {
+  const s = str.toUpperCase().replace(/=+$/, '')
+  const bytes = []
+  let bits = 0, value = 0
+  for (let i = 0; i < s.length; i++) {
+    const idx = BASE32_CHARS.indexOf(s[i])
+    if (idx < 0) throw new Error(`Invalid base32 character: ${s[i]}`)
+    value = (value << 5) | idx
+    bits  += 5
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff)
+      bits -= 8
+    }
+  }
+  return new Uint8Array(bytes)
+}
+
+export function generateTotpSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(20))
+  return base32Encode(bytes)
+}
+
+async function computeTotp(base32Secret, timeWindow = 0) {
+  const counter = Math.floor(Date.now() / 30000) + timeWindow
+
+  // Encode counter as 8-byte big-endian
+  const counterBytes = new Uint8Array(8)
+  let c = counter
+  for (let i = 7; i >= 0; i--) {
+    counterBytes[i] = c & 0xff
+    c = Math.floor(c / 256)
+  }
+
+  const keyBytes = base32Decode(base32Secret)
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', keyBytes,
+    { name: 'HMAC', hash: 'SHA-1' },
+    false, ['sign']
+  )
+  const hmac = new Uint8Array(await crypto.subtle.sign('HMAC', cryptoKey, counterBytes))
+
+  // Dynamic truncation
+  const offset = hmac[19] & 0x0f
+  const code   = ((hmac[offset] & 0x7f) << 24)
+               | ((hmac[offset + 1] & 0xff) << 16)
+               | ((hmac[offset + 2] & 0xff) << 8)
+               |  (hmac[offset + 3] & 0xff)
+
+  return String(code % 1_000_000).padStart(6, '0')
+}
+
+async function verifyTotp(base32Secret, code) {
+  // Check windows -1, 0, +1 to tolerate up to ±30 s of clock drift.
+  for (const window of [-1, 0, 1]) {
+    const expected = await computeTotp(base32Secret, window)
+    if (expected === code) return true
+  }
+  return false
+}
+
+// ─── TOTP secret encryption (AES-256-GCM) ────────────────────────────────────
+//
+// The raw TOTP secret must not be stored in plain text in D1.
+// We derive a 256-bit AES key from JWT_SECRET via SHA-256, then encrypt
+// with a random IV.  Storage format: "<iv_hex>:<ciphertext_hex>".
+
+async function deriveAesKey(jwtSecret) {
+  const raw = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(jwtSecret))
+  return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+}
+
+async function encryptTotpSecret(plainSecret, jwtSecret) {
+  const key = await deriveAesKey(jwtSecret)
+  const iv  = crypto.getRandomValues(new Uint8Array(12))
+  const enc = new TextEncoder()
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(plainSecret))
+
+  const ivHex   = Array.from(iv, b => b.toString(16).padStart(2, '0')).join('')
+  const ctHex   = Array.from(new Uint8Array(ciphertext), b => b.toString(16).padStart(2, '0')).join('')
+  return `${ivHex}:${ctHex}`
+}
+
+async function decryptTotpSecret(stored, jwtSecret) {
+  const [ivHex, ctHex] = stored.split(':')
+  const iv = new Uint8Array(ivHex.match(/.{2}/g).map(b => parseInt(b, 16)))
+  const ct = new Uint8Array(ctHex.match(/.{2}/g).map(b => parseInt(b, 16)))
+
+  const key   = await deriveAesKey(jwtSecret)
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct)
+  return new TextDecoder().decode(plain)
+}
+
+// ─── 2FA route handlers ───────────────────────────────────────────────────────
+
+/**
+ * GET /api/auth/2fa/setup
+ *
+ * Generates a fresh TOTP secret for the authenticated user and returns it
+ * along with an otpauth:// URI so the frontend can render a QR code.
+ * The secret is NOT saved to D1 here — it is returned to the frontend and
+ * sent back in the /confirm step only after the user proves they can generate
+ * the correct code.
+ */
+export async function handleTotpSetup(request, env, corsHeaders) {
+  let user
+  try {
+    user = await requireAuth(request, env)
+  } catch (err) {
+    return authJson({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
+  const secret    = generateTotpSecret()
+  const label     = encodeURIComponent(`VMP:${user.email}`)
+  const issuer    = encodeURIComponent('VMP')
+  const otpAuthUrl = `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}`
+
+  return authJson({ secret, otpAuthUrl }, 200, corsHeaders)
+}
+
+/**
+ * POST /api/auth/2fa/confirm
+ * Body: { secret: string, code: string }
+ *
+ * Validates the TOTP code against the provided secret.
+ * On success, encrypts the secret and saves it to D1, enabling 2FA for
+ * this user.  On the next login the user will need to complete a TOTP step.
+ */
+export async function handleTotpConfirm(request, env, corsHeaders) {
+  let user
+  try {
+    user = await requireAuth(request, env)
+  } catch (err) {
+    return authJson({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
+  const body = await request.json().catch(() => null)
+  if (!body?.secret || !body?.code) {
+    return authJson({ error: 'secret and code are required' }, 400, corsHeaders)
+  }
+
+  const { secret, code } = body
+
+  if (typeof secret !== 'string' || !/^[A-Z2-7]{16,}$/i.test(secret)) {
+    return authJson({ error: 'Invalid secret format' }, 400, corsHeaders)
+  }
+  if (typeof code !== 'string' || !/^\d{6}$/.test(code)) {
+    return authJson({ error: 'code must be 6 digits' }, 400, corsHeaders)
+  }
+
+  const valid = await verifyTotp(secret, code)
+  if (!valid) {
+    return authJson({ error: 'Invalid code. Make sure your device clock is correct and try again.' }, 400, corsHeaders)
+  }
+
+  const encryptedSecret = await encryptTotpSecret(secret, env.JWT_SECRET)
+  const db = getDb(env)
+
+  await db
+    .prepare('UPDATE users SET totp_secret = ?, totp_enabled = 1 WHERE id = ?')
+    .bind(encryptedSecret, user.sub)
+    .run()
+
+  return authJson({ ok: true }, 200, corsHeaders)
+}
+
+/**
+ * POST /api/auth/2fa/verify
+ * Body: { code: string, pendingToken: string }
+ *
+ * Completes the second factor of a login for editor/admin/super_admin users.
+ * Accepts a short-lived "pending" JWT (issued by handleVerifyMagicLink) and
+ * a TOTP code.  On success issues a real access token + refresh cookie.
+ */
+export async function handleTotpVerify(request, env, corsHeaders) {
+  const body = await request.json().catch(() => null)
+  if (!body?.code || !body?.pendingToken) {
+    return authJson({ error: 'code and pendingToken are required' }, 400, corsHeaders)
+  }
+
+  const { code, pendingToken } = body
+
+  if (typeof code !== 'string' || !/^\d{6}$/.test(code)) {
+    return authJson({ error: 'code must be 6 digits' }, 400, corsHeaders)
+  }
+
+  // Verify the pending JWT — it must have pending: true.
+  let pending
+  try {
+    pending = await verifyJwt(pendingToken, env.JWT_SECRET)
+  } catch (err) {
+    return authJson({ error: 'Sign-in session expired. Please start again.' }, 401, corsHeaders)
+  }
+  if (!pending.pending) {
+    return authJson({ error: 'Invalid token' }, 401, corsHeaders)
+  }
+
+  const db = getDb(env)
+  const userRow = await db
+    .prepare('SELECT id, email, role, totp_secret, totp_enabled FROM users WHERE id = ?')
+    .bind(pending.sub)
+    .first()
+
+  if (!userRow || !userRow.totp_enabled || !userRow.totp_secret) {
+    return authJson({ error: '2FA is not configured for this account.' }, 400, corsHeaders)
+  }
+
+  let plainSecret
+  try {
+    plainSecret = await decryptTotpSecret(userRow.totp_secret, env.JWT_SECRET)
+  } catch {
+    return authJson({ error: 'Failed to verify code. Please contact support.' }, 500, corsHeaders)
+  }
+
+  const valid = await verifyTotp(plainSecret, code)
+  if (!valid) {
+    return authJson({ error: 'Invalid code. Please try again.' }, 400, corsHeaders)
+  }
+
+  const user         = { id: userRow.id, email: userRow.email, role: userRow.role, totp_enabled: userRow.totp_enabled }
+  const accessToken  = await createAccessToken(user, env.JWT_SECRET)
+  const refreshToken = await issueRefreshToken(user.id, db)
+
+  const headers = buildResponseHeaders(corsHeaders)
+  headers.set('Set-Cookie', buildRefreshCookie(refreshToken, REFRESH_TOKEN_TTL))
+
+  return new Response(JSON.stringify({
+    ok:          true,
+    accessToken,
+    user: { id: user.id, email: user.email, role: user.role, totpEnabled: !!user.totp_enabled },
+  }), { status: 200, headers })
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────

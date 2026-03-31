@@ -11,13 +11,15 @@
     "deploy": "nuxi build --preset=cloudflare_pages && wrangler pages deploy dist/"
   },
   "dependencies": {
+    "@nuxtjs/color-mode": "^4.0.0",
+    "@types/qrcode": "^1.5.6",
     "@vmp/shared": "*",
     "media-chrome": "^4.18.3",
     "nuxt": "^4.4.2",
-    "videojs-video-element": "^1.4.4",
+    "qrcode": "^1.5.4",
     "video.js": "^8.23.7",
-    "vue": "^3.5.13",
-    "@nuxtjs/color-mode": "^4.0.0"
+    "videojs-video-element": "^1.4.4",
+    "vue": "^3.5.13"
   },
   "devDependencies": {
     "@nuxtjs/tailwindcss": "^6.12.2",
@@ -25,6 +27,6 @@
   },
   "overrides": {
     "serialize-javascript": ">=7.0.3",
-	"brace-expansion": ">=5.0.5"
+    "brace-expansion": ">=5.0.5"
   }
 }
