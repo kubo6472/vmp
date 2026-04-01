@@ -28,6 +28,7 @@ export interface AuthUser {
   email:       string
   role:        Role
   totpEnabled: boolean
+  totpRequired?: boolean
 }
 
 export interface SubscriptionData {

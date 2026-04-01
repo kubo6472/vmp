@@ -83,7 +83,7 @@ onMounted(async () => {
     // before they can access any privileged pages.  Redirect them to setup now
     // (inline, same navigation) rather than waiting for the admin middleware to
     // catch them only if they happen to visit /admin.
-    if (canEditContent.value && !result.totpEnabled) {
+    if (canEditContent.value && result.totpRequired && !result.totpEnabled) {
       await navigateTo(
         `/auth/2fa/setup?redirect=${encodeURIComponent(redirect)}`
       )

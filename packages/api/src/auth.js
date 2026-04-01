@@ -18,6 +18,8 @@
  *   FRONTEND_URL    — e.g. "https://vmp.example.com"  (no trailing slash)
  *   SENDER_EMAIL    — e.g. "noreply@vmp.example.com"
  *   SENDER_NAME     — e.g. "VMP"
+ *   TOTP_ENFORCE_CREATED_AFTER — ISO date; only users created on/after this
+ *                               timestamp are forced to enroll in 2FA.
  *
  * Cookie strategy:
  *   The refresh token is stored in an HttpOnly, SameSite=None; Secure cookie
@@ -131,6 +133,7 @@ export function createAccessToken(user, secret) {
     email:       user.email,
     role:        user.role,
     totpEnabled: Boolean(user.totp_enabled ?? user.totpEnabled),
+    totpRequired: Boolean(user.totp_required ?? user.totpRequired),
     iat:         now,
     exp:         now + ACCESS_TOKEN_TTL,
   }, secret)
@@ -336,7 +339,7 @@ export async function handleVerifyMagicLink(request, env, corsHeaders) {
   const record = await db
     .prepare(`
       SELECT t.id, t.expires_at, t.used_at, u.id AS user_id, u.email, u.role,
-             u.totp_enabled, u.totp_secret
+             u.totp_enabled, u.totp_secret, u.created_at
       FROM magic_link_tokens t
       JOIN users u ON u.id = t.user_id
       WHERE t.token_hash = ?
@@ -369,12 +372,14 @@ export async function handleVerifyMagicLink(request, env, corsHeaders) {
     email:        record.email,
     role:         record.role,
     totp_enabled: record.totp_enabled,
+    created_at:   record.created_at,
   }
+  const totpRequired = shouldRequireTotpEnrollment(user, env)
 
   // If this user's role requires 2FA and they have it enabled, issue a short-lived
   // pending token instead of a full session. The frontend must complete TOTP at
   // /api/auth/2fa/verify before getting a real access token.
-  if (ROLES_REQUIRING_2FA.includes(user.role) && user.totp_enabled) {
+  if (totpRequired && user.totp_enabled) {
     const now = Math.floor(Date.now() / 1000)
     const jti = crypto.randomUUID()
     const expiresAt = new Date((now + PENDING_2FA_TTL) * 1000).toISOString()
@@ -409,7 +414,7 @@ export async function handleVerifyMagicLink(request, env, corsHeaders) {
   return new Response(JSON.stringify({
     ok:          true,
     accessToken,
-    user: { id: user.id, email: user.email, role: user.role, totpEnabled: !!user.totp_enabled },
+    user: { id: user.id, email: user.email, role: user.role, totpEnabled: !!user.totp_enabled, totpRequired },
   }), { status: 200, headers })
 }
 
@@ -432,6 +437,7 @@ export async function handleRefreshToken(request, env, corsHeaders) {
   const record = await db
     .prepare(`
       SELECT r.id, r.expires_at, u.id AS user_id, u.email, u.role, u.totp_enabled
+           , u.created_at
       FROM refresh_tokens r
       JOIN users u ON u.id = r.user_id
       WHERE r.token_hash = ?
@@ -455,7 +461,14 @@ export async function handleRefreshToken(request, env, corsHeaders) {
     .bind(record.id)
     .run()
 
-  const user            = { id: record.user_id, email: record.email, role: record.role, totp_enabled: record.totp_enabled }
+  const user            = {
+    id: record.user_id,
+    email: record.email,
+    role: record.role,
+    totp_enabled: record.totp_enabled,
+    created_at: record.created_at,
+  }
+  const totpRequired    = shouldRequireTotpEnrollment(user, env)
   const newAccessToken  = await createAccessToken(user, env.JWT_SECRET)
   const newRefreshToken = await issueRefreshToken(user.id, db)
 
@@ -465,7 +478,7 @@ export async function handleRefreshToken(request, env, corsHeaders) {
   return new Response(JSON.stringify({
     ok: true,
     accessToken: newAccessToken,
-    user: { id: user.id, email: user.email, role: user.role, totpEnabled: !!user.totp_enabled },
+    user: { id: user.id, email: user.email, role: user.role, totpEnabled: !!user.totp_enabled, totpRequired },
   }), { status: 200, headers })
 }
 
@@ -536,7 +549,7 @@ export async function requireRole(request, env, ...roles) {
   // user holds that role but hasn't enrolled in 2FA, reject before checking the
   // role list.  This prevents pre-enrollment tokens from calling privileged APIs.
   const routeNeedsTotp = roles.some(r => ROLES_REQUIRING_2FA.includes(r))
-  if (routeNeedsTotp && ROLES_REQUIRING_2FA.includes(user.role) && !user.totpEnabled) {
+  if (routeNeedsTotp && ROLES_REQUIRING_2FA.includes(user.role) && user.totpRequired && !user.totpEnabled) {
     throw new Error('2FA enrollment required')
   }
   if (!roles.includes(user.role)) {
@@ -794,7 +807,7 @@ export async function handleTotpConfirm(request, env, corsHeaders) {
   return new Response(JSON.stringify({
     ok:          true,
     accessToken: newAccessToken,
-    user:        { id: user.sub, email: user.email, role: user.role, totpEnabled: true },
+    user:        { id: user.sub, email: user.email, role: user.role, totpEnabled: true, totpRequired: true },
   }), { status: 200, headers })
 }
 
@@ -922,6 +935,7 @@ export async function handleTotpVerify(request, env, corsHeaders) {
   }
 
   const user         = { id: userRow.id, email: userRow.email, role: userRow.role, totp_enabled: userRow.totp_enabled }
+  const totpRequired = shouldRequireTotpEnrollment(user, env)
   const accessToken  = await createAccessToken(user, env.JWT_SECRET)
   const refreshToken = await issueRefreshToken(user.id, db)
 
@@ -931,7 +945,7 @@ export async function handleTotpVerify(request, env, corsHeaders) {
   return new Response(JSON.stringify({
     ok:          true,
     accessToken,
-    user: { id: user.id, email: user.email, role: user.role, totpEnabled: !!user.totp_enabled },
+    user: { id: user.id, email: user.email, role: user.role, totpEnabled: !!user.totp_enabled, totpRequired },
   }), { status: 200, headers })
 }
 
@@ -966,4 +980,17 @@ function authJson(data, status, corsHeaders) {
     status,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...corsHeaders },
   })
+}
+
+function shouldRequireTotpEnrollment(user, env) {
+  if (!ROLES_REQUIRING_2FA.includes(user.role)) return false
+  const rawCutoff = env.TOTP_ENFORCE_CREATED_AFTER
+  if (!rawCutoff) return false
+
+  const cutoffTs = Date.parse(rawCutoff)
+  if (!Number.isFinite(cutoffTs)) return false
+
+  const createdAtTs = Date.parse(user.created_at || '')
+  if (!Number.isFinite(createdAtTs)) return true
+  return createdAtTs >= cutoffTs
 }
