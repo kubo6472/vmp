@@ -185,11 +185,6 @@ async function encryptPayload(plaintext, p256dhB64, authB64) {
 
   const enc = new TextEncoder()
 
-  // Import auth as HKDF key material
-  const hkdfAuthKey = await crypto.subtle.importKey(
-    'raw', authSecret, 'HKDF', false, ['deriveBits'],
-  )
-
   // IKM = HKDF-Extract(salt=auth, ikm=sharedSecret)
   const ikmBits = await crypto.subtle.deriveBits(
     { name: 'HKDF', hash: 'SHA-256', salt: authSecret, info: new Uint8Array(0) },
@@ -204,12 +199,6 @@ async function encryptPayload(plaintext, p256dhB64, authB64) {
     subscriberPublicKeyBytes,
     ephemeralPublicKeyRaw,
   )
-  const prkBits = await crypto.subtle.deriveBits(
-    { name: 'HKDF', hash: 'SHA-256', salt: ikm, info: prkInfo },
-    await crypto.subtle.importKey('raw', authSecret, 'HKDF', false, ['deriveBits']),
-    256,
-  )
-  // We'll use HKDF from salt more carefully:
   // PRK: HKDF-Extract(salt=salt, ikm=ikm) using standard HKDF
   const prk = await hkdfExpand(ikm, salt, prkInfo, 32)
 
