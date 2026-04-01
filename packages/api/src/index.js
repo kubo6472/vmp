@@ -763,12 +763,28 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
     return jsonResponse({ error: 'Only published videos can trigger notifications' }, 422, corsHeaders)
   }
 
-  // Stamp the timestamp synchronously so the response reflects it immediately
-  // (optimistic update). Delivery stats are logged via waitUntil below.
+  // Atomic cooldown guard: only stamp + send if push_notified_at is NULL or
+  // older than 5 minutes. The conditional WHERE means two concurrent requests
+  // can't both pass — whichever gets changes=1 wins; the other gets changes=0
+  // and is rejected without touching the DB or firing a push.
+  const cooldownSeconds = 300 // 5 minutes
+  const cooldownResult = await db.prepare(`
+    UPDATE videos
+    SET push_notified_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND publish_status = 'published'
+      AND (push_notified_at IS NULL OR (unixepoch('now') - unixepoch(push_notified_at)) > ?)
+  `).bind(videoId, cooldownSeconds).run()
+
+  if ((cooldownResult.meta?.changes ?? cooldownResult.changes ?? 0) === 0) {
+    return jsonResponse(
+      { error: 'Notification cooldown active — wait 5 minutes between sends.', code: 'cooldown' },
+      429,
+      corsHeaders,
+    )
+  }
+
   const notifiedAt = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '')
-  await db.prepare(
-    `UPDATE videos SET push_notified_at = CURRENT_TIMESTAMP WHERE id = ?`
-  ).bind(videoId).run()
 
   // Send in the background; log delivery stats so failures are visible in logs.
   ctx.waitUntil(
