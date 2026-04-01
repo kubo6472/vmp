@@ -784,7 +784,10 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
     )
   }
 
-  const notifiedAt = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '')
+  const updatedRow = await db.prepare(
+    `SELECT push_notified_at FROM videos WHERE id = ?`
+  ).bind(videoId).first()
+  const notifiedAt = updatedRow?.push_notified_at
 
   // Send in the background; log delivery stats so failures are visible in logs.
   ctx.waitUntil(
