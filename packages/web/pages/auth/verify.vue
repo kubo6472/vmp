@@ -59,10 +59,19 @@ onMounted(async () => {
   }
 
   try {
-    await verify(token)
-    // Session is now set in memory. Redirect to the page they originally wanted,
-    // or fall back to the homepage.
     const redirect = (route.query.redirect as string) || '/'
+    const result = await verify(token)
+
+    // Editor/admin/super_admin users with 2FA enabled get a pending token —
+    // redirect them to the TOTP entry page to complete the second factor.
+    if ('requiresTwoFactor' in result) {
+      await navigateTo(
+        `/auth/2fa?pending=${encodeURIComponent(result.pendingToken)}&redirect=${encodeURIComponent(redirect)}`
+      )
+      return
+    }
+
+    // Session is now set in memory. Redirect to the page they originally wanted.
     await navigateTo(redirect)
   } catch (err: any) {
     state.value = 'error'

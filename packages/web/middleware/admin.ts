@@ -26,4 +26,9 @@ export default defineNuxtRouteMiddleware((to) => {
     // Logged in but insufficient role (e.g. a regular viewer somehow hit /admin)
     return navigateTo('/')
   }
+
+  // Editor+ users who haven't set up 2FA yet must complete setup before accessing admin.
+  if (!user.value.totpEnabled) {
+    return navigateTo('/auth/2fa/setup')
+  }
 })
