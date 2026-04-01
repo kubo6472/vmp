@@ -777,6 +777,13 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
   `).bind(videoId, cooldownSeconds).run()
 
   if ((cooldownResult.meta?.changes ?? cooldownResult.changes ?? 0) === 0) {
+    const current = await db.prepare(
+      `SELECT publish_status FROM videos WHERE id = ?`
+    ).bind(videoId).first()
+    if (!current) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+    if (current.publish_status !== 'published') {
+      return jsonResponse({ error: 'Only published videos can trigger notifications' }, 422, corsHeaders)
+    }
     return jsonResponse(
       { error: 'Notification cooldown active — wait 5 minutes between sends.', code: 'cooldown' },
       429,
