@@ -525,6 +525,13 @@ export async function requireAuth(request, env) {
 
 export async function requireRole(request, env, ...roles) {
   const user = await requireAuth(request, env)
+  // Server-side 2FA enforcement: if the route requires a privileged role and the
+  // user holds that role but hasn't enrolled in 2FA, reject before checking the
+  // role list.  This prevents pre-enrollment tokens from calling privileged APIs.
+  const routeNeedsTotp = roles.some(r => ROLES_REQUIRING_2FA.includes(r))
+  if (routeNeedsTotp && ROLES_REQUIRING_2FA.includes(user.role) && !user.totpEnabled) {
+    throw new Error('2FA enrollment required')
+  }
   if (!roles.includes(user.role)) {
     throw new Error(`Insufficient role. Required: ${roles.join(' | ')}. Got: ${user.role}`)
   }
@@ -584,9 +591,7 @@ export function generateTotpSecret() {
   return base32Encode(bytes)
 }
 
-async function computeTotp(base32Secret, timeWindow = 0) {
-  const counter = Math.floor(Date.now() / 30000) + timeWindow
-
+async function computeTotp(base32Secret, counter) {
   // Encode counter as 8-byte big-endian
   const counterBytes = new Uint8Array(8)
   let c = counter
@@ -614,9 +619,12 @@ async function computeTotp(base32Secret, timeWindow = 0) {
 }
 
 async function verifyTotp(base32Secret, code) {
-  // Check windows -1, 0, +1 to tolerate up to ±30 s of clock drift.
+  // Capture the timestep once so all three window checks use the same snapshot.
+  // Calling Date.now() inside computeTotp on each iteration risks crossing a
+  // 30-second boundary and skipping the valid window.
+  const baseCounter = Math.floor(Date.now() / 30000)
   for (const window of [-1, 0, 1]) {
-    const expected = await computeTotp(base32Secret, window)
+    const expected = await computeTotp(base32Secret, baseCounter + window)
     if (expected === code) return true
   }
   return false
@@ -747,7 +755,11 @@ export async function handleTotpConfirm(request, env, corsHeaders) {
     .bind(user.sub)
     .run()
 
-  return authJson({ ok: true }, 200, corsHeaders)
+  // Clear the browser's stale refresh cookie so it doesn't send it on the
+  // next request only to receive a 401 (server already deleted the row).
+  const headers = buildResponseHeaders(corsHeaders)
+  headers.set('Set-Cookie', clearRefreshCookie())
+  return new Response(JSON.stringify({ ok: true }), { status: 200, headers })
 }
 
 /**
