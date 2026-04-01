@@ -44,12 +44,14 @@ export default defineNuxtConfig({
       name: 'VMP',
       short_name: 'VMP',
       description: 'Premium video content',
+      start_url: '/',
       theme_color: '#0f172a',
       background_color: '#0f172a',
       display: 'standalone',
       icons: [
         { src: '/icons/pwa-192.png', sizes: '192x192', type: 'image/png' },
-        { src: '/icons/pwa-512.png', sizes: '512x512', type: 'image/png' },
+        // purpose 'any maskable' satisfies Chrome's installability requirement
+        { src: '/icons/pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
       ],
     },
     workbox: {
@@ -58,6 +60,11 @@ export default defineNuxtConfig({
     },
     client: {
       installPrompt: true,
+    },
+    // Enable service worker in dev so you can test installation without a prod build
+    devOptions: {
+      enabled: true,
+      type: 'module',
     },
   },
 })

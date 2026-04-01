@@ -158,6 +158,9 @@ export default {
     if (url.pathname.startsWith('/api/admin/videos/') && request.method === 'PATCH') {
       return handleAdminVideoUpdate(request, env, ctx, corsHeaders)
     }
+    if (url.pathname.match(/^\/api\/admin\/videos\/[^/]+\/notify$/) && request.method === 'POST') {
+      return handleAdminVideoNotify(request, env, ctx, corsHeaders)
+    }
     if (url.pathname === '/api/account/pricing' && request.method === 'GET') {
       return handleGetPricing(request, env, corsHeaders)
     }
@@ -608,7 +611,7 @@ async function handleAdminVideosList(request, env, corsHeaders) {
     // ── 2. Fetch all videos from D1 ──────────────────────────────────────────
     const videos = await db.prepare(`
       SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
-             upload_date, visibility, status, publish_status, published_at, updated_at
+             upload_date, visibility, status, publish_status, published_at, push_notified_at, updated_at
       FROM videos
       ORDER BY upload_date DESC
     `).all()
@@ -693,6 +696,7 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
           SET publish_status = 'published',
               visibility = 'public',
               published_at = COALESCE(published_at, CURRENT_TIMESTAMP),
+              push_notified_at = CURRENT_TIMESTAMP,
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND publish_status != 'published'
         `).bind(videoId).run()
@@ -711,7 +715,7 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     }
 
     const video = await db.prepare(`
-      SELECT id, title, visibility, status, publish_status, published_at, updated_at
+      SELECT id, title, visibility, status, publish_status, published_at, push_notified_at, updated_at
       FROM videos WHERE id = ?
     `).bind(videoId).first()
     if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
@@ -726,6 +730,41 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     console.error('Error:', error)
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
+}
+
+async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
+  const url = new URL(request.url)
+  const pathParts = url.pathname.split('/').filter(Boolean)
+  // /api/admin/videos/{videoId}/notify → index 3 is videoId
+  const videoId = pathParts[3]
+  if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
+
+  const db = getDatabaseBinding(env)
+  const video = await db.prepare(
+    `SELECT id, title, publish_status FROM videos WHERE id = ?`
+  ).bind(videoId).first()
+
+  if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+  if (video.publish_status !== 'published') {
+    return jsonResponse({ error: 'Only published videos can trigger notifications' }, 422, corsHeaders)
+  }
+
+  // Stamp the timestamp synchronously so the response reflects it immediately.
+  const notifiedAt = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '')
+  await db.prepare(
+    `UPDATE videos SET push_notified_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).bind(videoId).run()
+
+  // Send to all subscribers in the background — don't block the response.
+  ctx.waitUntil(sendPushToAllSubscribers(video.title || videoId, videoId, env, db))
+
+  return jsonResponse({ ok: true, push_notified_at: notifiedAt }, 200, corsHeaders)
 }
 
 // ─── Push notification helpers ────────────────────────────────────────────────

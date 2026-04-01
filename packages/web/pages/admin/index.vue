@@ -136,6 +136,7 @@
                     <th class="pb-2 pr-4 font-medium">Status</th>
                     <th class="pb-2 pr-4 font-medium">Duration</th>
                     <th class="pb-2 pr-4 font-medium">Uploaded</th>
+                    <th class="pb-2 pr-4 font-medium">Notifications</th>
                     <th class="pb-2 font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -186,6 +187,34 @@
                     </td>
                     <td class="py-3 pr-4 text-gray-600 dark:text-gray-400 whitespace-nowrap">
                       {{ formatDate(video.upload_date) }}
+                    </td>
+                    <td class="py-3 pr-4">
+                      <!-- Published + already notified -->
+                      <div
+                        v-if="video.publish_status === 'published' && video.push_notified_at"
+                        class="flex items-center gap-1.5 text-green-600 dark:text-green-400"
+                        :title="`Sent ${formatDate(video.push_notified_at)}`"
+                      >
+                        <svg class="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zm0 16a2 2 0 002-2H8a2 2 0 002 2z" />
+                        </svg>
+                        <span class="text-xs whitespace-nowrap">{{ formatDate(video.push_notified_at) }}</span>
+                      </div>
+                      <!-- Published but not yet notified -->
+                      <button
+                        v-else-if="video.publish_status === 'published' && !video.push_notified_at"
+                        class="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:opacity-50 whitespace-nowrap"
+                        :disabled="notifying[video.id]"
+                        :title="notifying[video.id] ? 'Sending…' : 'Send push notification to all subscribers'"
+                        @click="sendNotification(video)"
+                      >
+                        <svg class="w-3 h-3 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zm0 16a2 2 0 002-2H8a2 2 0 002 2z" />
+                        </svg>
+                        {{ notifying[video.id] ? 'Sending…' : 'Notify' }}
+                      </button>
+                      <!-- Not published — N/A -->
+                      <span v-else class="text-xs text-gray-400 dark:text-gray-600">—</span>
                     </td>
                     <td class="py-3">
                       <div class="flex flex-wrap gap-2">
@@ -278,6 +307,7 @@ interface Video {
   full_duration: number
   preview_duration: number
   publish_status: 'draft' | 'published' | 'archived' | null
+  push_notified_at: string | null
   r2_exists: boolean | null
 }
 
@@ -304,6 +334,7 @@ const saveMessageClass = ref('')
 const previewLockByVideoId = ref<Record<string, number>>({})
 const actualDurationByVideoId = ref<Record<string, number>>({})
 const statusUpdating = ref<Record<string, boolean>>({})
+const notifying = ref<Record<string, boolean>>({})
 const activeVideoTab = ref<'all' | 'locks'>('all')
 const editingTitle = ref<{ id: string; value: string } | null>(null)
 const titleInputEl = ref<HTMLInputElement | null>(null)
@@ -513,6 +544,28 @@ async function updateVideoStatus(video: Video, newStatus: 'draft' | 'published' 
     saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
   } finally {
     statusUpdating.value[video.id] = false
+  }
+}
+
+async function sendNotification(video: Video) {
+  notifying.value[video.id] = true
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}/notify`, {
+      method: 'POST',
+      headers: authHeader(),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    const { push_notified_at } = await res.json()
+    const idx = uploads.value.findIndex(v => v.id === video.id)
+    if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], push_notified_at }
+  } catch (e: any) {
+    saveMessage.value = `Failed to send notification for "${video.title}": ${e.message}`
+    saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    notifying.value[video.id] = false
   }
 }
 
