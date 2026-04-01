@@ -722,7 +722,15 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
 
     // Fire push only when the UPDATE itself confirmed the transition (atomic guard)
     if (transitionedToPublished) {
-      ctx.waitUntil(sendPushToAllSubscribers(video.title || videoId, videoId, env, db))
+      ctx.waitUntil(
+        sendPushToAllSubscribers(video.title || videoId, videoId, env, db)
+          .then(stats => {
+            console.log(`Push notify [videoId:${videoId}] attempted=${stats.attempted} succeeded=${stats.succeeded} failed=${stats.failed} stale=${stats.stale}`)
+          })
+          .catch(err => {
+            console.error(`Push notify error [videoId:${videoId}]:`, err)
+          }),
+      )
     }
 
     return jsonResponse({ ok: true, video }, 200, corsHeaders)
@@ -755,14 +763,23 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
     return jsonResponse({ error: 'Only published videos can trigger notifications' }, 422, corsHeaders)
   }
 
-  // Stamp the timestamp synchronously so the response reflects it immediately.
+  // Stamp the timestamp synchronously so the response reflects it immediately
+  // (optimistic update). Delivery stats are logged via waitUntil below.
   const notifiedAt = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '')
   await db.prepare(
     `UPDATE videos SET push_notified_at = CURRENT_TIMESTAMP WHERE id = ?`
   ).bind(videoId).run()
 
-  // Send to all subscribers in the background — don't block the response.
-  ctx.waitUntil(sendPushToAllSubscribers(video.title || videoId, videoId, env, db))
+  // Send in the background; log delivery stats so failures are visible in logs.
+  ctx.waitUntil(
+    sendPushToAllSubscribers(video.title || videoId, videoId, env, db)
+      .then(stats => {
+        console.log(`Push notify [videoId:${videoId}] attempted=${stats.attempted} succeeded=${stats.succeeded} failed=${stats.failed} stale=${stats.stale}`)
+      })
+      .catch(err => {
+        console.error(`Push notify error [videoId:${videoId}]:`, err)
+      }),
+  )
 
   return jsonResponse({ ok: true, push_notified_at: notifiedAt }, 200, corsHeaders)
 }

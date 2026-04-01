@@ -365,7 +365,12 @@ const swapFeatured = (video: Video) => {
   closePicker()
 }
 
-const formatDate      = (raw: string) => new Date(raw).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+// SQLite CURRENT_TIMESTAMP returns "YYYY-MM-DD HH:MM:SS" which Safari cannot
+// parse reliably — normalize to ISO 8601 before constructing the Date.
+const formatDate = (raw: string) => {
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z'
+  return new Date(normalized).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
 const getActualDuration = (video: Video) => actualDurationByVideoId.value[video.id] ?? video.full_duration
 
 const hydrateActualDurations = async () => {

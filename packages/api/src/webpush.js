@@ -347,7 +347,7 @@ export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
     subscriptions = result.results || []
   } catch (err) {
     console.error('Failed to fetch push subscriptions:', err)
-    return
+    return { attempted: 0, succeeded: 0, failed: 0, stale: 0 }
   }
 
   const payload = {
@@ -358,21 +358,26 @@ export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
 
   const staleEndpoints = []
   const batchSize = 50
+  let succeeded = 0
+  let failed = 0
 
   for (let i = 0; i < subscriptions.length; i += batchSize) {
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       subscriptions.slice(i, i + batchSize).map(async (sub) => {
         try {
           await sendPushNotification(sub, payload, env)
         } catch (err) {
           if (err.code === 'subscription_gone') {
             staleEndpoints.push(sub.endpoint)
-          } else {
-            console.error('Push error:', err)
           }
+          throw err
         }
       }),
     )
+    for (const r of results) {
+      if (r.status === 'fulfilled') succeeded++
+      else failed++
+    }
   }
 
   // Batch-delete expired subscriptions in one query
@@ -381,4 +386,6 @@ export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
     await db.prepare(`DELETE FROM push_subscriptions WHERE endpoint IN (${placeholders})`)
       .bind(...staleEndpoints).run().catch(e => console.error('Cleanup error:', e))
   }
+
+  return { attempted: subscriptions.length, succeeded, failed, stale: staleEndpoints.length }
 }
