@@ -286,16 +286,31 @@ export async function sendPushNotification(subscription, payload, env) {
   const payloadJson = JSON.stringify(payload)
   const encrypted = await encryptPayload(payloadJson, p256dh, auth)
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/octet-stream',
-      'Content-Encoding': 'aes128gcm',
-      'Authorization': vapidAuthHeader,
-      'TTL': '86400',
-    },
-    body: encrypted,
-  })
+  // 10-second timeout — prevents a slow/unresponsive endpoint from blocking
+  // the entire batch inside Promise.allSettled().
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), 10_000)
+  let response
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Encoding': 'aes128gcm',
+        'Authorization': vapidAuthHeader,
+        'TTL': '86400',
+      },
+      body: encrypted,
+      signal: abort.signal,
+    })
+  } catch (err) {
+    clearTimeout(timer)
+    throw Object.assign(
+      new Error(`Push fetch error: ${err.message}`),
+      { code: 'push_failed' },
+    )
+  }
+  clearTimeout(timer)
 
   if (!response.ok) {
     // Hash the endpoint before logging — it's a device-scoped token and shouldn't appear in logs

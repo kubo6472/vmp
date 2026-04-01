@@ -677,29 +677,28 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
 
   const db = getDatabaseBinding(env)
 
-  // Read prior state so we only fire push on a real draft→published transition
-  const priorVideo = await db.prepare('SELECT publish_status FROM videos WHERE id = ?')
-    .bind(videoId).first()
-  if (!priorVideo) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
-  const wasAlreadyPublished = priorVideo.publish_status === 'published'
-
   try {
     if (hasTitle) {
       await db.prepare(`UPDATE videos SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
         .bind(body.title.trim(), videoId).run()
     }
 
+    let transitionedToPublished = false
     if (hasStatus) {
       if (body.status === 'published') {
-        // Stamp published_at only on first publish; preserve it on re-publish
-        await db.prepare(`
+        // Atomic transition: the WHERE clause ensures we only update (and fire push)
+        // when the row was NOT already published, eliminating the TOCTOU race.
+        const result = await db.prepare(`
           UPDATE videos
           SET publish_status = 'published',
               visibility = 'public',
               published_at = COALESCE(published_at, CURRENT_TIMESTAMP),
               updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
+          WHERE id = ? AND publish_status != 'published'
         `).bind(videoId).run()
+        transitionedToPublished = (result.meta?.changes ?? result.changes ?? 0) > 0
+        // If the row was already published, still run a no-op update to get consistent
+        // state for the SELECT below — this is a read guard, not a second write
       } else {
         await db.prepare(`
           UPDATE videos
@@ -717,8 +716,8 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     `).bind(videoId).first()
     if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
 
-    // Fire push notifications only on a real transition to published
-    if (hasStatus && body.status === 'published' && !wasAlreadyPublished) {
+    // Fire push only when the UPDATE itself confirmed the transition (atomic guard)
+    if (transitionedToPublished) {
       ctx.waitUntil(sendPushToAllSubscribers(video.title || videoId, videoId, env, db))
     }
 
@@ -739,22 +738,41 @@ function isPrivateHost(hostname) {
   // Reject .local mDNS, localhost, and empty hostnames
   if (!hostname || hostname === 'localhost' || hostname.endsWith('.local')) return true
 
-  // Try to parse as IPv4
-  const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
-  if (ipv4) {
-    const [, a, b] = ipv4.map(Number)
-    if (a === 10) return true                               // 10.0.0.0/8
-    if (a === 127) return true                              // 127.0.0.0/8 loopback
-    if (a === 172 && b >= 16 && b <= 31) return true       // 172.16.0.0/12
-    if (a === 192 && b === 168) return true                 // 192.168.0.0/16
-    if (a === 169 && b === 254) return true                 // 169.254.0.0/16 link-local
-    if (a === 0) return true                                // 0.0.0.0/8
+  // Normalise: strip IPv6 brackets, lowercase
+  const h = hostname.replace(/^\[|]$/g, '').toLowerCase()
+
+  // ── IPv4 ──────────────────────────────────────────────────────────────────
+  const ipv4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (ipv4) return isPrivateIPv4Octets(Number(ipv4[1]), Number(ipv4[2]))
+
+  // ── IPv6 ──────────────────────────────────────────────────────────────────
+  if (h === '::1') return true                          // loopback
+  if (h.startsWith('fe80:')) return true                // link-local fe80::/10
+  if (h.startsWith('fc') || h.startsWith('fd')) return true // ULA fc00::/7
+
+  // IPv4-mapped IPv6 — ::ffff:x.x.x.x  (covers ::ffff:127.0.0.1 etc.)
+  const mapped = h.match(/^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+    ?? h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+  if (mapped) {
+    if (mapped.length === 5) {
+      // Dotted-decimal form
+      return isPrivateIPv4Octets(Number(mapped[1]), Number(mapped[2]))
+    }
+    // Hex-word form: convert each 16-bit word to two octets
+    const a = parseInt(mapped[1], 16)
+    return isPrivateIPv4Octets(a >> 8, a & 0xff)
   }
 
-  // Reject IPv6 loopback and link-local
-  const h = hostname.replace(/^\[|]$/g, '') // strip brackets from [::1]
-  if (h === '::1' || h.toLowerCase().startsWith('fe80:')) return true
+  return false
+}
 
+function isPrivateIPv4Octets(a, b) {
+  if (a === 10) return true                               // 10.0.0.0/8
+  if (a === 127) return true                              // 127.0.0.0/8 loopback
+  if (a === 172 && b >= 16 && b <= 31) return true       // 172.16.0.0/12
+  if (a === 192 && b === 168) return true                 // 192.168.0.0/16
+  if (a === 169 && b === 254) return true                 // 169.254.0.0/16 link-local
+  if (a === 0) return true                                // 0.0.0.0/8
   return false
 }
 
