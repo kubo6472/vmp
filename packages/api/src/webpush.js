@@ -177,38 +177,34 @@ async function encryptPayload(plaintext, p256dhB64, authB64) {
   // 6. auth secret from the subscription
   const authSecret = b64urlToUint8(authB64)
 
-  // 7. HKDF (SHA-256) — Extract+Expand per RFC 8291 Section 3.3
-  //    Step a: IKM = HKDF-Extract(auth, ECDH-shared-secret)
-  //    Step b: PRK = HKDF-Expand(IKM, "WebPush: info\x00" || receiver_public || sender_public, 32)
-  //    Step c: CEK = HKDF-Expand(PRK, "Content-Encoding: aes128gcm\x00", 16)
-  //    Step d: Nonce = HKDF-Expand(PRK, "Content-Encoding: nonce\x00", 12)
+  // 7. HKDF key derivation — RFC 8291 Section 3.3
+  //    PRK_key = HKDF-Extract(salt=authSecret, ikm=sharedSecret)
+  //    IKM     = HKDF-Expand(PRK_key, "WebPush: info\0" || ua_pub || as_pub, 32)
+  //    PRK     = HKDF-Extract(salt=content_salt, ikm=IKM)
+  //    CEK     = HKDF-Expand(PRK, "Content-Encoding: aes128gcm\0", 16)
+  //    Nonce   = HKDF-Expand(PRK, "Content-Encoding: nonce\0", 12)
 
   const enc = new TextEncoder()
 
-  // IKM = HKDF-Extract(salt=auth, ikm=sharedSecret)
-  const ikmBits = await crypto.subtle.deriveBits(
-    { name: 'HKDF', hash: 'SHA-256', salt: authSecret, info: new Uint8Array(0) },
-    await crypto.subtle.importKey('raw', sharedSecret, 'HKDF', false, ['deriveBits']),
-    256,
-  )
-  const ikm = new Uint8Array(ikmBits)
+  // Step 1: PRK_key = HKDF-Extract(salt=authSecret, ikm=sharedSecret)
+  const prkKey = await hkdfExtract(authSecret, sharedSecret)
 
-  // info for PRK derivation: "WebPush: info\0" || receiver_pub || sender_pub
+  // Step 2: IKM = HKDF-Expand(PRK_key, "WebPush: info\0" || ua_pub || as_pub, 32)
   const prkInfo = concatBuffers(
     enc.encode('WebPush: info\x00'),
     subscriberPublicKeyBytes,
     ephemeralPublicKeyRaw,
   )
-  // PRK: HKDF-Extract(salt=salt, ikm=ikm) using standard HKDF
-  const prk = await hkdfExpand(ikm, salt, prkInfo, 32)
+  const ikm = await hkdfExpand(prkKey, prkInfo, 32)
 
-  // CEK: HKDF-Expand(PRK, "Content-Encoding: aes128gcm\0", 16)
-  const cekInfo = enc.encode('Content-Encoding: aes128gcm\x00')
-  const cek = await hkdfExpand(prk, salt, cekInfo, 16)
+  // Step 3: PRK = HKDF-Extract(salt=content_salt, ikm=IKM)
+  const prk = await hkdfExtract(salt, ikm)
 
-  // Nonce: HKDF-Expand(PRK, "Content-Encoding: nonce\0", 12)
-  const nonceInfo = enc.encode('Content-Encoding: nonce\x00')
-  const nonce = await hkdfExpand(prk, salt, nonceInfo, 12)
+  // Step 4: CEK = HKDF-Expand(PRK, "Content-Encoding: aes128gcm\0", 16)
+  const cek = await hkdfExpand(prk, enc.encode('Content-Encoding: aes128gcm\x00'), 16)
+
+  // Step 5: Nonce = HKDF-Expand(PRK, "Content-Encoding: nonce\0", 12)
+  const nonce = await hkdfExpand(prk, enc.encode('Content-Encoding: nonce\x00'), 12)
 
   // 8. Encrypt with AES-128-GCM
   //    Payload format per RFC 8291: data || 0x02 (padding delimiter)
@@ -238,20 +234,28 @@ async function encryptPayload(plaintext, p256dhB64, authB64) {
 }
 
 /**
- * HKDF-Expand(prk, salt, info, length) using HMAC-SHA-256.
- * Note: We use SubtleCrypto's HKDF in expand-only mode by setting
- *       salt as the HMAC key and info as the context.
+ * HKDF-Extract(salt, ikm) per RFC 5869 — returns a 32-byte PRK.
+ * Implemented as HMAC-SHA-256(key=salt, data=ikm).
  */
-async function hkdfExpand(prk, salt, info, length) {
-  // Use SubtleCrypto HKDF: deriveBits with the PRK as key material,
-  // salt as the HKDF salt, and info as the HKDF info.
-  const key = await crypto.subtle.importKey('raw', prk, 'HKDF', false, ['deriveBits'])
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'HKDF', hash: 'SHA-256', salt, info },
-    key,
-    length * 8,
+async function hkdfExtract(salt, ikm) {
+  const key = await crypto.subtle.importKey(
+    'raw', salt, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   )
-  return new Uint8Array(bits)
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, ikm))
+}
+
+/**
+ * HKDF-Expand(prk, info, length) per RFC 5869 — length must be ≤ 32 for SHA-256.
+ * T(1) = HMAC-SHA-256(key=prk, data=info || 0x01), output first `length` bytes.
+ */
+async function hkdfExpand(prk, info, length) {
+  const key = await crypto.subtle.importKey(
+    'raw', prk, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+  )
+  const t1 = new Uint8Array(
+    await crypto.subtle.sign('HMAC', key, concatBuffers(info, new Uint8Array([0x01]))),
+  )
+  return t1.slice(0, length)
 }
 
 // ─── Send a single Web Push notification ─────────────────────────────────────

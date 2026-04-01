@@ -676,6 +676,13 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
   const visibilityMap = { published: 'public', draft: 'private', archived: 'unlisted' }
 
   const db = getDatabaseBinding(env)
+
+  // Read prior state so we only fire push on a real draft→published transition
+  const priorVideo = await db.prepare('SELECT publish_status FROM videos WHERE id = ?')
+    .bind(videoId).first()
+  if (!priorVideo) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+  const wasAlreadyPublished = priorVideo.publish_status === 'published'
+
   try {
     if (hasTitle) {
       await db.prepare(`UPDATE videos SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
@@ -710,8 +717,8 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     `).bind(videoId).first()
     if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
 
-    // Fire push notifications asynchronously when a video is published
-    if (hasStatus && body.status === 'published') {
+    // Fire push notifications only on a real transition to published
+    if (hasStatus && body.status === 'published' && !wasAlreadyPublished) {
       ctx.waitUntil(sendPushToAllSubscribers(video.title || videoId, videoId, env, db))
     }
 
@@ -725,10 +732,12 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
 // ─── Push notification handlers ───────────────────────────────────────────────
 
 function handleGetVapidPublicKey(request, env, corsHeaders) {
-  if (!env.VAPID_PUBLIC_KEY) {
+  const publicKey = env.VAPID_PUBLIC_KEY?.trim()
+  const privateKey = env.VAPID_PRIVATE_KEY?.trim()
+  if (!publicKey || publicKey.startsWith('REPLACE_WITH_') || !privateKey) {
     return jsonResponse({ error: 'VAPID not configured' }, 503, corsHeaders)
   }
-  return jsonResponse({ publicKey: env.VAPID_PUBLIC_KEY }, 200, corsHeaders)
+  return jsonResponse({ publicKey }, 200, corsHeaders)
 }
 
 async function handlePushSubscribe(request, env, corsHeaders) {

@@ -26,8 +26,11 @@
           <!-- Push notification bell (logged-in only) -->
           <button
             v-if="isLoggedIn && pushSupported"
+            type="button"
             class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
             :title="pushBellTitle"
+            :aria-label="pushBellTitle"
+            :aria-pressed="pushSubscribed"
             @click="handleBellClick"
           >
             <!-- Bell off (permission denied) -->

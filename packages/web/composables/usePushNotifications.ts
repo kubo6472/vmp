@@ -17,7 +17,7 @@ const permission = ref<NotificationPermission>('default')
 const _initialised = ref(false)
 
 export function usePushNotifications() {
-  const { authHeader, isLoggedIn } = useAuth()
+  const { authHeader, isLoggedIn, user } = useAuth()
   const config = useRuntimeConfig()
   const apiUrl = config.public.apiUrl
 
@@ -48,11 +48,40 @@ export function usePushNotifications() {
     return reg.pushManager.getSubscription()
   }
 
-  /** Refresh isSubscribed from the browser's PushManager */
-  async function _syncSubscriptionState() {
+  /**
+   * Reconcile the local PushManager state with the server for the current user.
+   * Called on first mount and whenever the signed-in user changes.
+   */
+  async function _reconcile() {
     if (!isSupported.value) return
     permission.value = Notification.permission
+
     const sub = await _getCurrentSubscription()
+    if (!sub) {
+      isSubscribed.value = false
+      return
+    }
+
+    // If the user is logged in, re-POST the existing subscription so the server
+    // associates it with the correct account (handles same-device login switch).
+    if (isLoggedIn.value) {
+      const subJson = sub.toJSON()
+      const res = await fetch(`${apiUrl}/api/push/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({
+          endpoint: subJson.endpoint,
+          keys: { p256dh: subJson.keys?.p256dh, auth: subJson.keys?.auth },
+        }),
+      }).catch(() => null)
+
+      if (res && res.ok) {
+        isSubscribed.value = true
+        return
+      }
+    }
+
+    // Not logged in, or server re-association failed — reflect browser state only
     isSubscribed.value = sub !== null
   }
 
@@ -69,9 +98,19 @@ export function usePushNotifications() {
     permission.value = perm
     if (perm !== 'granted') return
 
-    const vapidPublicKey = await _getVapidPublicKey()
+    let vapidPublicKey: string
+    try {
+      vapidPublicKey = await _getVapidPublicKey()
+    } catch (e) {
+      console.error('Could not fetch VAPID key:', e)
+      return
+    }
+
     const reg = await navigator.serviceWorker.ready
-    const pushSubscription = await reg.pushManager.subscribe({
+
+    // Reuse any existing subscription rather than creating a duplicate
+    const existingSubscription = await reg.pushManager.getSubscription()
+    const pushSubscription = existingSubscription ?? await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: _urlB64ToUint8Array(vapidPublicKey),
     })
@@ -91,6 +130,11 @@ export function usePushNotifications() {
 
     if (!res.ok) {
       console.error('Failed to save push subscription:', await res.text())
+      // Roll back the browser subscription if we created it (don't roll back a pre-existing one)
+      if (!existingSubscription) {
+        await pushSubscription.unsubscribe().catch(() => {})
+      }
+      await _reconcile()
       return
     }
 
@@ -119,10 +163,21 @@ export function usePushNotifications() {
     isSubscribed.value = false
   }
 
-  // Sync state on first use (client-side only)
+  // Initialise once per tab (client-side only)
   if (import.meta.client && !_initialised.value) {
     _initialised.value = true
-    _syncSubscriptionState()
+    _reconcile()
+  }
+
+  // Re-reconcile whenever the signed-in user changes (login / logout / account switch)
+  if (import.meta.client) {
+    watch(() => user.value?.id, (_newId, oldId) => {
+      if (oldId !== undefined) {
+        // User changed — reset first so the bell doesn't flicker with stale state
+        isSubscribed.value = false
+        _reconcile()
+      }
+    })
   }
 
   return {
