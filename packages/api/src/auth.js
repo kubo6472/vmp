@@ -384,6 +384,13 @@ export async function handleVerifyMagicLink(request, env, corsHeaders) {
       env.JWT_SECRET
     )
 
+    // Lazy cleanup: delete expired challenges for this user before inserting a new one.
+    // Keeps the table tidy without a dedicated scheduled job.
+    await db
+      .prepare("DELETE FROM totp_challenges WHERE user_id = ? AND expires_at < datetime('now')")
+      .bind(user.id)
+      .run()
+
     // Persist the challenge so handleTotpVerify can enforce replay + brute-force limits.
     await db
       .prepare('INSERT INTO totp_challenges (jti, user_id, expires_at) VALUES (?, ?, ?)')
@@ -635,6 +642,13 @@ async function verifyTotp(base32Secret, code) {
 // The raw TOTP secret must not be stored in plain text in D1.
 // We derive a 256-bit AES key from the TOTP_ENCRYPTION_KEY secret via SHA-256,
 // then encrypt with a random IV.  Storage format: "<iv_hex>:<ciphertext_hex>".
+//
+// KEY ROTATION WARNING: there is no key versioning.  Rotating TOTP_ENCRYPTION_KEY
+// will break decryptTotpSecret for all currently enrolled users.  To rotate:
+//   1. Read every users.totp_secret row.
+//   2. Decrypt each with the old key, re-encrypt with the new key.
+//   3. Write the new ciphertext back before deploying the new secret.
+// A future improvement would prepend a key-version tag to the stored value.
 
 async function deriveAesKey(encryptionKey) {
   const raw = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(encryptionKey))
@@ -683,6 +697,17 @@ export async function handleTotpSetup(request, env, corsHeaders) {
 
   if (!ROLES_REQUIRING_2FA.includes(user.role)) {
     return authJson({ error: '2FA is not available for this role.' }, 403, corsHeaders)
+  }
+
+  // Return early if already enrolled — prevents generating a new QR code that
+  // would fail at /confirm anyway (handleTotpConfirm guards with totp_enabled=0).
+  const db = getDb(env)
+  const existing = await db
+    .prepare('SELECT totp_enabled FROM users WHERE id = ?')
+    .bind(user.sub)
+    .first()
+  if (existing?.totp_enabled) {
+    return authJson({ error: '2FA is already enabled. To reconfigure, disable it first.', code: 'totp_already_enabled' }, 409, corsHeaders)
   }
 
   const secret    = generateTotpSecret()
@@ -866,8 +891,8 @@ export async function handleTotpVerify(request, env, corsHeaders) {
     const incrResult = await db
       .prepare(`UPDATE totp_challenges
                 SET failed_attempts = failed_attempts + 1
-                WHERE jti = ? AND used_at IS NULL AND failed_attempts < ?`)
-      .bind(pending.jti, MAX_FAILED_ATTEMPTS)
+                WHERE jti = ? AND user_id = ? AND used_at IS NULL AND failed_attempts < ?`)
+      .bind(pending.jti, pending.sub, MAX_FAILED_ATTEMPTS)
       .run()
     if (!incrResult.meta.changes) {
       return authJson({ error: 'Sign-in session is no longer valid. Please start again.', code: 'session_expired' }, 401, corsHeaders)
@@ -878,8 +903,8 @@ export async function handleTotpVerify(request, env, corsHeaders) {
   // Mark challenge as used — guard ensures only one concurrent success wins.
   // A zero changes count means another request already consumed this token.
   const consumeResult = await db
-    .prepare('UPDATE totp_challenges SET used_at = CURRENT_TIMESTAMP WHERE jti = ? AND used_at IS NULL')
-    .bind(pending.jti)
+    .prepare('UPDATE totp_challenges SET used_at = CURRENT_TIMESTAMP WHERE jti = ? AND user_id = ? AND used_at IS NULL')
+    .bind(pending.jti, pending.sub)
     .run()
   if (!consumeResult.meta.changes) {
     return authJson({ error: 'This sign-in link has already been used.', code: 'session_expired' }, 401, corsHeaders)
