@@ -773,18 +773,29 @@ export async function handleTotpConfirm(request, env, corsHeaders) {
     return authJson({ error: '2FA is already enabled for this account.', code: 'totp_already_enabled' }, 409, corsHeaders)
   }
 
-  // Revoke all existing refresh tokens — sessions minted before 2FA enrollment
-  // must re-authenticate with the TOTP factor on next login.
+  // Revoke all pre-enrollment refresh tokens.  Sessions minted before 2FA
+  // enrollment lack the TOTP factor, so they must not survive past this point.
   await db
     .prepare('DELETE FROM refresh_tokens WHERE user_id = ?')
     .bind(user.sub)
     .run()
 
-  // Clear the browser's stale refresh cookie so it doesn't send it on the
-  // next request only to receive a 401 (server already deleted the row).
+  // Issue a brand-new session that reflects totp_enabled = true.
+  // The user just proved possession of the authenticator app, so there is no
+  // reason to force an immediate re-login — that would be surprising UX.
+  // We create fresh tokens so the new access JWT carries totpEnabled: true,
+  // and the old pre-enrollment refresh cookie is replaced atomically.
+  const enrolledUser = { id: user.sub, email: user.email, role: user.role, totp_enabled: 1 }
+  const newAccessToken  = await createAccessToken(enrolledUser, env.JWT_SECRET)
+  const newRefreshToken = await issueRefreshToken(user.sub, db)
+
   const headers = buildResponseHeaders(corsHeaders)
-  headers.set('Set-Cookie', clearRefreshCookie())
-  return new Response(JSON.stringify({ ok: true }), { status: 200, headers })
+  headers.set('Set-Cookie', buildRefreshCookie(newRefreshToken, REFRESH_TOKEN_TTL))
+  return new Response(JSON.stringify({
+    ok:          true,
+    accessToken: newAccessToken,
+    user:        { id: user.sub, email: user.email, role: user.role, totpEnabled: true },
+  }), { status: 200, headers })
 }
 
 /**

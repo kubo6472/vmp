@@ -253,6 +253,15 @@ export function useAuth() {
     if (user.value) user.value = { ...user.value, totpEnabled: true }
   }
 
+  /**
+   * Store a new access token + user returned by the server (e.g. after 2FA
+   * confirmation, where the server issues a fresh session in the same response
+   * rather than requiring a separate /refresh round-trip).
+   */
+  function applyNewSession(token: string, authUser: AuthUser) {
+    setAccessToken(token, authUser)
+  }
+
   return {
     // State
     user:         readonly(user),
@@ -270,6 +279,7 @@ export function useAuth() {
     authHeader,
     initialise,
     markTotpEnabled,
+    applyNewSession,
 
     // Role / subscription helpers
     isLoggedIn:     computed(() => user.value !== null),

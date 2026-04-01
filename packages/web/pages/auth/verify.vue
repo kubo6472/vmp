@@ -71,6 +71,20 @@ onMounted(async () => {
       return
     }
 
+    // Editor/admin/super_admin users who have not yet enrolled in 2FA must do so
+    // before they can access any privileged pages.  Redirect them to setup now
+    // (inline, same navigation) rather than waiting for the admin middleware to
+    // catch them only if they happen to visit /admin.
+    if (
+      ['editor', 'admin', 'super_admin'].includes(result.role) &&
+      !result.totpEnabled
+    ) {
+      await navigateTo(
+        `/auth/2fa/setup?redirect=${encodeURIComponent(redirect)}`
+      )
+      return
+    }
+
     // Session is now set in memory. Redirect to the page they originally wanted.
     await navigateTo(redirect)
   } catch (err: any) {

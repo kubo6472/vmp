@@ -28,7 +28,8 @@ export default defineNuxtRouteMiddleware((to) => {
   }
 
   // Editor+ users who haven't set up 2FA yet must complete setup before accessing admin.
+  // Forward the original path so setup can redirect back here after completion.
   if (!user.value.totpEnabled) {
-    return navigateTo('/auth/2fa/setup')
+    return navigateTo(`/auth/2fa/setup?redirect=${encodeURIComponent(to.fullPath)}`)
   }
 })
