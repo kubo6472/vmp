@@ -615,7 +615,11 @@ async function handleAdminVideosList(request, env, corsHeaders) {
         FROM videos
         ORDER BY upload_date DESC
       `).all()
-    } catch {
+    } catch (error) {
+      // Only swallow the specific missing-column error from migration 0013 not
+      // yet applied. Any other D1 failure is re-thrown so it surfaces normally.
+      const msg = error instanceof Error ? error.message : String(error)
+      if (!/no such column[:\s]*push_notified_at/i.test(msg)) throw error
       videos = await db.prepare(`
         SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
                upload_date, visibility, status, publish_status, published_at, NULL as push_notified_at, updated_at
@@ -764,19 +768,41 @@ async function handleAdminVideoDelete(request, env, corsHeaders) {
   const video = await db.prepare(`SELECT id FROM videos WHERE id = ?`).bind(videoId).first()
   if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
 
-  // Delete all R2 objects under videos/{videoId}/ (list + delete in pages)
+  // Delete all R2 objects under every layout prefix for this video.
+  // resolveMediaEntrypointUrl() serves from videos/, preview/, and full/
+  // depending on how the video was originally uploaded, so we sweep all three.
   let deletedR2Objects = 0
   if (env.BUCKET) {
-    let cursor
-    do {
-      const listed = await env.BUCKET.list({ prefix: `videos/${videoId}/`, cursor })
-      const keys = listed.objects.map(obj => obj.key)
-      if (keys.length > 0) {
-        await Promise.all(keys.map(key => env.BUCKET.delete(key)))
-        deletedR2Objects += keys.length
-      }
-      cursor = listed.truncated ? listed.cursor : undefined
-    } while (cursor)
+    for (const prefix of [`videos/${videoId}/`, `preview/${videoId}/`, `full/${videoId}/`]) {
+      let cursor
+      do {
+        const listed = await env.BUCKET.list({ prefix, cursor })
+        const keys = listed.objects.map(obj => obj.key)
+        if (keys.length > 0) {
+          await Promise.all(keys.map(key => env.BUCKET.delete(key)))
+          deletedR2Objects += keys.length
+        }
+        cursor = listed.truncated ? listed.cursor : undefined
+      } while (cursor)
+    }
+  }
+
+  // Evict the deleted ID from the persisted homepage featured-slots config so
+  // a subsequent page load doesn't rehydrate a stale or empty featured card.
+  const homepageRow = await db.prepare(
+    'SELECT value FROM admin_settings WHERE key = ? LIMIT 1'
+  ).bind('homepage').first()
+  if (homepageRow?.value) {
+    const homepage = safeJsonParse(homepageRow.value, defaultHomepageConfig())
+    const before = Array.isArray(homepage.featuredVideoIds) ? homepage.featuredVideoIds : []
+    const after  = before.filter(id => id !== videoId)
+    if (after.length !== before.length) {
+      homepage.featuredVideoIds = after
+      await db.prepare(`
+        INSERT INTO admin_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      `).bind('homepage', JSON.stringify(homepage)).run()
+    }
   }
 
   // Delete the D1 row
