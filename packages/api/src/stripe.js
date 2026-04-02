@@ -16,6 +16,7 @@
  */
 
 import { requireAuth } from './auth.js'
+import { isAdministrativeRole } from './roles.js'
 
 // ─── Stripe API helpers ───────────────────────────────────────────────────────
 
@@ -389,6 +390,21 @@ export async function handleGetSubscription(request, env, corsHeaders) {
 
   try {
     const db = getDb(env)
+    if (isAdministrativeRole(user.role)) {
+      const now = new Date().toISOString()
+      return jsonResponse({
+        subscription: {
+          id:                  `role:${user.role}`,
+          planType:            'staff',
+          status:              'active',
+          stripeCustomerId:    null,
+          currentPeriodEnd:    null,
+          createdAt:           now,
+          updatedAt:           now,
+        },
+      }, 200, corsHeaders)
+    }
+
     const sub = await db.prepare(`
       SELECT id, user_id, plan_type, status, stripe_customer_id,
              current_period_end, created_at, updated_at

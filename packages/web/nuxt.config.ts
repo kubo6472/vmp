@@ -72,6 +72,8 @@ export default defineNuxtConfig({
       navigateFallback: '/',
       globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
       cleanupOutdatedCaches: true,
+      // Keep push handlers in a tiny sidecar file so GenerateSW can still be used.
+      importScripts: ['/sw-push.js'],
     },
     client: {
       installPrompt: true,
