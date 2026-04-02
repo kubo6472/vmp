@@ -282,6 +282,7 @@ export async function sendPushNotification(subscription, payload, env) {
 
   const vapidJwt = await signVapidJwt(audience, subject, env.VAPID_PRIVATE_KEY)
   const vapidAuthHeader = `vapid t=${vapidJwt},k=${env.VAPID_PUBLIC_KEY}`
+  const webPushAuthHeader = `WebPush ${vapidJwt}`
 
   const payloadJson = JSON.stringify(payload)
   const encrypted = await encryptPayload(payloadJson, p256dh, auth)
@@ -291,18 +292,28 @@ export async function sendPushNotification(subscription, payload, env) {
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), 10_000)
   let response
+  const send = (authorizationValue) => fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Content-Encoding': 'aes128gcm',
+      'Authorization': authorizationValue,
+      // Historically required by some push gateways (including older FCM paths)
+      // when validating VAPID identity.
+      'Crypto-Key': `p256ecdsa=${env.VAPID_PUBLIC_KEY}`,
+      'TTL': '86400',
+    },
+    body: encrypted,
+    signal: abort.signal,
+  })
+
   try {
-    response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'Content-Encoding': 'aes128gcm',
-        'Authorization': vapidAuthHeader,
-        'TTL': '86400',
-      },
-      body: encrypted,
-      signal: abort.signal,
-    })
+    response = await send(vapidAuthHeader)
+    // Compatibility fallback for browsers routed through FCM endpoints that
+    // reject the RFC 8292 "vapid t=...,k=..." Authorization syntax.
+    if (!response.ok && (response.status === 400 || response.status === 401 || response.status === 403)) {
+      response = await send(webPushAuthHeader)
+    }
   } catch (err) {
     clearTimeout(timer)
     throw Object.assign(
