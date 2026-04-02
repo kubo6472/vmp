@@ -383,6 +383,21 @@ async function handleVideoProxy(request, env, corsHeaders) {
   if (!objectPath) return jsonResponse({ error: 'Missing proxied object path' }, 400, corsHeaders)
   if (!objectPath.startsWith('videos/')) return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
 
+  // Reject dot-segment traversal before touching the WHATWG URL API.
+  // new URL() normalises "videos/a/../../videos/b/f.ts" → "/videos/b/f.ts",
+  // which would pass the startsWith check above but resolve to a different video.
+  // Decoding catches percent-encoded forms like %2e%2e.
+  const rawSegments = objectPath.split('/')
+  for (const seg of rawSegments) {
+    let decoded
+    try { decoded = decodeURIComponent(seg) } catch {
+      return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
+    }
+    if (decoded === '.' || decoded === '..') {
+      return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
+    }
+  }
+
   // ── Step 4a: Validate the signed video token ──────────────────────────────
   // Every proxy request must carry a valid short-lived HMAC token issued by
   // handleVideoAccess.  This prevents direct enumeration / bulk downloading of
@@ -763,15 +778,14 @@ async function handleAdminVideoDelete(request, env, corsHeaders) {
   const videoId = pathParts[3] // /api/admin/videos/{videoId}
   if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
 
-  const db = getDatabaseBinding(env)
-  // Guard: ensure admin_settings exists on fresh/migration-lagged deployments
-  // before the homepage cleanup query below tries to read from it.
-  await ensureAdminSettingsTable(db)
-
-  const video = await db.prepare(`SELECT id FROM videos WHERE id = ?`).bind(videoId).first()
-  if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
-
   try {
+    const db = getDatabaseBinding(env)
+    // Guard: ensure admin_settings exists on fresh/migration-lagged deployments
+    // before the homepage cleanup query below tries to read from it.
+    await ensureAdminSettingsTable(db)
+
+    const video = await db.prepare(`SELECT id FROM videos WHERE id = ?`).bind(videoId).first()
+    if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
     // Delete all R2 objects under videos/{videoId}/ (paginated)
     let deletedR2Objects = 0
     if (env.BUCKET) {
@@ -816,6 +830,7 @@ async function handleAdminVideoDelete(request, env, corsHeaders) {
     console.error(`handleAdminVideoDelete [videoId:${videoId}]:`, error)
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
+}
 
 async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
   try {
@@ -1021,9 +1036,11 @@ async function hasProcessedPlaybackArtifact(bucket, videoId) {
     // directly into videos/{id}/ with no processed/ subdirectory)
     `videos/${videoId}/master.m3u8`,
     `videos/${videoId}/manifest.mpd`,
-    // Legacy / processed-subdirectory layouts kept for backwards compatibility
+    // Processed-subdirectory layouts (video-processor pipeline output)
     `videos/${videoId}/processed/playlist.m3u8`,
     `videos/${videoId}/processed/hls/master.m3u8`,
+    `videos/${videoId}/processed/manifest.mpd`,
+    `videos/${videoId}/processed/playlist.mpd`,
     `videos/${videoId}/processed/dash/manifest.mpd`,
   ]
 
