@@ -48,16 +48,6 @@ const accessToken  = ref<string | null>(null)
 const subscription = ref<SubscriptionData | null>(null)
 const initialised  = ref(false)
 let   refreshTimer: ReturnType<typeof setTimeout> | null = null
-const PREMIUM_ROLE_SET = new Set([
-  'super_admin',
-  'admin',
-  'editor',
-  'analyst',
-  'moderator',
-  'owner',
-  'staff',
-  'manager',
-])
 
 export function useAuth() {
   const config = useRuntimeConfig()
