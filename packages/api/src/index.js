@@ -158,6 +158,9 @@ export default {
     if (url.pathname.startsWith('/api/admin/videos/') && request.method === 'PATCH') {
       return handleAdminVideoUpdate(request, env, ctx, corsHeaders)
     }
+    if (url.pathname.match(/^\/api\/admin\/videos\/[^/]+$/) && request.method === 'DELETE') {
+      return handleAdminVideoDelete(request, env, corsHeaders)
+    }
     if (url.pathname.match(/^\/api\/admin\/videos\/[^/]+\/notify$/) && request.method === 'POST') {
       return handleAdminVideoNotify(request, env, ctx, corsHeaders)
     }
@@ -600,12 +603,26 @@ async function handleAdminVideosList(request, env, corsHeaders) {
     }
 
     // ── 2. Fetch all videos from D1 ──────────────────────────────────────────
-    const videos = await db.prepare(`
-      SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
-             upload_date, visibility, status, publish_status, published_at, push_notified_at, updated_at
-      FROM videos
-      ORDER BY upload_date DESC
-    `).all()
+    // push_notified_at was added in migration 0013. If that migration hasn't
+    // been applied yet (e.g. worker deployed before migration ran) the query
+    // would fail with "no such column". Fall back gracefully so the rest of
+    // the admin UI still works while the operator applies the migration.
+    let videos
+    try {
+      videos = await db.prepare(`
+        SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
+               upload_date, visibility, status, publish_status, published_at, push_notified_at, updated_at
+        FROM videos
+        ORDER BY upload_date DESC
+      `).all()
+    } catch {
+      videos = await db.prepare(`
+        SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
+               upload_date, visibility, status, publish_status, published_at, NULL as push_notified_at, updated_at
+        FROM videos
+        ORDER BY upload_date DESC
+      `).all()
+    }
 
     // ── 3. Annotate each row with r2_exists ──────────────────────────────────
     const annotated = await Promise.all((videos.results || []).map(async (video) => {
@@ -729,6 +746,43 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     console.error('Error:', error)
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
+}
+
+async function handleAdminVideoDelete(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
+  const url = new URL(request.url)
+  const pathParts = url.pathname.split('/').filter(Boolean)
+  const videoId = pathParts[3] // /api/admin/videos/{videoId}
+  if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
+
+  const db = getDatabaseBinding(env)
+  const video = await db.prepare(`SELECT id FROM videos WHERE id = ?`).bind(videoId).first()
+  if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+
+  // Delete all R2 objects under videos/{videoId}/ (list + delete in pages)
+  let deletedR2Objects = 0
+  if (env.BUCKET) {
+    let cursor
+    do {
+      const listed = await env.BUCKET.list({ prefix: `videos/${videoId}/`, cursor })
+      const keys = listed.objects.map(obj => obj.key)
+      if (keys.length > 0) {
+        await Promise.all(keys.map(key => env.BUCKET.delete(key)))
+        deletedR2Objects += keys.length
+      }
+      cursor = listed.truncated ? listed.cursor : undefined
+    } while (cursor)
+  }
+
+  // Delete the D1 row
+  await db.prepare(`DELETE FROM videos WHERE id = ?`).bind(videoId).run()
+
+  return jsonResponse({ ok: true, deletedR2Objects }, 200, corsHeaders)
 }
 
 async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
