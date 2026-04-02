@@ -9,8 +9,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:create": "wrangler d1 execute video-subscription-db --file=./migrations/0001_initial.sql",
-    "db:seed": "wrangler d1 execute video-subscription-db --file=./migrations/0002_seed.sql",
-    "test": "node --test test/*.test.js"
+    "db:seed": "wrangler d1 execute video-subscription-db --file=./migrations/0002_seed.sql"
   },
   "dependencies": {
     "@vmp/shared": "*"
