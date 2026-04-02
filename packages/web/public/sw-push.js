@@ -5,6 +5,27 @@
  * surfaced if the SW handles the "push" event and shows a notification.
  */
 
+function sanitizeTargetUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return '/'
+
+  // Allow only root-relative paths with a single leading slash.
+  if (rawUrl.startsWith('/') && rawUrl[1] !== '/') {
+    return rawUrl
+  }
+
+  // Allow absolute URLs only when they are same-origin.
+  try {
+    const parsed = new URL(rawUrl)
+    if (parsed.origin === self.location.origin) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`
+    }
+  } catch {
+    // Invalid URL, fall through to '/'.
+  }
+
+  return '/'
+}
+
 self.addEventListener('push', (event) => {
   let data = {}
   try {
@@ -17,9 +38,7 @@ self.addEventListener('push', (event) => {
     ? data.title
     : 'New update'
   const body = typeof data.body === 'string' ? data.body : ''
-  const targetUrl = typeof data.url === 'string' && data.url.startsWith('/')
-    ? data.url
-    : '/'
+  const targetUrl = sanitizeTargetUrl(data.url)
 
   event.waitUntil(
     self.registration.showNotification(title, {
@@ -33,14 +52,14 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const targetPath = event.notification?.data?.url || '/'
+  const targetPath = sanitizeTargetUrl(event.notification?.data?.url)
 
   event.waitUntil((async () => {
     const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
     for (const client of clientList) {
       try {
         const currentUrl = new URL(client.url)
-        if (currentUrl.pathname === targetPath) {
+        if (currentUrl.pathname === new URL(targetPath, self.location.origin).pathname) {
           await client.focus()
           return
         }

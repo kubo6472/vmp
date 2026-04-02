@@ -48,6 +48,16 @@ const accessToken  = ref<string | null>(null)
 const subscription = ref<SubscriptionData | null>(null)
 const initialised  = ref(false)
 let   refreshTimer: ReturnType<typeof setTimeout> | null = null
+const PREMIUM_ROLE_SET = new Set([
+  'super_admin',
+  'admin',
+  'editor',
+  'analyst',
+  'moderator',
+  'owner',
+  'staff',
+  'manager',
+])
 
 export function useAuth() {
   const config = useRuntimeConfig()
@@ -285,7 +295,7 @@ export function useAuth() {
     // Role / subscription helpers
     isLoggedIn:     computed(() => user.value !== null),
     isPremium:      computed(() => {
-      if (user.value?.role && user.value.role !== 'viewer') return true
+      if (typeof user.value?.role === 'string' && PREMIUM_ROLE_SET.has(user.value.role)) return true
       if (!subscription.value) return false
       if (subscription.value.status !== 'active' && subscription.value.status !== 'trialing') return false
       if (!subscription.value.currentPeriodEnd) return true

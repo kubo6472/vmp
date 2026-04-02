@@ -2,14 +2,12 @@
  * Shared role helpers for API authorization/entitlement checks.
  */
 
+import { ROLES } from './auth.js'
+
+// Derive administrative roles from the canonical ROLES list (excluding 'viewer'),
+// plus defensive aliases used in some deployments/docs.
 const ADMINISTRATIVE_ROLES = new Set([
-  // App roles (see auth.js ROLES)
-  'super_admin',
-  'admin',
-  'editor',
-  'analyst',
-  'moderator',
-  // Defensive aliases used in some deployments/docs
+  ...ROLES.filter(r => r !== 'viewer'),
   'owner',
   'staff',
   'manager',
@@ -21,4 +19,3 @@ export function isAdministrativeRole(role) {
   if (!normalized || normalized === 'viewer') return false
   return ADMINISTRATIVE_ROLES.has(normalized)
 }
-

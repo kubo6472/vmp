@@ -47,7 +47,7 @@ const PENDING_2FA_TTL   =  5 * 60            //  5 minutes (seconds)
 export const ROLES = ['super_admin', 'admin', 'editor', 'analyst', 'moderator', 'viewer']
 
 // Roles that must complete TOTP 2FA on login (once enabled).
-const ROLES_REQUIRING_2FA = ['editor', 'admin', 'super_admin']
+const ROLES_REQUIRING_2FA = ['editor', 'analyst', 'moderator', 'admin', 'super_admin']
 
 // ─── Base64url helpers ────────────────────────────────────────────────────────
 //
