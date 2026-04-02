@@ -289,23 +289,25 @@ export async function sendPushNotification(subscription, payload, env) {
 
   // 10-second timeout — prevents a slow/unresponsive endpoint from blocking
   // the entire batch inside Promise.allSettled().
-  const abort = new AbortController()
-  const timer = setTimeout(() => abort.abort(), 10_000)
   let response
-  const send = (authorizationValue) => fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/octet-stream',
-      'Content-Encoding': 'aes128gcm',
-      'Authorization': authorizationValue,
-      // Historically required by some push gateways (including older FCM paths)
-      // when validating VAPID identity.
-      'Crypto-Key': `p256ecdsa=${env.VAPID_PUBLIC_KEY}`,
-      'TTL': '86400',
-    },
-    body: encrypted,
-    signal: abort.signal,
-  })
+  const send = (authorizationValue) => {
+    const abort = new AbortController()
+    const timer = setTimeout(() => abort.abort(), 10_000)
+    return fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Encoding': 'aes128gcm',
+        'Authorization': authorizationValue,
+        // Historically required by some push gateways (including older FCM paths)
+        // when validating VAPID identity.
+        'Crypto-Key': `p256ecdsa=${env.VAPID_PUBLIC_KEY}`,
+        'TTL': '86400',
+      },
+      body: encrypted,
+      signal: abort.signal,
+    }).finally(() => clearTimeout(timer))
+  }
 
   try {
     response = await send(vapidAuthHeader)
@@ -315,13 +317,11 @@ export async function sendPushNotification(subscription, payload, env) {
       response = await send(webPushAuthHeader)
     }
   } catch (err) {
-    clearTimeout(timer)
     throw Object.assign(
       new Error(`Push fetch error: ${err.message}`),
       { code: 'push_failed' },
     )
   }
-  clearTimeout(timer)
 
   if (!response.ok) {
     // Hash the endpoint before logging — it's a device-scoped token and shouldn't appear in logs
