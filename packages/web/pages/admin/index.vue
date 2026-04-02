@@ -236,6 +236,12 @@
                           :disabled="statusUpdating[video.id]"
                           @click="updateVideoStatus(video, 'archived')"
                         >Archive</button>
+                        <button
+                          class="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50"
+                          :disabled="trashing[video.id] || statusUpdating[video.id]"
+                          :title="`Permanently delete ${video.title} from D1 and R2`"
+                          @click="trashVideo(video)"
+                        >{{ trashing[video.id] ? 'Deleting…' : 'Trash' }}</button>
                       </div>
                     </td>
                   </tr>
@@ -335,6 +341,7 @@ const previewLockByVideoId = ref<Record<string, number>>({})
 const actualDurationByVideoId = ref<Record<string, number>>({})
 const statusUpdating = ref<Record<string, boolean>>({})
 const notifying = ref<Record<string, boolean>>({})
+const trashing = ref<Record<string, boolean>>({})
 const activeVideoTab = ref<'all' | 'locks'>('all')
 const editingTitle = ref<{ id: string; value: string } | null>(null)
 const titleInputEl = ref<HTMLInputElement | null>(null)
@@ -410,12 +417,19 @@ const loadVideos = async () => {
   videosLoading.value = true
   try {
     const res  = await fetch(`${config.public.apiUrl}/api/admin/videos`, { headers: authHeader() })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      throw new Error(err.details || err.error || `HTTP ${res.status}`)
+    }
     const data = await res.json()
     uploads.value = data.videos || []
     for (const video of uploads.value) {
       previewLockByVideoId.value[video.id] = video.preview_duration
     }
     await hydrateActualDurations()
+  } catch (e: any) {
+    saveMessage.value = `Failed to load videos: ${e.message}`
+    saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
   } finally {
     videosLoading.value = false
   }
@@ -571,6 +585,36 @@ async function sendNotification(video: Video) {
     saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
   } finally {
     notifying.value[video.id] = false
+  }
+}
+
+async function trashVideo(video: Video) {
+  const confirmed = window.confirm(
+    `Permanently delete "${video.title}"?\n\nThis will remove the video from the database AND delete all files in R2 (videos/${video.id}/). This cannot be undone.`
+  )
+  if (!confirmed) return
+
+  trashing.value[video.id] = true
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
+      method: 'DELETE',
+      headers: authHeader(),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    uploads.value = uploads.value.filter(v => v.id !== video.id)
+    featuredSlots.value = featuredSlots.value.map(slot =>
+      slot?.id === video.id ? null : slot
+    )
+    saveMessage.value = `"${video.title}" has been permanently deleted.`
+    saveMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+  } catch (e: any) {
+    saveMessage.value = `Failed to delete "${video.title}": ${e.message}`
+    saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    trashing.value[video.id] = false
   }
 }
 

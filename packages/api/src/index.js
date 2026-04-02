@@ -158,6 +158,9 @@ export default {
     if (url.pathname.startsWith('/api/admin/videos/') && request.method === 'PATCH') {
       return handleAdminVideoUpdate(request, env, ctx, corsHeaders)
     }
+    if (url.pathname.match(/^\/api\/admin\/videos\/[^/]+$/) && request.method === 'DELETE') {
+      return handleAdminVideoDelete(request, env, corsHeaders)
+    }
     if (url.pathname.match(/^\/api\/admin\/videos\/[^/]+\/notify$/) && request.method === 'POST') {
       return handleAdminVideoNotify(request, env, ctx, corsHeaders)
     }
@@ -331,9 +334,13 @@ async function handleVideoAccess(request, env, corsHeaders) {
 
     const hasVideoMetadata = Boolean(video)
     const hasAccess = hasPremiumAccess || !hasVideoMetadata
-    const requestedProtocol = normalizeProtocolOption(url.searchParams.get('protocol')) ?? 'hls'
-    const resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId, hasPremiumAccess: true, protocol: requestedProtocol })
     const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0
+    // If preview is locked (non-premium + previewDuration > 0), force HLS since DASH doesn't support preview limits
+    let requestedProtocol = normalizeProtocolOption(url.searchParams.get('protocol')) ?? 'hls'
+    if (!hasPremiumAccess && previewDuration > 0 && requestedProtocol === 'dash') {
+      requestedProtocol = 'hls'
+    }
+    const resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId, protocol: requestedProtocol })
     const basePlaylistUrl = buildProxyPlaylistUrl(request, resolvedEntrypointUrl, hasPremiumAccess ? null : previewDuration, requestedProtocol)
     const fullDuration = video?.full_duration ?? previewDuration
 
@@ -378,8 +385,36 @@ async function handleVideoProxy(request, env, corsHeaders) {
   const previewUntil = Number.parseFloat(requestUrl.searchParams.get('previewUntil') ?? '')
   const previewUntilSeconds = Number.isFinite(previewUntil) && previewUntil > 0 ? previewUntil : null
   if (!objectPath) return jsonResponse({ error: 'Missing proxied object path' }, 400, corsHeaders)
-  const allowedPrefix = ['videos/', 'preview/', 'full/']
-  if (!allowedPrefix.some(p => objectPath.startsWith(p))) return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
+
+  // Normalize the path to resolve any dot-segments, leading slashes, etc.
+  // This prevents rewritten URLs from rewriteSegmentPath() that produce root-relative
+  // or dot-containing paths from bypassing the subtree check.
+  let normalizedPath
+  try {
+    // Use WHATWG URL to normalize the path (resolves dots and removes leading slash)
+    const tempUrl = new URL(objectPath, 'http://dummy')
+    normalizedPath = tempUrl.pathname.replace(/^\/+/, '') // strip leading slashes
+  } catch {
+    return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
+  }
+
+  // Enforce that the normalized path is within the videos/ subtree
+  if (!normalizedPath.startsWith('videos/')) {
+    return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
+  }
+
+  // Reject dot-segment traversal in the normalized path
+  // Decoding catches percent-encoded forms like %2e%2e
+  const pathSegments = normalizedPath.split('/')
+  for (const seg of pathSegments) {
+    let decoded
+    try { decoded = decodeURIComponent(seg) } catch {
+      return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
+    }
+    if (decoded === '.' || decoded === '..') {
+      return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
+    }
+  }
 
   // ── Step 4a: Validate the signed video token ──────────────────────────────
   // Every proxy request must carry a valid short-lived HMAC token issued by
@@ -404,7 +439,7 @@ async function handleVideoProxy(request, env, corsHeaders) {
     }
   }
 
-  // Extract videoId from path (videos/{id}/... or preview/{id}/... or full/{id}/...)
+  // Extract videoId from path (videos/{id}/...)
   const pathParts = objectPath.split('/')
   const proxyVideoId = pathParts[1] ?? ''
 
@@ -600,12 +635,30 @@ async function handleAdminVideosList(request, env, corsHeaders) {
     }
 
     // ── 2. Fetch all videos from D1 ──────────────────────────────────────────
-    const videos = await db.prepare(`
-      SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
-             upload_date, visibility, status, publish_status, published_at, push_notified_at, updated_at
-      FROM videos
-      ORDER BY upload_date DESC
-    `).all()
+    // push_notified_at was added in migration 0013. If that migration hasn't
+    // been applied yet (e.g. worker deployed before migration ran) the query
+    // would fail with "no such column". Fall back gracefully so the rest of
+    // the admin UI still works while the operator applies the migration.
+    let videos
+    try {
+      videos = await db.prepare(`
+        SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
+               upload_date, visibility, status, publish_status, published_at, push_notified_at, updated_at
+        FROM videos
+        ORDER BY upload_date DESC
+      `).all()
+    } catch (error) {
+      // Only swallow the specific missing-column error from migration 0013 not
+      // yet applied. Any other D1 failure is re-thrown so it surfaces normally.
+      const msg = error instanceof Error ? error.message : String(error)
+      if (!/no such column[:\s]*push_notified_at/i.test(msg)) throw error
+      videos = await db.prepare(`
+        SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
+               upload_date, visibility, status, publish_status, published_at, NULL as push_notified_at, updated_at
+        FROM videos
+        ORDER BY upload_date DESC
+      `).all()
+    }
 
     // ── 3. Annotate each row with r2_exists ──────────────────────────────────
     const annotated = await Promise.all((videos.results || []).map(async (video) => {
@@ -727,6 +780,72 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     return jsonResponse({ ok: true, video }, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
+    return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
+  }
+}
+
+async function handleAdminVideoDelete(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
+  const url = new URL(request.url)
+  const pathParts = url.pathname.split('/').filter(Boolean)
+  const videoId = pathParts[3] // /api/admin/videos/{videoId}
+  if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
+
+  try {
+    const db = getDatabaseBinding(env)
+    // Guard: ensure admin_settings exists on fresh/migration-lagged deployments
+    // before the homepage cleanup query below tries to read from it.
+    await ensureAdminSettingsTable(db)
+
+    const video = await db.prepare(`SELECT id FROM videos WHERE id = ?`).bind(videoId).first()
+    if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+    // Delete all R2 objects under videos/{videoId}/ (paginated)
+    let deletedR2Objects = 0
+    if (env.BUCKET) {
+      let cursor
+      do {
+        const listed = await env.BUCKET.list({ prefix: `videos/${videoId}/`, cursor })
+        const keys = listed.objects.map(obj => obj.key)
+        if (keys.length > 0) {
+          const batchSize = 100
+          for (let i = 0; i < keys.length; i += batchSize) {
+            await Promise.all(keys.slice(i, i + batchSize).map(key => env.BUCKET.delete(key)))
+          }
+          deletedR2Objects += keys.length
+        }
+        cursor = listed.truncated ? listed.cursor : undefined
+      } while (cursor)
+    }
+
+    // Evict the deleted ID from the persisted homepage featured-slots config so
+    // a subsequent page load doesn't rehydrate a stale or empty featured card.
+    const homepageRow = await db.prepare(
+      'SELECT value FROM admin_settings WHERE key = ? LIMIT 1'
+    ).bind('homepage').first()
+    if (homepageRow?.value) {
+      const homepage = safeJsonParse(homepageRow.value, defaultHomepageConfig())
+      const before = Array.isArray(homepage.featuredVideoIds) ? homepage.featuredVideoIds : []
+      const after  = before.filter(id => id !== videoId)
+      if (after.length !== before.length) {
+        homepage.featuredVideoIds = after
+        await db.prepare(`
+          INSERT INTO admin_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+        `).bind('homepage', JSON.stringify(homepage)).run()
+      }
+    }
+
+    // Delete the D1 row
+    await db.prepare(`DELETE FROM videos WHERE id = ?`).bind(videoId).run()
+
+    return jsonResponse({ ok: true, deletedR2Objects }, 200, corsHeaders)
+  } catch (error) {
+    console.error(`handleAdminVideoDelete [videoId:${videoId}]:`, error)
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
 }
@@ -935,9 +1054,11 @@ async function hasProcessedPlaybackArtifact(bucket, videoId) {
     // directly into videos/{id}/ with no processed/ subdirectory)
     `videos/${videoId}/master.m3u8`,
     `videos/${videoId}/manifest.mpd`,
-    // Legacy / processed-subdirectory layouts kept for backwards compatibility
+    // Processed-subdirectory layouts (video-processor pipeline output)
     `videos/${videoId}/processed/playlist.m3u8`,
     `videos/${videoId}/processed/hls/master.m3u8`,
+    `videos/${videoId}/processed/manifest.mpd`,
+    `videos/${videoId}/processed/playlist.mpd`,
     `videos/${videoId}/processed/dash/manifest.mpd`,
   ]
 
@@ -1073,7 +1194,7 @@ function rewriteSegmentPath(path, query, baseDir = '') {
     proxied = `/api/video-proxy${u.pathname}${u.search}`
   } else if (path.startsWith('/')) {
     proxied = `/api/video-proxy${path}`
-  } else if (/^(videos|preview|full)\//i.test(path)) {
+  } else if (path.startsWith('videos/')) {
     proxied = `/api/video-proxy/${path}`
   } else if (baseDir) {
     // Bare relative filename (e.g. "seg_1080_1.m4s", "init_1080.mp4") —
@@ -1093,41 +1214,29 @@ function normalizeVideoId(input) {
   return m ? m[1] : t
 }
 
-async function resolveMediaEntrypointUrl({ env, videoId, hasPremiumAccess, protocol = 'hls' }) {
+async function resolveMediaEntrypointUrl({ env, videoId, protocol = 'hls' }) {
   const base = env.R2_BASE_URL
-  const scope = hasPremiumAccess ? 'full' : 'preview'
-  const primary = protocol === 'dash' ? 'dash' : 'hls'
-  const secondary = primary === 'hls' ? 'dash' : 'hls'
-  const candidates = [
-    ...buildEntrypointCandidates(base, videoId, scope, primary),
-    ...buildEntrypointCandidates(base, videoId, 'videos', primary),
-    ...buildEntrypointCandidates(base, videoId, scope, secondary),
-    ...buildEntrypointCandidates(base, videoId, 'videos', secondary),
-  ]
+  const candidates = buildEntrypointCandidates(base, videoId, protocol)
   for (const c of candidates) { if (await canLoadEntrypoint(c)) return c }
   return candidates[0]
 }
 
-function buildEntrypointCandidates(base, videoId, scope, protocol) {
-  if (scope === 'videos') {
-    // Flat layout (upload script copies TMP_DIR directly under videos/{id}/)
-    // checked first; processed/ subdirectory kept for backwards compatibility.
-    return protocol === 'dash'
-      ? [
-          `${base}/videos/${videoId}/manifest.mpd`,
-          `${base}/videos/${videoId}/processed/dash/manifest.mpd`,
-          `${base}/videos/${videoId}/processed/manifest.mpd`,
-          `${base}/videos/${videoId}/processed/playlist.mpd`,
-        ]
-      : [
-          `${base}/videos/${videoId}/master.m3u8`,
-          `${base}/videos/${videoId}/processed/hls/master.m3u8`,
-          `${base}/videos/${videoId}/processed/playlist.m3u8`,
-        ]
-  }
+function buildEntrypointCandidates(base, videoId, protocol) {
+  // All videos live under videos/{id}/.  Flat layout (rclone output directly
+  // under videos/{id}/) is checked first; processed/ subdirectory is kept for
+  // older uploads that went through the video-processor pipeline.
   return protocol === 'dash'
-    ? [`${base}/${scope}/${videoId}/manifest.mpd`, `${base}/${scope}/${videoId}/playlist.mpd`]
-    : [`${base}/${scope}/${videoId}/playlist.m3u8`]
+    ? [
+        `${base}/videos/${videoId}/manifest.mpd`,
+        `${base}/videos/${videoId}/processed/dash/manifest.mpd`,
+        `${base}/videos/${videoId}/processed/manifest.mpd`,
+        `${base}/videos/${videoId}/processed/playlist.mpd`,
+      ]
+    : [
+        `${base}/videos/${videoId}/master.m3u8`,
+        `${base}/videos/${videoId}/processed/hls/master.m3u8`,
+        `${base}/videos/${videoId}/processed/playlist.m3u8`,
+      ]
 }
 
 function buildProxyPlaylistUrl(request, playlistUrl, previewUntilSeconds, protocol) {

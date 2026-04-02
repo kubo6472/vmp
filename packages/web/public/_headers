@@ -1,0 +1,15 @@
+# Cloudflare Pages custom response headers
+# Reference: https://developers.cloudflare.com/pages/configuration/headers/
+
+/manifest.webmanifest
+  Content-Type: application/manifest+json; charset=utf-8
+
+/sw.js
+  Content-Type: text/javascript; charset=utf-8
+  # Allow the service worker to control the entire origin
+  Service-Worker-Allowed: /
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/workbox-*.js
+  Content-Type: text/javascript; charset=utf-8
+  Cache-Control: no-cache, no-store, must-revalidate
