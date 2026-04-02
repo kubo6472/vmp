@@ -780,7 +780,10 @@ async function handleAdminVideoDelete(request, env, corsHeaders) {
         const listed = await env.BUCKET.list({ prefix: `videos/${videoId}/`, cursor })
         const keys = listed.objects.map(obj => obj.key)
         if (keys.length > 0) {
-          await Promise.all(keys.map(key => env.BUCKET.delete(key)))
+          const batchSize = 100
+          for (let i = 0; i < keys.length; i += batchSize) {
+            await Promise.all(keys.slice(i, i + batchSize).map(key => env.BUCKET.delete(key)))
+          }
           deletedR2Objects += keys.length
         }
         cursor = listed.truncated ? listed.cursor : undefined
