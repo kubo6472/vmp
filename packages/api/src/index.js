@@ -27,6 +27,7 @@ import {
   handleGetSubscription,
   handlePortal,
 } from './stripe.js'
+import { isAdministrativeRole } from './roles.js'
 
 // ─── Durable Object for atomic segment rate limiting (Step 4c) ───────────────
 //
@@ -327,7 +328,8 @@ async function handleVideoAccess(request, env, corsHeaders) {
       : null
 
     const video = await db.prepare('SELECT * FROM videos WHERE id = ?').bind(videoId).first()
-    const hasElevatedRole = ['editor', 'admin', 'super_admin'].includes(authUser?.role ?? '')
+    // Treat all non-viewer staff roles as premium-equivalent entitlements.
+    const hasElevatedRole = isAdministrativeRole(authUser?.role)
     // Any active monthly/yearly/club subscription grants full access
     const hasPremiumSubscription = Boolean(subscription)
     const hasPremiumAccess = hasElevatedRole || hasPremiumSubscription
