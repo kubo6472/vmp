@@ -22,9 +22,11 @@
  *                               timestamp are forced to enroll in 2FA.
  *
  * Cookie strategy:
- *   The refresh token is stored in an HttpOnly, SameSite=None; Secure cookie
- *   scoped to /api/auth.  SameSite=None is required because the API lives on a
- *   different origin than the web app.  The short-lived JWT is returned in the
+ *   The refresh token is stored in an HttpOnly, SameSite=Lax; Secure cookie
+ *   scoped to /api/auth. The app and API are same-site subdomains, so Lax
+ *   cookies are still sent to /api/auth/refresh and avoid stricter handling
+ *   some browsers apply to SameSite=None.
+ *   The short-lived JWT is returned in the
  *   JSON body and stored in memory (a Pinia store / reactive ref) by the frontend.
  *   This combination means:
  *     - The JWT is invisible to the HttpOnly cookie (XSS can't steal it from
@@ -45,7 +47,7 @@ const PENDING_2FA_TTL   =  5 * 60            //  5 minutes (seconds)
 export const ROLES = ['super_admin', 'admin', 'editor', 'analyst', 'moderator', 'viewer']
 
 // Roles that must complete TOTP 2FA on login (once enabled).
-const ROLES_REQUIRING_2FA = ['editor', 'admin', 'super_admin']
+const ROLES_REQUIRING_2FA = ['editor', 'analyst', 'moderator', 'admin', 'super_admin']
 
 // ─── Base64url helpers ────────────────────────────────────────────────────────
 //
@@ -250,9 +252,8 @@ async function issueRefreshToken(userId, db) {
 
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
 //
-// SameSite=None is required when the API and the web app live on different origins.
-// SameSite=None requires Secure (HTTPS).  In local dev the cookie still arrives
-// if the browser treats localhost as secure, but some browsers need a flag enabled.
+// Same-site subdomains can use Lax while still allowing credentialed refresh
+// requests from the web app to the API.
 
 function buildRefreshCookie(token, maxAge) {
   return [
@@ -260,7 +261,7 @@ function buildRefreshCookie(token, maxAge) {
     `Max-Age=${maxAge}`,
     'Path=/api/auth',   // cookie is only sent to auth endpoints, not video routes
     'HttpOnly',         // JavaScript cannot read this cookie
-    'SameSite=None',
+    'SameSite=Lax',
     'Secure',
   ].join('; ')
 }
