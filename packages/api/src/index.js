@@ -335,7 +335,7 @@ async function handleVideoAccess(request, env, corsHeaders) {
     const hasVideoMetadata = Boolean(video)
     const hasAccess = hasPremiumAccess || !hasVideoMetadata
     const requestedProtocol = normalizeProtocolOption(url.searchParams.get('protocol')) ?? 'hls'
-    const resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId, hasPremiumAccess: true, protocol: requestedProtocol })
+    const resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId, protocol: requestedProtocol })
     const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0
     const basePlaylistUrl = buildProxyPlaylistUrl(request, resolvedEntrypointUrl, hasPremiumAccess ? null : previewDuration, requestedProtocol)
     const fullDuration = video?.full_duration ?? previewDuration
@@ -381,8 +381,7 @@ async function handleVideoProxy(request, env, corsHeaders) {
   const previewUntil = Number.parseFloat(requestUrl.searchParams.get('previewUntil') ?? '')
   const previewUntilSeconds = Number.isFinite(previewUntil) && previewUntil > 0 ? previewUntil : null
   if (!objectPath) return jsonResponse({ error: 'Missing proxied object path' }, 400, corsHeaders)
-  const allowedPrefix = ['videos/', 'preview/', 'full/']
-  if (!allowedPrefix.some(p => objectPath.startsWith(p))) return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
+  if (!objectPath.startsWith('videos/')) return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
 
   // ── Step 4a: Validate the signed video token ──────────────────────────────
   // Every proxy request must carry a valid short-lived HMAC token issued by
@@ -407,7 +406,7 @@ async function handleVideoProxy(request, env, corsHeaders) {
     }
   }
 
-  // Extract videoId from path (videos/{id}/... or preview/{id}/... or full/{id}/...)
+  // Extract videoId from path (videos/{id}/...)
   const pathParts = objectPath.split('/')
   const proxyVideoId = pathParts[1] ?? ''
 
@@ -768,23 +767,19 @@ async function handleAdminVideoDelete(request, env, corsHeaders) {
   const video = await db.prepare(`SELECT id FROM videos WHERE id = ?`).bind(videoId).first()
   if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
 
-  // Delete all R2 objects under every layout prefix for this video.
-  // resolveMediaEntrypointUrl() serves from videos/, preview/, and full/
-  // depending on how the video was originally uploaded, so we sweep all three.
+  // Delete all R2 objects under videos/{videoId}/ (paginated)
   let deletedR2Objects = 0
   if (env.BUCKET) {
-    for (const prefix of [`videos/${videoId}/`, `preview/${videoId}/`, `full/${videoId}/`]) {
-      let cursor
-      do {
-        const listed = await env.BUCKET.list({ prefix, cursor })
-        const keys = listed.objects.map(obj => obj.key)
-        if (keys.length > 0) {
-          await Promise.all(keys.map(key => env.BUCKET.delete(key)))
-          deletedR2Objects += keys.length
-        }
-        cursor = listed.truncated ? listed.cursor : undefined
-      } while (cursor)
-    }
+    let cursor
+    do {
+      const listed = await env.BUCKET.list({ prefix: `videos/${videoId}/`, cursor })
+      const keys = listed.objects.map(obj => obj.key)
+      if (keys.length > 0) {
+        await Promise.all(keys.map(key => env.BUCKET.delete(key)))
+        deletedR2Objects += keys.length
+      }
+      cursor = listed.truncated ? listed.cursor : undefined
+    } while (cursor)
   }
 
   // Evict the deleted ID from the persisted homepage featured-slots config so
@@ -1153,7 +1148,7 @@ function rewriteSegmentPath(path, query, baseDir = '') {
     proxied = `/api/video-proxy${u.pathname}${u.search}`
   } else if (path.startsWith('/')) {
     proxied = `/api/video-proxy${path}`
-  } else if (/^(videos|preview|full)\//i.test(path)) {
+  } else if (path.startsWith('videos/')) {
     proxied = `/api/video-proxy/${path}`
   } else if (baseDir) {
     // Bare relative filename (e.g. "seg_1080_1.m4s", "init_1080.mp4") —
@@ -1173,41 +1168,29 @@ function normalizeVideoId(input) {
   return m ? m[1] : t
 }
 
-async function resolveMediaEntrypointUrl({ env, videoId, hasPremiumAccess, protocol = 'hls' }) {
+async function resolveMediaEntrypointUrl({ env, videoId, protocol = 'hls' }) {
   const base = env.R2_BASE_URL
-  const scope = hasPremiumAccess ? 'full' : 'preview'
-  const primary = protocol === 'dash' ? 'dash' : 'hls'
-  const secondary = primary === 'hls' ? 'dash' : 'hls'
-  const candidates = [
-    ...buildEntrypointCandidates(base, videoId, scope, primary),
-    ...buildEntrypointCandidates(base, videoId, 'videos', primary),
-    ...buildEntrypointCandidates(base, videoId, scope, secondary),
-    ...buildEntrypointCandidates(base, videoId, 'videos', secondary),
-  ]
+  const candidates = buildEntrypointCandidates(base, videoId, protocol)
   for (const c of candidates) { if (await canLoadEntrypoint(c)) return c }
   return candidates[0]
 }
 
-function buildEntrypointCandidates(base, videoId, scope, protocol) {
-  if (scope === 'videos') {
-    // Flat layout (upload script copies TMP_DIR directly under videos/{id}/)
-    // checked first; processed/ subdirectory kept for backwards compatibility.
-    return protocol === 'dash'
-      ? [
-          `${base}/videos/${videoId}/manifest.mpd`,
-          `${base}/videos/${videoId}/processed/dash/manifest.mpd`,
-          `${base}/videos/${videoId}/processed/manifest.mpd`,
-          `${base}/videos/${videoId}/processed/playlist.mpd`,
-        ]
-      : [
-          `${base}/videos/${videoId}/master.m3u8`,
-          `${base}/videos/${videoId}/processed/hls/master.m3u8`,
-          `${base}/videos/${videoId}/processed/playlist.m3u8`,
-        ]
-  }
+function buildEntrypointCandidates(base, videoId, protocol) {
+  // All videos live under videos/{id}/.  Flat layout (rclone output directly
+  // under videos/{id}/) is checked first; processed/ subdirectory is kept for
+  // older uploads that went through the video-processor pipeline.
   return protocol === 'dash'
-    ? [`${base}/${scope}/${videoId}/manifest.mpd`, `${base}/${scope}/${videoId}/playlist.mpd`]
-    : [`${base}/${scope}/${videoId}/playlist.m3u8`]
+    ? [
+        `${base}/videos/${videoId}/manifest.mpd`,
+        `${base}/videos/${videoId}/processed/dash/manifest.mpd`,
+        `${base}/videos/${videoId}/processed/manifest.mpd`,
+        `${base}/videos/${videoId}/processed/playlist.mpd`,
+      ]
+    : [
+        `${base}/videos/${videoId}/master.m3u8`,
+        `${base}/videos/${videoId}/processed/hls/master.m3u8`,
+        `${base}/videos/${videoId}/processed/playlist.m3u8`,
+      ]
 }
 
 function buildProxyPlaylistUrl(request, playlistUrl, previewUntilSeconds, protocol) {
