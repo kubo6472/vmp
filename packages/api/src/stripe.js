@@ -16,6 +16,7 @@
  */
 
 import { requireAuth } from './auth.js'
+import { isAdministrativeRole } from './index.js'
 
 // ─── Stripe API helpers ───────────────────────────────────────────────────────
 
@@ -432,11 +433,6 @@ export async function handleGetSubscription(request, env, corsHeaders) {
     console.error('handleGetSubscription error:', err)
     return jsonResponse({ error: 'Internal server error' }, 500, corsHeaders)
   }
-}
-
-function isAdministrativeRole(role) {
-  if (!role || typeof role !== 'string') return false
-  return role !== 'viewer'
 }
 
 /**

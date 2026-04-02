@@ -969,9 +969,10 @@ function isPrivateIPv4Octets(a, b) {
   return false
 }
 
-function isAdministrativeRole(role) {
+export function isAdministrativeRole(role) {
   if (!role || typeof role !== 'string') return false
-  return role !== 'viewer'
+  const ADMIN_ROLES = ['super_admin', 'admin', 'editor', 'analyst', 'moderator']
+  return ADMIN_ROLES.includes(role)
 }
 
 // ─── Push notification handlers ───────────────────────────────────────────────
