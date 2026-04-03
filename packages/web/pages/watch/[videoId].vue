@@ -89,10 +89,25 @@
               <span class="sr-only">Video is buffering</span>
             </div>
 
+            <button
+              v-if="autoplayBlocked"
+              type="button"
+              class="absolute inset-0 z-20 flex items-center justify-center"
+              aria-label="Play video"
+              @click="handleAutoplayOverlayClick"
+            >
+              <span class="w-20 h-20 rounded-full bg-black/70 border-2 border-white/70 text-white flex items-center justify-center shadow-xl">
+                <svg class="w-10 h-10 ml-1" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </span>
+            </button>
+
             <!-- Video Player -->
             <media-controller
               id="watch-media-controller"
               class="watch-media-controller block w-full aspect-video relative"
+              @pointerdown="handleUserPlaybackInteraction"
             >
               <videojs-video
                 ref="videoElement"
@@ -286,6 +301,8 @@ const rateLimited         = ref(false)
 const rateLimitRetryAfter = ref<number | null>(null)
 const rateLimitCurrent    = ref(0)
 const rateLimitLimit      = ref(0)
+const autoplayBlocked     = ref(false)
+const autoplayMuting      = ref(false)
 
 const videoId = route.params.videoId as string
 
@@ -515,11 +532,60 @@ const initializeVideoElement = async (playlistUrl: string) => {
   video.addEventListener('canplay', handleCanPlay)
 
   buffering.value = true
+  autoplayBlocked.value = false
+  autoplayMuting.value = true
+  video.muted = true
   video.setAttribute('src', playlistUrl)
   video.setAttribute('playsinline', '')
   video.setAttribute('preload', 'auto')
   video.load()
+
+  await new Promise<void>((resolve) => {
+    const onCanPlay = () => {
+      video.removeEventListener('canplay', onCanPlay)
+      resolve()
+    }
+    video.addEventListener('canplay', onCanPlay)
+  })
+
+  try {
+    await video.play()
+  } catch (_error) {
+    autoplayBlocked.value = true
+    buffering.value = false
+  }
 }
+
+const handleAutoplayOverlayClick = async () => {
+  const video = videoElement.value
+  if (!video) return
+
+  try {
+    video.muted = false
+    await video.play()
+    autoplayBlocked.value = false
+    autoplayMuting.value = false
+  } catch {
+    autoplayBlocked.value = true
+  }
+}
+
+const handleUserPlaybackInteraction = () => {
+  if (!autoplayMuting.value) return
+  const video = videoElement.value
+  if (!video) return
+  video.muted = false
+  autoplayMuting.value = false
+}
+
+watch(
+  () => route.params.videoId,
+  () => {
+    autoplayBlocked.value = false
+    autoplayMuting.value = false
+    buffering.value = false
+  }
+)
 
 function teardownVideoListeners() {
   const video = videoElement.value
