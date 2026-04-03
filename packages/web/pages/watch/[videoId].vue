@@ -107,6 +107,7 @@
             <media-controller
               id="watch-media-controller"
               class="watch-media-controller block w-full aspect-video relative"
+              @click.capture="handleUserPlaybackInteraction"
               @pointerdown="handleUserPlaybackInteraction"
             >
               <videojs-video
@@ -419,16 +420,33 @@ let handleWaiting:        (() => void) | null = null
 let handlePlaying:        (() => void) | null = null
 let handleCanPlay:        (() => void) | null = null
 let reloadInFlight = false
-let currentAbortController: AbortController | null = null
+let currentRouteRequestId = 0
 
-const fetchVideoAccess = async () => {
+type FetchVideoAccessOptions = {
+  videoId?: string
+  signal?: AbortSignal
+  guard?: () => boolean
+}
+
+const fetchVideoAccess = async (options: FetchVideoAccessOptions = {}) => {
+  const targetVideoId = options.videoId ?? (route.params.videoId as string)
+  const guard = options.guard ?? (() => true)
+  const ensureCurrent = () => {
+    if (options.signal?.aborted || !guard()) {
+      throw new DOMException('Request aborted', 'AbortError')
+    }
+  }
+
+  ensureCurrent()
   const videoResponse = await fetch(
-    `${config.public.apiUrl}/api/video-access/${videoId}`,
-    { headers: { ...authHeader() } }
+    `${config.public.apiUrl}/api/video-access/${targetVideoId}`,
+    { headers: { ...authHeader() }, signal: options.signal }
   )
+  ensureCurrent()
 
   if (videoResponse.status === 429) {
     const data = await videoResponse.json().catch(() => ({}))
+    ensureCurrent()
     if (data.error === 'rate_limit_exceeded' && data.loginPrompt === true) {
       rateLimited.value = true
       rateLimitRetryAfter.value = data.retryAfter ?? null
@@ -441,7 +459,9 @@ const fetchVideoAccess = async () => {
   }
 
   if (!videoResponse.ok) throw new Error('Failed to load video data')
+  ensureCurrent()
   videoData.value = await videoResponse.json()
+  ensureCurrent()
   rateLimited.value = false
   rateLimitRetryAfter.value = null
   rateLimitCurrent.value = 0
@@ -454,6 +474,7 @@ const fetchVideoAccess = async () => {
     const playlistUrl = videoData.value?.video?.playlistUrl
     if (playlistUrl) {
       const resolved = await resolvePlaylistDuration(playlistUrl)
+      ensureCurrent()
       if (resolved) resolvedFullDuration.value = resolved
     }
   }
@@ -612,7 +633,7 @@ const handleAutoplayOverlayClick = async () => {
   }
 }
 
-const handleUserPlaybackInteraction = (event: PointerEvent) => {
+const handleUserPlaybackInteraction = (event: PointerEvent | MouseEvent | Event) => {
   if (!autoplayMuting.value) return
 
   // Check if the click originated on or inside the media-mute-button
@@ -633,22 +654,12 @@ watch(
   () => route.params.videoId,
   async (newVideoId, oldVideoId, onCleanup) => {
     if (newVideoId === oldVideoId) return
-
-    // Abort any previous request
-    if (currentAbortController) {
-      currentAbortController.abort()
-    }
-
-    // Create new abort controller for this invocation
+    const requestId = ++currentRouteRequestId
     const abortController = new AbortController()
-    currentAbortController = abortController
+    const isCurrentInvocation = () => currentRouteRequestId === requestId && !abortController.signal.aborted
 
-    // Register cleanup to abort this request if a new one starts
     onCleanup(() => {
-      if (currentAbortController === abortController) {
-        abortController.abort()
-        currentAbortController = null
-      }
+      abortController.abort()
     })
 
     // Reset flags
@@ -662,42 +673,38 @@ watch(
     error.value = null
 
     try {
-      await fetchVideoAccess()
-
-      // Check if aborted before continuing
-      if (abortController.signal.aborted) return
+      await fetchVideoAccess({
+        videoId: String(newVideoId),
+        signal: abortController.signal,
+        guard: isCurrentInvocation
+      })
+      if (!isCurrentInvocation()) return
 
       const recsResponse = await fetch(`${config.public.apiUrl}/api/videos`, {
         signal: abortController.signal
       })
-
-      // Check if aborted after fetch
-      if (abortController.signal.aborted) return
+      if (!isCurrentInvocation()) return
 
       if (recsResponse.ok) {
         const data = await recsResponse.json()
-        // Check if aborted before applying results
-        if (abortController.signal.aborted) return
+        if (!isCurrentInvocation()) return
         recommendations.value = (data.videos || []).filter((v: any) => v.id !== newVideoId).slice(0, 5)
       }
 
-      // Check if aborted before updating state
-      if (abortController.signal.aborted) return
-
+      if (!isCurrentInvocation()) return
       loading.value = false
       await nextTick()
 
-      // Check if aborted before initializing video
-      if (abortController.signal.aborted) return
-
+      if (!isCurrentInvocation()) return
       const playlistUrl = videoData.value?.video?.playlistUrl
       if (playlistUrl && !rateLimited.value) {
+        if (!isCurrentInvocation()) return
         error.value = null
         await initializeVideoElement(playlistUrl)
       }
     } catch (e: any) {
       // Ignore abort errors
-      if (e.name === 'AbortError' || abortController.signal.aborted) return
+      if (e.name === 'AbortError' || !isCurrentInvocation()) return
 
       error.value = e.message
       loading.value = false
