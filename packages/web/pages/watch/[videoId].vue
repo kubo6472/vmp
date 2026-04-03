@@ -263,7 +263,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRuntimeConfig } from '#app'
 import 'media-chrome'
@@ -390,28 +390,6 @@ const enforcePreviewLimit = (video: HTMLVideoElement) => {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
-onMounted(async () => {
-  try {
-    await fetchVideoAccess()
-    const recsResponse = await fetch(`${config.public.apiUrl}/api/videos`)
-    if (recsResponse.ok) {
-      const data = await recsResponse.json()
-      recommendations.value = (data.videos || []).filter((v: any) => v.id !== videoId).slice(0, 5)
-    }
-
-    loading.value = false
-    await nextTick()
-    const playlistUrl = videoData.value?.video?.playlistUrl
-    if (playlistUrl && !rateLimited.value) {
-      error.value = null
-      await initializeVideoElement(playlistUrl)
-    }
-  } catch (e: any) {
-    error.value   = e.message
-    loading.value = false
-  }
-})
-
 onUnmounted(teardownVideoListeners)
 
 let handleLoadedMetadata: (() => void) | null = null
@@ -421,6 +399,7 @@ let handlePlaying:        (() => void) | null = null
 let handleCanPlay:        (() => void) | null = null
 let reloadInFlight = false
 let currentRouteRequestId = 0
+let activeLoadAbortController: AbortController | null = null
 
 type FetchVideoAccessOptions = {
   videoId?: string
@@ -452,16 +431,15 @@ const fetchVideoAccess = async (options: FetchVideoAccessOptions = {}) => {
       rateLimitRetryAfter.value = data.retryAfter ?? null
       rateLimitCurrent.value = data.current ?? data.limit ?? 0
       rateLimitLimit.value = data.limit ?? data.current ?? 0
-      loading.value = false
       return
     }
     throw new Error('Too many requests. Please try again later.')
   }
 
   if (!videoResponse.ok) throw new Error('Failed to load video data')
+  const data = await videoResponse.json()
   ensureCurrent()
-  videoData.value = await videoResponse.json()
-  ensureCurrent()
+  videoData.value = data
   rateLimited.value = false
   rateLimitRetryAfter.value = null
   rateLimitCurrent.value = 0
@@ -480,85 +458,146 @@ const fetchVideoAccess = async (options: FetchVideoAccessOptions = {}) => {
   }
 }
 
-watch(isLoggedIn, async (loggedIn, wasLoggedIn) => {
-  if (!loggedIn || wasLoggedIn || (!videoData.value && !rateLimited.value) || reloadInFlight) return
-
-  // If initial fetch is still loading, wait for it to complete before upgrading
-  if (loading.value) {
-    const unwatch = watch(loading, async (isLoading) => {
-      if (!isLoading) {
-        unwatch()
-        // Re-check conditions after loading completes
-        if (!videoData.value && !rateLimited.value) return
-
-        reloadInFlight = true
-        try {
-          await fetchVideoAccess()
-          currentTime.value = 0
-          showPremiumOverlay.value = false
-          await nextTick()
-          const playlistUrl = videoData.value?.video?.playlistUrl
-          if (playlistUrl && !rateLimited.value) {
-            error.value = null
-            await initializeVideoElement(playlistUrl)
-          }
-        } catch (e: any) {
-          error.value = e.message
-        } finally {
-          reloadInFlight = false
-        }
-      }
-    })
-    return
+const createLoadInvocation = () => {
+  if (activeLoadAbortController) {
+    activeLoadAbortController.abort()
   }
 
-  reloadInFlight = true
+  const requestId = ++currentRouteRequestId
+  const abortController = new AbortController()
+  activeLoadAbortController = abortController
+  const isCurrentInvocation = () =>
+    currentRouteRequestId === requestId &&
+    activeLoadAbortController === abortController &&
+    !abortController.signal.aborted
+
+  const cancel = () => {
+    if (activeLoadAbortController === abortController) {
+      activeLoadAbortController = null
+    }
+    abortController.abort()
+  }
+
+  return { abortController, isCurrentInvocation, cancel }
+}
+
+type LoadVideoForRouteOptions = {
+  signal?: AbortSignal
+  guard?: () => boolean
+}
+
+const loadVideoForRoute = async (targetVideoId: string, options: LoadVideoForRouteOptions = {}) => {
+  const guard = options.guard ?? (() => true)
+  const ensureCurrent = () => {
+    if (options.signal?.aborted || !guard()) {
+      throw new DOMException('Request aborted', 'AbortError')
+    }
+  }
+
+  ensureCurrent()
+
+  autoplayBlocked.value = false
+  autoplayMuting.value = false
+  buffering.value = false
+  autoplayPlayError.value = false
+  showPremiumOverlay.value = false
+  currentTime.value = 0
+  loading.value = true
+  error.value = null
+
   try {
-    await fetchVideoAccess()
-    currentTime.value = 0
-    showPremiumOverlay.value = false
+    await fetchVideoAccess({
+      videoId: targetVideoId,
+      signal: options.signal,
+      guard
+    })
+    ensureCurrent()
+
+    const recsResponse = await fetch(`${config.public.apiUrl}/api/videos`, {
+      signal: options.signal
+    })
+    ensureCurrent()
+
+    if (recsResponse.ok) {
+      const recommendationsData = await recsResponse.json()
+      ensureCurrent()
+      recommendations.value = (recommendationsData.videos || []).filter((v: any) => v.id !== targetVideoId).slice(0, 5)
+    }
+
+    ensureCurrent()
+    loading.value = false
     await nextTick()
+    ensureCurrent()
+
     const playlistUrl = videoData.value?.video?.playlistUrl
     if (playlistUrl && !rateLimited.value) {
       error.value = null
-      await initializeVideoElement(playlistUrl)
+      await initializeVideoElement(playlistUrl, guard)
+      ensureCurrent()
     }
   } catch (e: any) {
+    if (e.name === 'AbortError' || options.signal?.aborted || !guard()) return
     error.value = e.message
+    loading.value = false
+  }
+}
+
+watch(isLoggedIn, async (loggedIn, wasLoggedIn) => {
+  if (!loggedIn || wasLoggedIn || (!videoData.value && !rateLimited.value) || reloadInFlight) return
+
+  reloadInFlight = true
+  const { abortController, isCurrentInvocation, cancel } = createLoadInvocation()
+  try {
+    await loadVideoForRoute(String(route.params.videoId), {
+      signal: abortController.signal,
+      guard: isCurrentInvocation
+    })
   } finally {
+    cancel()
     reloadInFlight = false
   }
 })
 
-const initializeVideoElement = async (playlistUrl: string) => {
+const initializeVideoElement = async (
+  playlistUrl: string,
+  isCurrentInvocation: () => boolean = () => true
+) => {
+  if (!isCurrentInvocation()) return
+
   // Wait for the custom element to be fully upgraded before touching it.
   // Setting src before this resolves causes "this.api is undefined" inside
   // the videojs-video element because its internal Video.js instance isn't
   // created until connectedCallback runs.
   await customElements.whenDefined('videojs-video')
+  if (!isCurrentInvocation()) return
 
   const video = videoElement.value
   if (!video) throw new Error('Video element is unavailable')
+  if (!isCurrentInvocation()) return
 
   teardownVideoListeners()
+  if (!isCurrentInvocation()) return
 
   handleLoadedMetadata = () => { console.log('Video metadata loaded') }
   handleMediaError = () => {
+    if (!isCurrentInvocation()) return
     error.value = 'Video playback error. The HLS stream could not be loaded.'
   }
-  handleWaiting  = () => { buffering.value = true }
-  handlePlaying  = () => { buffering.value = false }
-  handleCanPlay  = () => { buffering.value = false }
+  handleWaiting  = () => { if (isCurrentInvocation()) buffering.value = true }
+  handlePlaying  = () => { if (isCurrentInvocation()) buffering.value = false }
+  handleCanPlay  = () => { if (isCurrentInvocation()) buffering.value = false }
 
   video.addEventListener('loadedmetadata', handleLoadedMetadata, { once: true })
   video.addEventListener('error', handleMediaError)
   video.addEventListener('waiting', handleWaiting)
   video.addEventListener('playing', handlePlaying)
   video.addEventListener('canplay', handleCanPlay)
+  if (!isCurrentInvocation()) return
 
   buffering.value = true
   autoplayBlocked.value = false
   autoplayMuting.value = true
+  if (!isCurrentInvocation()) return
   video.muted = true
   video.setAttribute('src', playlistUrl)
   video.setAttribute('preload', 'auto')
@@ -592,11 +631,14 @@ const initializeVideoElement = async (playlistUrl: string) => {
       video.addEventListener('abort', onAbort)
     })
   }
+  if (!isCurrentInvocation()) return
 
   try {
     await video.play()
+    if (!isCurrentInvocation()) return
     autoplayPlayError.value = false
   } catch (e: any) {
+    if (!isCurrentInvocation()) return
     buffering.value = false
     // Check if error is due to autoplay policy
     if (e?.name === 'NotAllowedError' || e?.name === 'SecurityError') {
@@ -654,62 +696,18 @@ watch(
   () => route.params.videoId,
   async (newVideoId, oldVideoId, onCleanup) => {
     if (newVideoId === oldVideoId) return
-    const requestId = ++currentRouteRequestId
-    const abortController = new AbortController()
-    const isCurrentInvocation = () => currentRouteRequestId === requestId && !abortController.signal.aborted
+    const { abortController, isCurrentInvocation, cancel } = createLoadInvocation()
 
     onCleanup(() => {
-      abortController.abort()
+      cancel()
     })
 
-    // Reset flags
-    autoplayBlocked.value = false
-    autoplayMuting.value = false
-    buffering.value = false
-    autoplayPlayError.value = false
-    showPremiumOverlay.value = false
-    currentTime.value = 0
-    loading.value = true
-    error.value = null
-
-    try {
-      await fetchVideoAccess({
-        videoId: String(newVideoId),
-        signal: abortController.signal,
-        guard: isCurrentInvocation
-      })
-      if (!isCurrentInvocation()) return
-
-      const recsResponse = await fetch(`${config.public.apiUrl}/api/videos`, {
-        signal: abortController.signal
-      })
-      if (!isCurrentInvocation()) return
-
-      if (recsResponse.ok) {
-        const data = await recsResponse.json()
-        if (!isCurrentInvocation()) return
-        recommendations.value = (data.videos || []).filter((v: any) => v.id !== newVideoId).slice(0, 5)
-      }
-
-      if (!isCurrentInvocation()) return
-      loading.value = false
-      await nextTick()
-
-      if (!isCurrentInvocation()) return
-      const playlistUrl = videoData.value?.video?.playlistUrl
-      if (playlistUrl && !rateLimited.value) {
-        if (!isCurrentInvocation()) return
-        error.value = null
-        await initializeVideoElement(playlistUrl)
-      }
-    } catch (e: any) {
-      // Ignore abort errors
-      if (e.name === 'AbortError' || !isCurrentInvocation()) return
-
-      error.value = e.message
-      loading.value = false
-    }
-  }
+    await loadVideoForRoute(String(newVideoId), {
+      signal: abortController.signal,
+      guard: isCurrentInvocation
+    })
+  },
+  { immediate: true }
 )
 
 function teardownVideoListeners() {
