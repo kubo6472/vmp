@@ -281,6 +281,8 @@ const { isLoggedIn, authHeader } = useAuth()
 type MediaLikeElement = HTMLElement & {
   src: string
   currentTime: number
+  muted: boolean
+  readyState: number
   pause: () => void
   play: () => Promise<void>
   load: () => void
@@ -417,6 +419,7 @@ let handleWaiting:        (() => void) | null = null
 let handlePlaying:        (() => void) | null = null
 let handleCanPlay:        (() => void) | null = null
 let reloadInFlight = false
+let currentAbortController: AbortController | null = null
 
 const fetchVideoAccess = async () => {
   const videoResponse = await fetch(
@@ -544,12 +547,28 @@ const initializeVideoElement = async (playlistUrl: string) => {
   if (video.readyState >= 3) { // HAVE_FUTURE_DATA or HAVE_ENOUGH_DATA
     // Already ready, no need to wait
   } else {
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       const onCanPlay = () => {
         video.removeEventListener('canplay', onCanPlay)
+        video.removeEventListener('error', onError)
+        video.removeEventListener('abort', onAbort)
         resolve()
       }
+      const onError = () => {
+        video.removeEventListener('canplay', onCanPlay)
+        video.removeEventListener('error', onError)
+        video.removeEventListener('abort', onAbort)
+        reject(new Error('Media failed to load'))
+      }
+      const onAbort = () => {
+        video.removeEventListener('canplay', onCanPlay)
+        video.removeEventListener('error', onError)
+        video.removeEventListener('abort', onAbort)
+        reject(new Error('Media load aborted'))
+      }
       video.addEventListener('canplay', onCanPlay)
+      video.addEventListener('error', onError)
+      video.addEventListener('abort', onAbort)
     })
   }
 
@@ -612,8 +631,25 @@ const handleUserPlaybackInteraction = (event: PointerEvent) => {
 
 watch(
   () => route.params.videoId,
-  async (newVideoId, oldVideoId) => {
+  async (newVideoId, oldVideoId, onCleanup) => {
     if (newVideoId === oldVideoId) return
+
+    // Abort any previous request
+    if (currentAbortController) {
+      currentAbortController.abort()
+    }
+
+    // Create new abort controller for this invocation
+    const abortController = new AbortController()
+    currentAbortController = abortController
+
+    // Register cleanup to abort this request if a new one starts
+    onCleanup(() => {
+      if (currentAbortController === abortController) {
+        abortController.abort()
+        currentAbortController = null
+      }
+    })
 
     // Reset flags
     autoplayBlocked.value = false
@@ -627,20 +663,42 @@ watch(
 
     try {
       await fetchVideoAccess()
-      const recsResponse = await fetch(`${config.public.apiUrl}/api/videos`)
+
+      // Check if aborted before continuing
+      if (abortController.signal.aborted) return
+
+      const recsResponse = await fetch(`${config.public.apiUrl}/api/videos`, {
+        signal: abortController.signal
+      })
+
+      // Check if aborted after fetch
+      if (abortController.signal.aborted) return
+
       if (recsResponse.ok) {
         const data = await recsResponse.json()
+        // Check if aborted before applying results
+        if (abortController.signal.aborted) return
         recommendations.value = (data.videos || []).filter((v: any) => v.id !== newVideoId).slice(0, 5)
       }
 
+      // Check if aborted before updating state
+      if (abortController.signal.aborted) return
+
       loading.value = false
       await nextTick()
+
+      // Check if aborted before initializing video
+      if (abortController.signal.aborted) return
+
       const playlistUrl = videoData.value?.video?.playlistUrl
       if (playlistUrl && !rateLimited.value) {
         error.value = null
         await initializeVideoElement(playlistUrl)
       }
     } catch (e: any) {
+      // Ignore abort errors
+      if (e.name === 'AbortError' || abortController.signal.aborted) return
+
       error.value = e.message
       loading.value = false
     }
