@@ -303,6 +303,7 @@ const rateLimitCurrent    = ref(0)
 const rateLimitLimit      = ref(0)
 const autoplayBlocked     = ref(false)
 const autoplayMuting      = ref(false)
+const autoplayPlayError   = ref(false)
 
 const videoId = route.params.videoId as string
 
@@ -536,23 +537,35 @@ const initializeVideoElement = async (playlistUrl: string) => {
   autoplayMuting.value = true
   video.muted = true
   video.setAttribute('src', playlistUrl)
-  video.setAttribute('playsinline', '')
   video.setAttribute('preload', 'auto')
   video.load()
 
-  await new Promise<void>((resolve) => {
-    const onCanPlay = () => {
-      video.removeEventListener('canplay', onCanPlay)
-      resolve()
-    }
-    video.addEventListener('canplay', onCanPlay)
-  })
+  // Check if video is already ready to avoid hanging on canplay
+  if (video.readyState >= 3) { // HAVE_FUTURE_DATA or HAVE_ENOUGH_DATA
+    // Already ready, no need to wait
+  } else {
+    await new Promise<void>((resolve) => {
+      const onCanPlay = () => {
+        video.removeEventListener('canplay', onCanPlay)
+        resolve()
+      }
+      video.addEventListener('canplay', onCanPlay)
+    })
+  }
 
   try {
     await video.play()
-  } catch (_error) {
-    autoplayBlocked.value = true
+    autoplayPlayError.value = false
+  } catch (e: any) {
     buffering.value = false
+    // Check if error is due to autoplay policy
+    if (e?.name === 'NotAllowedError' || e?.name === 'SecurityError') {
+      autoplayBlocked.value = true
+    } else {
+      // Media/network error
+      autoplayPlayError.value = true
+      console.error('Video playback error:', e)
+    }
   }
 }
 
@@ -565,13 +578,32 @@ const handleAutoplayOverlayClick = async () => {
     await video.play()
     autoplayBlocked.value = false
     autoplayMuting.value = false
-  } catch {
-    autoplayBlocked.value = true
+    autoplayPlayError.value = false
+  } catch (e: any) {
+    // Check if error is due to autoplay policy
+    if (e?.name === 'NotAllowedError' || e?.name === 'SecurityError') {
+      autoplayBlocked.value = true
+      autoplayMuting.value = true
+    } else {
+      // Media/network error
+      autoplayBlocked.value = false
+      autoplayPlayError.value = true
+      console.error('Video playback error:', e)
+    }
   }
 }
 
-const handleUserPlaybackInteraction = () => {
+const handleUserPlaybackInteraction = (event: PointerEvent) => {
   if (!autoplayMuting.value) return
+
+  // Check if the click originated on or inside the media-mute-button
+  const target = event.target as HTMLElement
+  const path = event.composedPath?.() || []
+  const isOnMuteButton = target.closest?.('media-mute-button') ||
+                        path.some((el: EventTarget) => (el as HTMLElement).tagName === 'MEDIA-MUTE-BUTTON')
+
+  if (isOnMuteButton) return
+
   const video = videoElement.value
   if (!video) return
   video.muted = false
@@ -580,10 +612,38 @@ const handleUserPlaybackInteraction = () => {
 
 watch(
   () => route.params.videoId,
-  () => {
+  async (newVideoId, oldVideoId) => {
+    if (newVideoId === oldVideoId) return
+
+    // Reset flags
     autoplayBlocked.value = false
     autoplayMuting.value = false
     buffering.value = false
+    autoplayPlayError.value = false
+    showPremiumOverlay.value = false
+    currentTime.value = 0
+    loading.value = true
+    error.value = null
+
+    try {
+      await fetchVideoAccess()
+      const recsResponse = await fetch(`${config.public.apiUrl}/api/videos`)
+      if (recsResponse.ok) {
+        const data = await recsResponse.json()
+        recommendations.value = (data.videos || []).filter((v: any) => v.id !== newVideoId).slice(0, 5)
+      }
+
+      loading.value = false
+      await nextTick()
+      const playlistUrl = videoData.value?.video?.playlistUrl
+      if (playlistUrl && !rateLimited.value) {
+        error.value = null
+        await initializeVideoElement(playlistUrl)
+      }
+    } catch (e: any) {
+      error.value = e.message
+      loading.value = false
+    }
   }
 )
 
