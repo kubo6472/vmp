@@ -247,7 +247,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRuntimeConfig } from '#app'
 import 'media-chrome'
@@ -261,11 +261,7 @@ const config = useRuntimeConfig()
 //
 // For logged-in users the API looks up their subscription and returns the
 // correct hasAccess / playlistUrl for their plan.
-// For anonymous users we pass the literal string 'anonymous' — the API finds
-// no subscription, returns hasAccess: false, and serves a preview-only
-// playlist.  This is intentional: no session = preview only, no redirect.
-const { user } = useAuth()
-const userId   = computed(() => user.value?.id ?? 'anonymous')
+const { isLoggedIn, authHeader } = useAuth()
 
 type MediaLikeElement = HTMLElement & {
   src: string
@@ -375,40 +371,7 @@ const enforcePreviewLimit = (video: HTMLVideoElement) => {
 
 onMounted(async () => {
   try {
-    // userId is reactive but only changes if the user logs in/out mid-session,
-    // which is unusual.  We read it once at mount time for the initial API call.
-    const resolvedUserId = userId.value
-
-    const videoResponse = await fetch(
-      `${config.public.apiUrl}/api/video-access/${resolvedUserId}/${videoId}`
-    )
-
-    if (videoResponse.status === 429) {
-      const data = await videoResponse.json().catch(() => ({}))
-      if (data.error === 'rate_limit_exceeded' && data.loginPrompt === true) {
-        rateLimited.value = true
-        rateLimitRetryAfter.value = data.retryAfter ?? null
-        rateLimitCurrent.value = data.current ?? data.limit ?? 0
-        rateLimitLimit.value = data.limit ?? data.current ?? 0
-        loading.value = false
-        return
-      }
-      throw new Error('Too many requests. Please try again later.')
-    }
-
-    if (!videoResponse.ok) throw new Error('Failed to load video data')
-    videoData.value = await videoResponse.json()
-
-    // If D1 has no duration stored yet (new draft auto-registered from R2),
-    // parse the HLS playlist to get the real duration.
-    if (!videoData.value?.video?.fullDuration) {
-      const playlistUrl = videoData.value?.video?.playlistUrl
-      if (playlistUrl) {
-        const resolved = await resolvePlaylistDuration(playlistUrl)
-        if (resolved) resolvedFullDuration.value = resolved
-      }
-    }
-
+    await fetchVideoAccess()
     const recsResponse = await fetch(`${config.public.apiUrl}/api/videos`)
     if (recsResponse.ok) {
       const data = await recsResponse.json()
@@ -431,6 +394,87 @@ let handleMediaError:     (() => void) | null = null
 let handleWaiting:        (() => void) | null = null
 let handlePlaying:        (() => void) | null = null
 let handleCanPlay:        (() => void) | null = null
+let reloadInFlight = false
+
+const fetchVideoAccess = async () => {
+  const videoResponse = await fetch(
+    `${config.public.apiUrl}/api/video-access/${videoId}`,
+    { headers: { ...authHeader() } }
+  )
+
+  if (videoResponse.status === 429) {
+    const data = await videoResponse.json().catch(() => ({}))
+    if (data.error === 'rate_limit_exceeded' && data.loginPrompt === true) {
+      rateLimited.value = true
+      rateLimitRetryAfter.value = data.retryAfter ?? null
+      rateLimitCurrent.value = data.current ?? data.limit ?? 0
+      rateLimitLimit.value = data.limit ?? data.current ?? 0
+      loading.value = false
+      return
+    }
+    throw new Error('Too many requests. Please try again later.')
+  }
+
+  if (!videoResponse.ok) throw new Error('Failed to load video data')
+  videoData.value = await videoResponse.json()
+  rateLimited.value = false
+  rateLimitRetryAfter.value = null
+  rateLimitCurrent.value = 0
+  rateLimitLimit.value = 0
+
+  // If D1 has no duration stored yet (new draft auto-registered from R2),
+  // parse the HLS playlist to get the real duration.
+  resolvedFullDuration.value = 0
+  if (!videoData.value?.video?.fullDuration) {
+    const playlistUrl = videoData.value?.video?.playlistUrl
+    if (playlistUrl) {
+      const resolved = await resolvePlaylistDuration(playlistUrl)
+      if (resolved) resolvedFullDuration.value = resolved
+    }
+  }
+}
+
+watch(isLoggedIn, async (loggedIn, wasLoggedIn) => {
+  if (!loggedIn || wasLoggedIn || (!videoData.value && !rateLimited.value) || reloadInFlight) return
+
+  // If initial fetch is still loading, wait for it to complete before upgrading
+  if (loading.value) {
+    const unwatch = watch(loading, async (isLoading) => {
+      if (!isLoading) {
+        unwatch()
+        // Re-check conditions after loading completes
+        if (!videoData.value && !rateLimited.value) return
+
+        reloadInFlight = true
+        try {
+          await fetchVideoAccess()
+          currentTime.value = 0
+          showPremiumOverlay.value = false
+          await nextTick()
+          await initializeVideoElement(videoData.value.video.playlistUrl)
+        } catch (e: any) {
+          error.value = e.message
+        } finally {
+          reloadInFlight = false
+        }
+      }
+    })
+    return
+  }
+
+  reloadInFlight = true
+  try {
+    await fetchVideoAccess()
+    currentTime.value = 0
+    showPremiumOverlay.value = false
+    await nextTick()
+    await initializeVideoElement(videoData.value.video.playlistUrl)
+  } catch (e: any) {
+    error.value = e.message
+  } finally {
+    reloadInFlight = false
+  }
+})
 
 const initializeVideoElement = async (playlistUrl: string) => {
   // Wait for the custom element to be fully upgraded before touching it.

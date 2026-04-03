@@ -383,7 +383,10 @@ const getActualDuration = (video: Video) => actualDurationByVideoId.value[video.
 const hydrateActualDurations = async () => {
   const durations = await Promise.all(uploads.value.map(async (video) => {
     try {
-      const res  = await fetch(`${config.public.apiUrl}/api/video-access/anonymous/${video.id}`)
+      const res  = await fetch(
+        `${config.public.apiUrl}/api/video-access/${video.id}`,
+        { headers: authHeader() }
+      )
       if (!res.ok) return [video.id, video.full_duration] as const
       const data = await res.json()
       const resolved = await resolvePlaylistDuration(data?.video?.playlistUrl)
