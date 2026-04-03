@@ -19,7 +19,7 @@ import {
   requireRole,
 } from './auth.js'
 import { checkAnonymousRateLimit } from './rateLimit.js'
-import { sendPushToAllSubscribers } from './webpush.js'
+import { sendPushNotification, sendPushToAllSubscribers } from './webpush.js'
 import {
   handleGetPricing,
   handleCheckout,
@@ -164,6 +164,9 @@ export default {
     }
     if (url.pathname.match(/^\/api\/admin\/videos\/[^/]+\/notify$/) && request.method === 'POST') {
       return handleAdminVideoNotify(request, env, ctx, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/push/test' && request.method === 'POST') {
+      return handleAdminPushTest(request, env, corsHeaders)
     }
     if (url.pathname === '/api/account/pricing' && request.method === 'GET') {
       return handleGetPricing(request, env, corsHeaders)
@@ -761,7 +764,6 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
           SET publish_status = 'published',
               visibility = 'public',
               published_at = COALESCE(published_at, CURRENT_TIMESTAMP),
-              push_notified_at = CURRENT_TIMESTAMP,
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND publish_status != 'published'
         `).bind(videoId).run()
@@ -788,8 +790,15 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     // Fire push only when the UPDATE itself confirmed the transition (atomic guard)
     if (transitionedToPublished) {
       ctx.waitUntil(
-        sendPushToAllSubscribers(video.title || videoId, videoId, env, db)
-          .then(stats => {
+        beginPushAttempt(db, { videoId, reason: 'publish_transition' })
+          .then((attempt) => performAndRecordPushAttempt({
+            db,
+            env,
+            videoId,
+            videoTitle: video.title || videoId,
+            attemptId: attempt.attemptId,
+          }))
+          .then((stats) => {
             console.log(`Push notify [videoId:${videoId}] attempted=${stats.attempted} succeeded=${stats.succeeded} failed=${stats.failed} stale=${stats.stale}`)
           })
           .catch(err => {
@@ -894,27 +903,9 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
     return jsonResponse({ error: 'Only published videos can trigger notifications' }, 422, corsHeaders)
   }
 
-  // Atomic cooldown guard: only stamp + send if push_notified_at is NULL or
-  // older than 5 minutes. The conditional WHERE means two concurrent requests
-  // can't both pass — whichever gets changes=1 wins; the other gets changes=0
-  // and is rejected without touching the DB or firing a push.
   const cooldownSeconds = 300 // 5 minutes
-  const cooldownResult = await db.prepare(`
-    UPDATE videos
-    SET push_notified_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-      AND publish_status = 'published'
-      AND (push_notified_at IS NULL OR (unixepoch('now') - unixepoch(push_notified_at)) > ?)
-  `).bind(videoId, cooldownSeconds).run()
-
-  if ((cooldownResult.meta?.changes ?? cooldownResult.changes ?? 0) === 0) {
-    const current = await db.prepare(
-      `SELECT publish_status FROM videos WHERE id = ?`
-    ).bind(videoId).first()
-    if (!current) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
-    if (current.publish_status !== 'published') {
-      return jsonResponse({ error: 'Only published videos can trigger notifications' }, 422, corsHeaders)
-    }
+  const attempt = await beginPushAttempt(db, { videoId, reason: 'manual_notify', cooldownSeconds })
+  if (!attempt.ok) {
     return jsonResponse(
       { error: 'Notification cooldown active — wait 5 minutes between sends.', code: 'cooldown' },
       429,
@@ -922,14 +913,17 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
     )
   }
 
-  const updatedRow = await db.prepare(
-    `SELECT push_notified_at FROM videos WHERE id = ?`
-  ).bind(videoId).first()
-  const notifiedAt = updatedRow?.push_notified_at
+  const responseTimestamp = new Date().toISOString()
 
   // Send in the background; log delivery stats so failures are visible in logs.
   ctx.waitUntil(
-    sendPushToAllSubscribers(video.title || videoId, videoId, env, db)
+    performAndRecordPushAttempt({
+      db,
+      env,
+      videoId,
+      videoTitle: video.title || videoId,
+      attemptId: attempt.attemptId,
+    })
       .then(stats => {
         console.log(`Push notify [videoId:${videoId}] attempted=${stats.attempted} succeeded=${stats.succeeded} failed=${stats.failed} stale=${stats.stale}`)
       })
@@ -938,7 +932,166 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
       }),
   )
 
-  return jsonResponse({ ok: true, push_notified_at: notifiedAt }, 200, corsHeaders)
+  return jsonResponse({ ok: true, push_enqueued_at: responseTimestamp, push_notified_at: responseTimestamp }, 200, corsHeaders)
+}
+
+async function handleAdminPushTest(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
+  const user = await requireAuth(request, env).catch(() => null)
+  if (!user?.sub) return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+
+  const db = getDatabaseBinding(env)
+  const subscription = await db.prepare(`
+    SELECT endpoint, p256dh, auth, created_at
+    FROM push_subscriptions
+    WHERE user_id = ?
+    ORDER BY datetime(created_at) DESC
+    LIMIT 1
+  `).bind(user.sub).first()
+
+  if (!subscription) {
+    return jsonResponse(
+      { ok: false, error: 'No push subscription found for current user', code: 'missing_subscription' },
+      404,
+      corsHeaders,
+    )
+  }
+
+  const endpointHost = safeEndpointHost(subscription.endpoint)
+  const payload = {
+    title: 'VMP push diagnostic',
+    body: `Diagnostic ping ${new Date().toISOString()}`,
+    url: `${env.FRONTEND_URL || ''}/account?push-test=1`,
+  }
+
+  try {
+    const result = await sendPushNotification(subscription, payload, env)
+    return jsonResponse({
+      ok: true,
+      endpointHost,
+      subscriptionCreatedAt: subscription.created_at || null,
+      delivery: {
+        status: result.status,
+        statusClass: result.statusClass,
+      },
+    }, 200, corsHeaders)
+  } catch (error) {
+    return jsonResponse({
+      ok: false,
+      endpointHost,
+      subscriptionCreatedAt: subscription.created_at || null,
+      error: error.message || 'Push test failed',
+      code: error.code || 'push_failed',
+      delivery: {
+        status: error.status ?? null,
+        statusClass: error.statusClass ?? null,
+        responseSnippet: error.responseSnippet ?? null,
+      },
+    }, 502, corsHeaders)
+  }
+}
+
+async function ensureVideoPushAttemptsTable(db) {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS video_push_attempts (
+      id TEXT PRIMARY KEY,
+      video_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      attempted_count INTEGER NOT NULL DEFAULT 0,
+      succeeded_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      stale_count INTEGER NOT NULL DEFAULT 0,
+      attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+    )
+  `).run()
+  await db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_video_push_attempts_video_time
+    ON video_push_attempts(video_id, attempted_at DESC)
+  `).run()
+}
+
+async function beginPushAttempt(db, { videoId, reason, cooldownSeconds = null }) {
+  await ensureVideoPushAttemptsTable(db)
+  const attemptId = crypto.randomUUID()
+
+  if (typeof cooldownSeconds === 'number') {
+    const insert = await db.prepare(`
+      INSERT INTO video_push_attempts (
+        id, video_id, reason, attempted_count, succeeded_count, failed_count, stale_count, attempted_at
+      )
+      SELECT ?, ?, ?, 0, 0, 0, 0, CURRENT_TIMESTAMP
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM video_push_attempts
+        WHERE video_id = ?
+          AND (unixepoch('now') - unixepoch(attempted_at)) <= ?
+      )
+    `).bind(attemptId, videoId, reason, videoId, cooldownSeconds).run()
+    const changes = insert.meta?.changes ?? insert.changes ?? 0
+    if (changes === 0) return { ok: false, attemptId: null }
+    return { ok: true, attemptId }
+  }
+
+  await db.prepare(`
+    INSERT INTO video_push_attempts (
+      id, video_id, reason, attempted_count, succeeded_count, failed_count, stale_count, attempted_at
+    ) VALUES (?, ?, ?, 0, 0, 0, 0, CURRENT_TIMESTAMP)
+  `).bind(attemptId, videoId, reason).run()
+  return { ok: true, attemptId }
+}
+
+async function performAndRecordPushAttempt({ db, env, videoId, videoTitle, attemptId }) {
+  let stats
+  try {
+    stats = await sendPushToAllSubscribers(videoTitle, videoId, env, db)
+  } catch (error) {
+    await db.prepare(`
+      UPDATE video_push_attempts
+      SET failed_count = failed_count + 1
+      WHERE id = ?
+    `).bind(attemptId).run().catch(() => {})
+    throw error
+  }
+
+  await db.prepare(`
+    UPDATE video_push_attempts
+    SET attempted_count = ?,
+        succeeded_count = ?,
+        failed_count = ?,
+        stale_count = ?
+    WHERE id = ?
+  `).bind(
+    stats.attempted,
+    stats.succeeded,
+    stats.failed,
+    stats.stale,
+    attemptId,
+  ).run()
+
+  if (stats.attempted > 0 && stats.succeeded > 0) {
+    await db.prepare(`
+      UPDATE videos
+      SET push_notified_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(videoId).run()
+  }
+
+  return stats
+}
+
+function safeEndpointHost(endpoint) {
+  try {
+    return new URL(endpoint).host || null
+  } catch {
+    return null
+  }
 }
 
 // ─── Push notification helpers ────────────────────────────────────────────────

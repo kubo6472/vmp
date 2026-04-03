@@ -14,6 +14,7 @@ import { useAuth } from '~/composables/useAuth'
 // Module-level singleton state so all components share the same subscription status
 const isSubscribed = ref(false)
 const permission = ref<NotificationPermission>('default')
+const pushError = ref<string | null>(null)
 const _initialised = ref(false)
 let _watcherRegistered = false
 
@@ -31,9 +32,17 @@ export function usePushNotifications() {
 
   async function _getVapidPublicKey(): Promise<string> {
     const res = await fetch(`${apiUrl}/api/push/vapid-public-key`)
-    if (!res.ok) throw new Error('Failed to fetch VAPID public key')
+    if (!res.ok) {
+      throw new Error(await _extractApiErrorMessage(res))
+    }
     const data = await res.json()
     return data.publicKey as string
+  }
+
+  async function _extractApiErrorMessage(res: Response): Promise<string> {
+    const parsed = await res.clone().json().catch(() => null) as { error?: string, message?: string } | null
+    if (parsed?.error || parsed?.message) return parsed.error || parsed.message || 'Server error'
+    return await res.text().catch(() => 'Server error')
   }
 
   function _urlB64ToUint8Array(base64String: string): Uint8Array {
@@ -93,6 +102,7 @@ export function usePushNotifications() {
 
   /** Request push permission and register with the backend */
   async function subscribe(): Promise<void> {
+    pushError.value = null
     if (!isSupported.value) return
     if (!isLoggedIn.value) {
       navigateTo('/login')
@@ -102,13 +112,17 @@ export function usePushNotifications() {
     // Request notification permission
     const perm = await Notification.requestPermission()
     permission.value = perm
-    if (perm !== 'granted') return
+    if (perm !== 'granted') {
+      pushError.value = 'Browser notifications were blocked. Enable notifications in your browser settings and try again.'
+      return
+    }
 
     let vapidPublicKey: string
     try {
       vapidPublicKey = await _getVapidPublicKey()
     } catch (e) {
       console.error('Could not fetch VAPID key:', e)
+      pushError.value = 'Push service is not configured right now. Please try again later.'
       return
     }
 
@@ -137,10 +151,13 @@ export function usePushNotifications() {
       })
 
       if (!res.ok) {
-        throw new Error(await res.text().catch(() => 'Server error'))
+        throw new Error(await _extractApiErrorMessage(res))
       }
     } catch (error) {
       console.error('Failed to save push subscription:', error)
+      pushError.value = error instanceof Error
+        ? `Failed to enable notifications: ${error.message}`
+        : 'Failed to enable notifications. Please try again.'
       // Roll back a newly created browser subscription; leave pre-existing ones alone
       if (!existingSubscription && pushSubscription) {
         await pushSubscription.unsubscribe().catch(() => {})
@@ -150,10 +167,12 @@ export function usePushNotifications() {
     }
 
     isSubscribed.value = true
+    pushError.value = null
   }
 
   /** Unsubscribe from push notifications */
   async function unsubscribe(): Promise<void> {
+    pushError.value = null
     const pushSub = await _getCurrentSubscription()
     if (!pushSub) {
       isSubscribed.value = false
@@ -168,7 +187,15 @@ export function usePushNotifications() {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({ endpoint }),
-      }).catch(e => console.error('Failed to delete push subscription on server:', e))
+      }).then(async (res) => {
+        if (!res.ok) {
+          const message = await _extractApiErrorMessage(res)
+          throw new Error(message || `HTTP ${res.status}`)
+        }
+      }).catch((e) => {
+        console.error('Failed to delete push subscription on server:', e)
+        pushError.value = 'Notifications were disabled in this browser, but we could not sync this change to the server.'
+      })
     }
 
     isSubscribed.value = false
@@ -188,6 +215,7 @@ export function usePushNotifications() {
       if (newId !== oldId) {
         // User changed (including first login) — reset then reconcile
         isSubscribed.value = false
+        pushError.value = null
         void _reconcile()
       }
     })
@@ -197,6 +225,7 @@ export function usePushNotifications() {
     isSupported,
     permission: readonly(permission),
     isSubscribed: readonly(isSubscribed),
+    pushError: readonly(pushError),
     subscribe,
     unsubscribe,
   }
