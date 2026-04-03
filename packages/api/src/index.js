@@ -790,13 +790,14 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     // Fire push only when the UPDATE itself confirmed the transition (atomic guard)
     if (transitionedToPublished) {
       ctx.waitUntil(
-        performAndRecordPushAttempt({
-          db,
-          env,
-          videoId,
-          videoTitle: video.title || videoId,
-          reason: 'publish_transition',
-        })
+        beginPushAttempt(db, { videoId, reason: 'publish_transition' })
+          .then((attempt) => performAndRecordPushAttempt({
+            db,
+            env,
+            videoId,
+            videoTitle: video.title || videoId,
+            attemptId: attempt.attemptId,
+          }))
           .then((stats) => {
             console.log(`Push notify [videoId:${videoId}] attempted=${stats.attempted} succeeded=${stats.succeeded} failed=${stats.failed} stale=${stats.stale}`)
           })
@@ -902,19 +903,14 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
     return jsonResponse({ error: 'Only published videos can trigger notifications' }, 422, corsHeaders)
   }
 
-  // Cooldown guard based on the most recent push attempt (success or failure)
-  // recorded in video_push_attempts.
   const cooldownSeconds = 300 // 5 minutes
-  const lastAttemptAt = await getLastPushAttemptTimestamp(db, videoId)
-  if (lastAttemptAt) {
-    const elapsedSeconds = Math.floor((Date.now() - Date.parse(lastAttemptAt)) / 1000)
-    if (Number.isFinite(elapsedSeconds) && elapsedSeconds <= cooldownSeconds) {
-      return jsonResponse(
-        { error: 'Notification cooldown active — wait 5 minutes between sends.', code: 'cooldown' },
-        429,
-        corsHeaders,
-      )
-    }
+  const attempt = await beginPushAttempt(db, { videoId, reason: 'manual_notify', cooldownSeconds })
+  if (!attempt.ok) {
+    return jsonResponse(
+      { error: 'Notification cooldown active — wait 5 minutes between sends.', code: 'cooldown' },
+      429,
+      corsHeaders,
+    )
   }
 
   const responseTimestamp = new Date().toISOString()
@@ -926,7 +922,7 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
       env,
       videoId,
       videoTitle: video.title || videoId,
-      reason: 'manual_notify',
+      attemptId: attempt.attemptId,
     })
       .then(stats => {
         console.log(`Push notify [videoId:${videoId}] attempted=${stats.attempted} succeeded=${stats.succeeded} failed=${stats.failed} stale=${stats.stale}`)
@@ -936,7 +932,7 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
       }),
   )
 
-  return jsonResponse({ ok: true, push_enqueued_at: responseTimestamp }, 200, corsHeaders)
+  return jsonResponse({ ok: true, push_enqueued_at: responseTimestamp, push_notified_at: responseTimestamp }, 200, corsHeaders)
 }
 
 async function handleAdminPushTest(request, env, corsHeaders) {
@@ -1000,36 +996,6 @@ async function handleAdminPushTest(request, env, corsHeaders) {
   }
 }
 
-async function performAndRecordPushAttempt({ db, env, videoId, videoTitle, reason }) {
-  await ensureVideoPushAttemptsTable(db)
-  const stats = await sendPushToAllSubscribers(videoTitle, videoId, env, db)
-
-  await db.prepare(`
-    INSERT INTO video_push_attempts (
-      id, video_id, reason, attempted_count, succeeded_count, failed_count, stale_count, attempted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `).bind(
-    crypto.randomUUID(),
-    videoId,
-    reason,
-    stats.attempted,
-    stats.succeeded,
-    stats.failed,
-    stats.stale,
-  ).run()
-
-  if (stats.attempted > 0 && stats.succeeded > 0) {
-    await db.prepare(`
-      UPDATE videos
-      SET push_notified_at = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(videoId).run()
-  }
-
-  return stats
-}
-
 async function ensureVideoPushAttemptsTable(db) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS video_push_attempts (
@@ -1050,16 +1016,74 @@ async function ensureVideoPushAttemptsTable(db) {
   `).run()
 }
 
-async function getLastPushAttemptTimestamp(db, videoId) {
+async function beginPushAttempt(db, { videoId, reason, cooldownSeconds = null }) {
   await ensureVideoPushAttemptsTable(db)
-  const lastAttempt = await db.prepare(`
-    SELECT attempted_at
-    FROM video_push_attempts
-    WHERE video_id = ?
-    ORDER BY datetime(attempted_at) DESC
-    LIMIT 1
-  `).bind(videoId).first()
-  return lastAttempt?.attempted_at || null
+  const attemptId = crypto.randomUUID()
+
+  if (typeof cooldownSeconds === 'number') {
+    const insert = await db.prepare(`
+      INSERT INTO video_push_attempts (
+        id, video_id, reason, attempted_count, succeeded_count, failed_count, stale_count, attempted_at
+      )
+      SELECT ?, ?, ?, 0, 0, 0, 0, CURRENT_TIMESTAMP
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM video_push_attempts
+        WHERE video_id = ?
+          AND (unixepoch('now') - unixepoch(attempted_at)) <= ?
+      )
+    `).bind(attemptId, videoId, reason, videoId, cooldownSeconds).run()
+    const changes = insert.meta?.changes ?? insert.changes ?? 0
+    if (changes === 0) return { ok: false, attemptId: null }
+    return { ok: true, attemptId }
+  }
+
+  await db.prepare(`
+    INSERT INTO video_push_attempts (
+      id, video_id, reason, attempted_count, succeeded_count, failed_count, stale_count, attempted_at
+    ) VALUES (?, ?, ?, 0, 0, 0, 0, CURRENT_TIMESTAMP)
+  `).bind(attemptId, videoId, reason).run()
+  return { ok: true, attemptId }
+}
+
+async function performAndRecordPushAttempt({ db, env, videoId, videoTitle, attemptId }) {
+  let stats
+  try {
+    stats = await sendPushToAllSubscribers(videoTitle, videoId, env, db)
+  } catch (error) {
+    await db.prepare(`
+      UPDATE video_push_attempts
+      SET failed_count = failed_count + 1
+      WHERE id = ?
+    `).bind(attemptId).run().catch(() => {})
+    throw error
+  }
+
+  await db.prepare(`
+    UPDATE video_push_attempts
+    SET attempted_count = ?,
+        succeeded_count = ?,
+        failed_count = ?,
+        stale_count = ?
+    WHERE id = ?
+  `).bind(
+    stats.attempted,
+    stats.succeeded,
+    stats.failed,
+    stats.stale,
+    attemptId,
+  ).run()
+
+  if (stats.attempted > 0 && stats.succeeded > 0) {
+    await db.prepare(`
+      UPDATE videos
+      SET push_notified_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(videoId).run()
+  }
+
+  return stats
 }
 
 function safeEndpointHost(endpoint) {

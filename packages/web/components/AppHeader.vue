@@ -145,7 +145,12 @@
       v-if="pushError"
       class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-3"
     >
-      <div class="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+      <div
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+        class="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-200"
+      >
         {{ pushError }}
       </div>
     </div>

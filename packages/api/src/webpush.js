@@ -271,8 +271,7 @@ export async function sendPushNotification(subscription, payload, env) {
   const { endpoint, p256dh, auth } = subscription
 
   if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY) {
-    console.warn('VAPID keys not configured, skipping push notification')
-    return
+    throw Object.assign(new Error('VAPID keys not configured'), { code: 'vapid_not_configured' })
   }
 
   // Audience = origin of the push service endpoint
@@ -383,6 +382,10 @@ export async function sendPushNotification(subscription, payload, env) {
  * @param {object} db - D1 database binding
  */
 export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
+  if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY) {
+    throw Object.assign(new Error('VAPID keys not configured'), { code: 'vapid_not_configured' })
+  }
+
   let subscriptions
   try {
     const result = await db.prepare('SELECT endpoint, p256dh, auth FROM push_subscriptions').all()
@@ -402,6 +405,7 @@ export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
   const batchSize = 50
   let succeeded = 0
   let failed = 0
+  let stale = 0
 
   for (let i = 0; i < subscriptions.length; i += batchSize) {
     const results = await Promise.allSettled(
@@ -411,6 +415,8 @@ export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
         } catch (err) {
           if (err.code === 'subscription_gone') {
             staleEndpoints.push(sub.endpoint)
+            stale++
+            return
           }
           throw err
         }
@@ -429,5 +435,5 @@ export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
       .bind(...staleEndpoints).run().catch(e => console.error('Cleanup error:', e))
   }
 
-  return { attempted: subscriptions.length, succeeded, failed, stale: staleEndpoints.length }
+  return { attempted: subscriptions.length, succeeded, failed, stale }
 }

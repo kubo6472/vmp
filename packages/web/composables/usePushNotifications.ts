@@ -32,9 +32,17 @@ export function usePushNotifications() {
 
   async function _getVapidPublicKey(): Promise<string> {
     const res = await fetch(`${apiUrl}/api/push/vapid-public-key`)
-    if (!res.ok) throw new Error('Failed to fetch VAPID public key')
+    if (!res.ok) {
+      throw new Error(await _extractApiErrorMessage(res))
+    }
     const data = await res.json()
     return data.publicKey as string
+  }
+
+  async function _extractApiErrorMessage(res: Response): Promise<string> {
+    const parsed = await res.clone().json().catch(() => null) as { error?: string, message?: string } | null
+    if (parsed?.error || parsed?.message) return parsed.error || parsed.message || 'Server error'
+    return await res.text().catch(() => 'Server error')
   }
 
   function _urlB64ToUint8Array(base64String: string): Uint8Array {
@@ -143,7 +151,7 @@ export function usePushNotifications() {
       })
 
       if (!res.ok) {
-        throw new Error(await res.text().catch(() => 'Server error'))
+        throw new Error(await _extractApiErrorMessage(res))
       }
     } catch (error) {
       console.error('Failed to save push subscription:', error)
@@ -179,6 +187,11 @@ export function usePushNotifications() {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({ endpoint }),
+      }).then(async (res) => {
+        if (!res.ok) {
+          const message = await _extractApiErrorMessage(res)
+          throw new Error(message || `HTTP ${res.status}`)
+        }
       }).catch((e) => {
         console.error('Failed to delete push subscription on server:', e)
         pushError.value = 'Notifications were disabled in this browser, but we could not sync this change to the server.'
@@ -202,6 +215,7 @@ export function usePushNotifications() {
       if (newId !== oldId) {
         // User changed (including first login) — reset then reconcile
         isSubscribed.value = false
+        pushError.value = null
         void _reconcile()
       }
     })
