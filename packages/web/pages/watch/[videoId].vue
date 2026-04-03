@@ -435,7 +435,32 @@ const fetchVideoAccess = async () => {
 }
 
 watch(isLoggedIn, async (loggedIn, wasLoggedIn) => {
-  if (!loggedIn || wasLoggedIn || loading.value || (!videoData.value && !rateLimited.value) || reloadInFlight) return
+  if (!loggedIn || wasLoggedIn || (!videoData.value && !rateLimited.value) || reloadInFlight) return
+
+  // If initial fetch is still loading, wait for it to complete before upgrading
+  if (loading.value) {
+    const unwatch = watch(loading, async (isLoading) => {
+      if (!isLoading) {
+        unwatch()
+        // Re-check conditions after loading completes
+        if (!videoData.value && !rateLimited.value) return
+
+        reloadInFlight = true
+        try {
+          await fetchVideoAccess()
+          currentTime.value = 0
+          showPremiumOverlay.value = false
+          await nextTick()
+          await initializeVideoElement(videoData.value.video.playlistUrl)
+        } catch (e: any) {
+          error.value = e.message
+        } finally {
+          reloadInFlight = false
+        }
+      }
+    })
+    return
+  }
 
   reloadInFlight = true
   try {

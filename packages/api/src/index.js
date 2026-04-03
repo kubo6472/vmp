@@ -278,7 +278,10 @@ async function handleVideoAccess(request, env, corsHeaders) {
       legacyUserId = pathParts[2]
       requestedVideoId = decodeURIComponent(pathParts[3] ?? '')
       // Log deprecation warning without raw user identifiers to comply with privacy/retention policies
-      console.warn('DEPRECATED_API_CALL /api/video-access/{userId}/{videoId} - Legacy path format still in use')
+      // Suppress warning for 'anonymous' userId to avoid log spam from admin UI
+      if (legacyUserId !== 'anonymous') {
+        console.warn('DEPRECATED_API_CALL /api/video-access/{userId}/{videoId} - Legacy path format still in use')
+      }
     } else {
       return jsonResponse({ error: 'Invalid path format. Expected: /api/video-access/{videoId}' }, 400, corsHeaders)
     }
