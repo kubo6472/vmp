@@ -308,7 +308,7 @@ const autoplayBlocked     = ref(false)
 const autoplayMuting      = ref(false)
 const autoplayPlayError   = ref(false)
 
-const videoId = route.params.videoId as string
+const videoId = computed(() => String(route.params.videoId ?? ''))
 
 // Resolved actual duration (from HLS playlist parsing) when D1 returns 0
 const resolvedFullDuration = ref(0)
@@ -501,6 +501,7 @@ const loadVideoForRoute = async (targetVideoId: string, options: LoadVideoForRou
   buffering.value = false
   autoplayPlayError.value = false
   showPremiumOverlay.value = false
+  rateLimited.value = false
   currentTime.value = 0
   loading.value = true
   error.value = null
@@ -542,18 +543,21 @@ const loadVideoForRoute = async (targetVideoId: string, options: LoadVideoForRou
   }
 }
 
-watch(isLoggedIn, async (loggedIn, wasLoggedIn) => {
-  if (!loggedIn || wasLoggedIn || (!videoData.value && !rateLimited.value) || reloadInFlight) return
+watch(isLoggedIn, async (loggedIn, wasLoggedIn, onCleanup) => {
+  if (!loggedIn || wasLoggedIn || reloadInFlight) return
 
   reloadInFlight = true
   const { abortController, isCurrentInvocation, cancel } = createLoadInvocation()
+  onCleanup(() => {
+    cancel()
+  })
+
   try {
     await loadVideoForRoute(String(route.params.videoId), {
       signal: abortController.signal,
       guard: isCurrentInvocation
     })
   } finally {
-    cancel()
     reloadInFlight = false
   }
 })
