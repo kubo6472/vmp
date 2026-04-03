@@ -289,13 +289,24 @@ async function handleVideoAccess(request, env, corsHeaders) {
     const videoId = normalizeVideoId(requestedVideoId)
 
     let authUser = null
-    try {
-      authUser = await requireAuth(request, env)
-    } catch {
-      authUser = null
-    }
+    let userId = legacyUserId
 
-    const userId = authUser?.sub ?? legacyUserId
+    // Legacy non-anonymous callers must now authenticate.
+    if (legacyUserId && legacyUserId !== 'anonymous') {
+      try {
+        authUser = await requireAuth(request, env)
+      } catch {
+        return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+      }
+      userId = authUser?.sub
+    } else {
+      try {
+        authUser = await requireAuth(request, env)
+      } catch {
+        authUser = null
+      }
+      if (authUser?.sub) userId = authUser.sub
+    }
 
     // ── Anonymous rate limiting ────────────────────────────────────────────────
     // Only applied when there is no authenticated user (anonymous viewer).

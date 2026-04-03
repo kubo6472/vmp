@@ -380,7 +380,11 @@ onMounted(async () => {
 
     loading.value = false
     await nextTick()
-    initializeVideoElement(videoData.value.video.playlistUrl)
+    const playlistUrl = videoData.value?.video?.playlistUrl
+    if (playlistUrl && !rateLimited.value) {
+      error.value = null
+      await initializeVideoElement(playlistUrl)
+    }
   } catch (e: any) {
     error.value   = e.message
     loading.value = false
@@ -451,7 +455,11 @@ watch(isLoggedIn, async (loggedIn, wasLoggedIn) => {
           currentTime.value = 0
           showPremiumOverlay.value = false
           await nextTick()
-          await initializeVideoElement(videoData.value.video.playlistUrl)
+          const playlistUrl = videoData.value?.video?.playlistUrl
+          if (playlistUrl && !rateLimited.value) {
+            error.value = null
+            await initializeVideoElement(playlistUrl)
+          }
         } catch (e: any) {
           error.value = e.message
         } finally {
@@ -468,7 +476,11 @@ watch(isLoggedIn, async (loggedIn, wasLoggedIn) => {
     currentTime.value = 0
     showPremiumOverlay.value = false
     await nextTick()
-    await initializeVideoElement(videoData.value.video.playlistUrl)
+    const playlistUrl = videoData.value?.video?.playlistUrl
+    if (playlistUrl && !rateLimited.value) {
+      error.value = null
+      await initializeVideoElement(playlistUrl)
+    }
   } catch (e: any) {
     error.value = e.message
   } finally {
