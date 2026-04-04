@@ -138,6 +138,7 @@ const {
   pushError,
   subscribe: pushSubscribe,
   unsubscribe: pushUnsubscribe,
+  clearError: clearPushError,
 } = usePushNotifications()
 
 const router = useRouter()
@@ -163,6 +164,7 @@ function showPushToast(type: 'success' | 'error', message: string) {
 async function handleBellClick() {
   if (pushPermission.value === 'denied') {
     showPushToast('error', pushError.value || 'Notifications are blocked in your browser settings.')
+    clearPushError()
     dropdownOpen.value = false
     return
   }
@@ -170,12 +172,18 @@ async function handleBellClick() {
     const before = pushSubscribed.value
     await pushUnsubscribe()
     if (before && !pushSubscribed.value) showPushToast('success', 'Notifications turned off.')
-    else if (pushError.value) showPushToast('error', pushError.value)
+    else if (pushError.value) {
+      showPushToast('error', pushError.value)
+      clearPushError()
+    }
   } else {
     const before = pushSubscribed.value
     await pushSubscribe()
     if (!before && pushSubscribed.value) showPushToast('success', 'Notifications enabled.')
-    else if (pushError.value) showPushToast('error', pushError.value)
+    else if (pushError.value) {
+      showPushToast('error', pushError.value)
+      clearPushError()
+    }
   }
   dropdownOpen.value = false
 }

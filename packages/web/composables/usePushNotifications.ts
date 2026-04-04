@@ -221,6 +221,11 @@ export function usePushNotifications() {
     })
   }
 
+  /** Clear any persistent push error */
+  function clearError(): void {
+    pushError.value = null
+  }
+
   return {
     isSupported,
     permission: readonly(permission),
@@ -228,5 +233,6 @@ export function usePushNotifications() {
     pushError: readonly(pushError),
     subscribe,
     unsubscribe,
+    clearError,
   }
 }
