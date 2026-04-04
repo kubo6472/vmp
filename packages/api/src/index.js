@@ -30,12 +30,8 @@ import {
 import { isAdministrativeRole } from './roles.js'
 
 // ─── Durable Object for atomic segment rate limiting (Step 4c) ───────────────
-//
-// IMPORTANT: Add this binding to wrangler.toml:
-// [[durable_objects.bindings]]
-// name = "SEGMENT_RATE_LIMITER"
-// class_name = "SegmentRateLimiterDO"
-// script_name = "api" # or your worker name
+// Binding is configured in wrangler.json under durable_objects.bindings.
+// Used conditionally: only active when env.SEGMENT_RATE_LIMITER is present.
 
 export class SegmentRateLimiterDO {
   constructor(state, env) {
@@ -359,13 +355,8 @@ async function handleVideoAccess(request, env, corsHeaders) {
     const hasVideoMetadata = Boolean(video)
     const hasAccess = hasPremiumAccess || !hasVideoMetadata
     const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0
-    // If preview is locked (non-premium + previewDuration > 0), force HLS since DASH doesn't support preview limits
-    let requestedProtocol = normalizeProtocolOption(url.searchParams.get('protocol')) ?? 'hls'
-    if (!hasPremiumAccess && previewDuration > 0 && requestedProtocol === 'dash') {
-      requestedProtocol = 'hls'
-    }
-    const resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId, protocol: requestedProtocol })
-    const basePlaylistUrl = buildProxyPlaylistUrl(request, resolvedEntrypointUrl, hasPremiumAccess ? null : previewDuration, requestedProtocol)
+    const resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId })
+    const basePlaylistUrl = buildProxyPlaylistUrl(request, resolvedEntrypointUrl, hasPremiumAccess ? null : previewDuration)
     const fullDuration = video?.full_duration ?? previewDuration
 
     // Sign the playlist URL with a short-lived video token so the proxy can
@@ -405,10 +396,16 @@ async function handleVideoProxy(request, env, corsHeaders) {
   const requestUrl = new URL(request.url)
   const proxyPrefix = '/api/video-proxy/'
   const objectPath = requestUrl.pathname.slice(proxyPrefix.length)
-  const requestedProtocol = normalizeProtocolOption(requestUrl.searchParams.get('protocol'))
   const previewUntil = Number.parseFloat(requestUrl.searchParams.get('previewUntil') ?? '')
   const previewUntilSeconds = Number.isFinite(previewUntil) && previewUntil > 0 ? previewUntil : null
   if (!objectPath) return jsonResponse({ error: 'Missing proxied object path' }, 400, corsHeaders)
+
+  // This platform is HLS-only. Explicitly reject DASH manifest requests (.mpd)
+  // so they fail clearly rather than passing through the proxy unprocessed
+  // (where preview limits would not be enforced).
+  if (objectPath.endsWith('.mpd')) {
+    return jsonResponse({ error: 'DASH streaming is not supported. Use HLS.' }, 410, corsHeaders)
+  }
 
   // Normalize the path to resolve any dot-segments, leading slashes, etc.
   // This prevents rewritten URLs from rewriteSegmentPath() that produce root-relative
@@ -513,7 +510,7 @@ async function handleVideoProxy(request, env, corsHeaders) {
 
   const upstreamResponse = await fetch(upstreamUrl, { method: request.method, headers: upstreamHeaders })
 
-  const manifestType = getManifestType(objectPath, upstreamResponse, requestedProtocol)
+  const manifestType = getManifestType(objectPath, upstreamResponse)
   if (manifestType === 'hls') {
     const manifest = await upstreamResponse.text()
     const rewrittenManifest = rewriteManifestForProxyWithPreview(manifest, effectivePreviewUntil, objectPath, vtForRewrite)
@@ -523,17 +520,6 @@ async function handleVideoProxy(request, env, corsHeaders) {
     for (const [k, v] of Object.entries(corsHeaders)) headers.set(k, v)
     return new Response(rewrittenManifest, { status: upstreamResponse.status, headers })
   }
-  if (manifestType === 'dash') {
-    if (effectivePreviewUntil !== null) return jsonResponse({ error: 'Preview lock not supported for DASH' }, 501, corsHeaders)
-    const manifest = await upstreamResponse.text()
-    const rewrittenManifest = rewriteDashManifestForProxy(manifest, vtForRewrite)
-    const headers = new Headers(upstreamResponse.headers)
-    headers.set('Content-Type', 'application/dash+xml')
-    headers.delete('Content-Length')
-    for (const [k, v] of Object.entries(corsHeaders)) headers.set(k, v)
-    return new Response(rewrittenManifest, { status: upstreamResponse.status, headers })
-  }
-
   const headers = new Headers(upstreamResponse.headers)
   for (const [k, v] of Object.entries(corsHeaders)) headers.set(k, v)
   return new Response(upstreamResponse.body, { status: upstreamResponse.status, headers })
@@ -659,30 +645,13 @@ async function handleAdminVideosList(request, env, corsHeaders) {
     }
 
     // ── 2. Fetch all videos from D1 ──────────────────────────────────────────
-    // push_notified_at was added in migration 0013. If that migration hasn't
-    // been applied yet (e.g. worker deployed before migration ran) the query
-    // would fail with "no such column". Fall back gracefully so the rest of
-    // the admin UI still works while the operator applies the migration.
     let videos
-    try {
-      videos = await db.prepare(`
-        SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
-               upload_date, visibility, status, publish_status, published_at, push_notified_at, updated_at
-        FROM videos
-        ORDER BY upload_date DESC
-      `).all()
-    } catch (error) {
-      // Only swallow the specific missing-column error from migration 0013 not
-      // yet applied. Any other D1 failure is re-thrown so it surfaces normally.
-      const msg = error instanceof Error ? error.message : String(error)
-      if (!/no such column[:\s]*push_notified_at/i.test(msg)) throw error
-      videos = await db.prepare(`
-        SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
-               upload_date, visibility, status, publish_status, published_at, NULL as push_notified_at, updated_at
-        FROM videos
-        ORDER BY upload_date DESC
-      `).all()
-    }
+    videos = await db.prepare(`
+      SELECT id, title, description, thumbnail_url, full_duration, preview_duration,
+             upload_date, status, publish_status, published_at, updated_at
+      FROM videos
+      ORDER BY upload_date DESC
+    `).all()
 
     // ── 3. Annotate each row with r2_exists ──────────────────────────────────
     const annotated = await Promise.all((videos.results || []).map(async (video) => {
@@ -740,12 +709,6 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     }
   }
 
-  // Map publish_status to visibility so both stay in sync:
-  //   published  → visibility=public  (appears on homepage)
-  //   draft      → visibility=private (hidden from homepage)
-  //   archived   → visibility=unlisted (hidden but URL still works for editors)
-  const visibilityMap = { published: 'public', draft: 'private', archived: 'unlisted' }
-
   const db = getDatabaseBinding(env)
 
   try {
@@ -762,7 +725,6 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
         const result = await db.prepare(`
           UPDATE videos
           SET publish_status = 'published',
-              visibility = 'public',
               published_at = COALESCE(published_at, CURRENT_TIMESTAMP),
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND publish_status != 'published'
@@ -774,15 +736,14 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
         await db.prepare(`
           UPDATE videos
           SET publish_status = ?,
-              visibility = ?,
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
-        `).bind(body.status, visibilityMap[body.status], videoId).run()
+        `).bind(body.status, videoId).run()
       }
     }
 
     const video = await db.prepare(`
-      SELECT id, title, visibility, status, publish_status, published_at, push_notified_at, updated_at
+      SELECT id, title, status, publish_status, published_at, updated_at
       FROM videos WHERE id = ?
     `).bind(videoId).first()
     if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
@@ -790,14 +751,7 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     // Fire push only when the UPDATE itself confirmed the transition (atomic guard)
     if (transitionedToPublished) {
       ctx.waitUntil(
-        beginPushAttempt(db, { videoId, reason: 'publish_transition' })
-          .then((attempt) => performAndRecordPushAttempt({
-            db,
-            env,
-            videoId,
-            videoTitle: video.title || videoId,
-            attemptId: attempt.attemptId,
-          }))
+        sendPushToAllSubscribers(video.title || videoId, videoId, env, db)
           .then((stats) => {
             console.log(`Push notify [videoId:${videoId}] attempted=${stats.attempted} succeeded=${stats.succeeded} failed=${stats.failed} stale=${stats.stale}`)
           })
@@ -903,27 +857,29 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
     return jsonResponse({ error: 'Only published videos can trigger notifications' }, 422, corsHeaders)
   }
 
-  const cooldownSeconds = 300 // 5 minutes
-  const attempt = await beginPushAttempt(db, { videoId, reason: 'manual_notify', cooldownSeconds })
-  if (!attempt.ok) {
-    return jsonResponse(
-      { error: 'Notification cooldown active — wait 5 minutes between sends.', code: 'cooldown' },
-      429,
-      corsHeaders,
-    )
+  // KV-based cooldown: prevent accidental spam from double-clicks or repeated sends.
+  // TTL matches the cooldown window so the key auto-expires.
+  const NOTIFY_COOLDOWN_SECONDS = 300 // 5 minutes
+  if (env.RATE_LIMIT_KV) {
+    const cooldownKey = `notify:video:${videoId}`
+    const lastSent = await env.RATE_LIMIT_KV.get(cooldownKey)
+    if (lastSent) {
+      const secondsAgo = Math.floor((Date.now() - Number(lastSent)) / 1000)
+      const retryAfter = NOTIFY_COOLDOWN_SECONDS - secondsAgo
+      return jsonResponse(
+        { error: 'Notification cooldown active — wait 5 minutes between sends.', code: 'cooldown', retryAfter },
+        429,
+        corsHeaders,
+      )
+    }
+    await env.RATE_LIMIT_KV.put(cooldownKey, String(Date.now()), { expirationTtl: NOTIFY_COOLDOWN_SECONDS })
   }
 
   const responseTimestamp = new Date().toISOString()
 
   // Send in the background; log delivery stats so failures are visible in logs.
   ctx.waitUntil(
-    performAndRecordPushAttempt({
-      db,
-      env,
-      videoId,
-      videoTitle: video.title || videoId,
-      attemptId: attempt.attemptId,
-    })
+    sendPushToAllSubscribers(video.title || videoId, videoId, env, db)
       .then(stats => {
         console.log(`Push notify [videoId:${videoId}] attempted=${stats.attempted} succeeded=${stats.succeeded} failed=${stats.failed} stale=${stats.stale}`)
       })
@@ -932,7 +888,7 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
       }),
   )
 
-  return jsonResponse({ ok: true, push_enqueued_at: responseTimestamp, push_notified_at: responseTimestamp }, 200, corsHeaders)
+  return jsonResponse({ ok: true, push_enqueued_at: responseTimestamp }, 200, corsHeaders)
 }
 
 async function handleAdminPushTest(request, env, corsHeaders) {
@@ -994,96 +950,6 @@ async function handleAdminPushTest(request, env, corsHeaders) {
       },
     }, 502, corsHeaders)
   }
-}
-
-async function ensureVideoPushAttemptsTable(db) {
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS video_push_attempts (
-      id TEXT PRIMARY KEY,
-      video_id TEXT NOT NULL,
-      reason TEXT NOT NULL,
-      attempted_count INTEGER NOT NULL DEFAULT 0,
-      succeeded_count INTEGER NOT NULL DEFAULT 0,
-      failed_count INTEGER NOT NULL DEFAULT 0,
-      stale_count INTEGER NOT NULL DEFAULT 0,
-      attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
-    )
-  `).run()
-  await db.prepare(`
-    CREATE INDEX IF NOT EXISTS idx_video_push_attempts_video_time
-    ON video_push_attempts(video_id, attempted_at DESC)
-  `).run()
-}
-
-async function beginPushAttempt(db, { videoId, reason, cooldownSeconds = null }) {
-  await ensureVideoPushAttemptsTable(db)
-  const attemptId = crypto.randomUUID()
-
-  if (typeof cooldownSeconds === 'number') {
-    const insert = await db.prepare(`
-      INSERT INTO video_push_attempts (
-        id, video_id, reason, attempted_count, succeeded_count, failed_count, stale_count, attempted_at
-      )
-      SELECT ?, ?, ?, 0, 0, 0, 0, CURRENT_TIMESTAMP
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM video_push_attempts
-        WHERE video_id = ?
-          AND (unixepoch('now') - unixepoch(attempted_at)) <= ?
-      )
-    `).bind(attemptId, videoId, reason, videoId, cooldownSeconds).run()
-    const changes = insert.meta?.changes ?? insert.changes ?? 0
-    if (changes === 0) return { ok: false, attemptId: null }
-    return { ok: true, attemptId }
-  }
-
-  await db.prepare(`
-    INSERT INTO video_push_attempts (
-      id, video_id, reason, attempted_count, succeeded_count, failed_count, stale_count, attempted_at
-    ) VALUES (?, ?, ?, 0, 0, 0, 0, CURRENT_TIMESTAMP)
-  `).bind(attemptId, videoId, reason).run()
-  return { ok: true, attemptId }
-}
-
-async function performAndRecordPushAttempt({ db, env, videoId, videoTitle, attemptId }) {
-  let stats
-  try {
-    stats = await sendPushToAllSubscribers(videoTitle, videoId, env, db)
-  } catch (error) {
-    await db.prepare(`
-      UPDATE video_push_attempts
-      SET failed_count = failed_count + 1
-      WHERE id = ?
-    `).bind(attemptId).run().catch(() => {})
-    throw error
-  }
-
-  await db.prepare(`
-    UPDATE video_push_attempts
-    SET attempted_count = ?,
-        succeeded_count = ?,
-        failed_count = ?,
-        stale_count = ?
-    WHERE id = ?
-  `).bind(
-    stats.attempted,
-    stats.succeeded,
-    stats.failed,
-    stats.stale,
-    attemptId,
-  ).run()
-
-  if (stats.attempted > 0 && stats.succeeded > 0) {
-    await db.prepare(`
-      UPDATE videos
-      SET push_notified_at = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(videoId).run()
-  }
-
-  return stats
 }
 
 function safeEndpointHost(endpoint) {
@@ -1227,13 +1093,9 @@ async function hasProcessedPlaybackArtifact(bucket, videoId) {
     // Flat layout produced by the current upload script (rclone copies TMP_DIR
     // directly into videos/{id}/ with no processed/ subdirectory)
     `videos/${videoId}/master.m3u8`,
-    `videos/${videoId}/manifest.mpd`,
     // Processed-subdirectory layouts (video-processor pipeline output)
     `videos/${videoId}/processed/playlist.m3u8`,
     `videos/${videoId}/processed/hls/master.m3u8`,
-    `videos/${videoId}/processed/manifest.mpd`,
-    `videos/${videoId}/processed/playlist.mpd`,
-    `videos/${videoId}/processed/dash/manifest.mpd`,
   ]
 
   for (const key of candidateKeys) {
@@ -1245,13 +1107,11 @@ async function hasProcessedPlaybackArtifact(bucket, videoId) {
 
 // ─── All the unchanged helper functions from the original index.js ─────────────
 
-function getManifestType(objectPath, upstreamResponse, requestedProtocol) {
+function getManifestType(objectPath, upstreamResponse) {
   if (objectPath.endsWith('.m3u8')) return 'hls'
-  if (objectPath.endsWith('.mpd')) return 'dash'
   const ct = upstreamResponse.headers.get('content-type') ?? ''
-  if (/application\/dash\+xml/i.test(ct)) return 'dash'
   if (/application\/(vnd\.apple\.mpegurl|x-mpegurl)|audio\/mpegurl/i.test(ct)) return 'hls'
-  return requestedProtocol
+  return null
 }
 
 function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds, objectPath = '', vt = null) {
@@ -1348,15 +1208,6 @@ function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds, objec
   }).join('\n')
 }
 
-function rewriteDashManifestForProxy(mpdManifest, vt = null) {
-  const query = vt ? `vt=${vt}` : null
-  let r = mpdManifest.replace(/<BaseURL([^>]*)>([^<]+)<\/BaseURL>/gi, (_, attrs, value) => {
-    const v = value.trim()
-    return v ? `<BaseURL${attrs}>${rewriteSegmentPath(v, query)}</BaseURL>` : _
-  })
-  return r.replace(/\b(initialization|media|sourceURL)=["']([^"']+)["']/gi, (_, attr, value) => `${attr}="${rewriteSegmentPath(value, query)}"`)
-}
-
 function rewriteSegmentPath(path, query, baseDir = '') {
   // Preserve custom-scheme URIs (skd://, data:, etc.) - only rewrite scheme-less paths
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(path) && !/^https?:\/\//i.test(path)) {
@@ -1381,43 +1232,34 @@ function rewriteSegmentPath(path, query, baseDir = '') {
   return query ? (proxied.includes('?') ? `${proxied}&${query}` : `${proxied}?${query}`) : proxied
 }
 
-function normalizeProtocolOption(v) { return v === 'hls' || v === 'dash' ? v : null }
 function normalizeVideoId(input) {
   const t = (input ?? '').trim()
   const m = t.match(/^videos\/([^/]+)\/processed\/playlist\.m3u8$/i)
   return m ? m[1] : t
 }
 
-async function resolveMediaEntrypointUrl({ env, videoId, protocol = 'hls' }) {
+async function resolveMediaEntrypointUrl({ env, videoId }) {
   const base = env.R2_BASE_URL
-  const candidates = buildEntrypointCandidates(base, videoId, protocol)
+  const candidates = buildEntrypointCandidates(base, videoId)
   for (const c of candidates) { if (await canLoadEntrypoint(c)) return c }
   return candidates[0]
 }
 
-function buildEntrypointCandidates(base, videoId, protocol) {
+function buildEntrypointCandidates(base, videoId) {
   // All videos live under videos/{id}/.  Flat layout (rclone output directly
   // under videos/{id}/) is checked first; processed/ subdirectory is kept for
   // older uploads that went through the video-processor pipeline.
-  return protocol === 'dash'
-    ? [
-        `${base}/videos/${videoId}/manifest.mpd`,
-        `${base}/videos/${videoId}/processed/dash/manifest.mpd`,
-        `${base}/videos/${videoId}/processed/manifest.mpd`,
-        `${base}/videos/${videoId}/processed/playlist.mpd`,
-      ]
-    : [
-        `${base}/videos/${videoId}/master.m3u8`,
-        `${base}/videos/${videoId}/processed/hls/master.m3u8`,
-        `${base}/videos/${videoId}/processed/playlist.m3u8`,
-      ]
+  return [
+    `${base}/videos/${videoId}/master.m3u8`,
+    `${base}/videos/${videoId}/processed/hls/master.m3u8`,
+    `${base}/videos/${videoId}/processed/playlist.m3u8`,
+  ]
 }
 
-function buildProxyPlaylistUrl(request, playlistUrl, previewUntilSeconds, protocol) {
+function buildProxyPlaylistUrl(request, playlistUrl, previewUntilSeconds) {
   const origin = new URL(request.url).origin
   const upstream = new URL(playlistUrl)
   const u = new URL(`${origin}/api/video-proxy${upstream.pathname}`)
-  u.searchParams.set('protocol', protocol)
   if (previewUntilSeconds && previewUntilSeconds > 0) u.searchParams.set('previewUntil', String(Math.floor(previewUntilSeconds)))
   return u.toString()
 }
