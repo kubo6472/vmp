@@ -42,8 +42,12 @@
         {{ saveMessage }}
       </div>
 
+      <div class="flex gap-2 border-b border-gray-200 dark:border-gray-800">
+        <button v-for="tab in adminTabs" :key="tab.id" class="px-4 py-2 text-sm font-medium -mb-px border-b-2" :class="activeAdminTab===tab.id ? 'border-blue-600 text-blue-600 dark:text-blue-400' : 'border-transparent text-gray-600 dark:text-gray-400'" @click="activeAdminTab = tab.id">{{ tab.label }}</button>
+      </div>
+
       <section class="space-y-8">
-        <div class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
+        <div v-if="activeAdminTab === 'homepage'" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-xl font-bold text-gray-900 dark:text-white">Featured videos</h2>
             <p class="text-sm text-gray-600 dark:text-gray-400">Click a slot to replace</p>
@@ -66,7 +70,7 @@
           </div>
         </div>
 
-        <div class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
+        <div v-if="activeAdminTab === 'homepage'" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-xl font-bold text-gray-900 dark:text-white">Homepage blocks</h2>
             <button class="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg" @click="addBlock('hero')">
@@ -101,7 +105,7 @@
         </div>
 
         <!-- Video Management — tabbed panel -->
-        <div class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
+        <div v-if="activeAdminTab === 'videos'" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
           <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">Video management</h2>
 
           <!-- Tab bar -->
@@ -131,13 +135,13 @@
               <table class="min-w-[920px] w-full text-sm">
                 <thead>
                   <tr class="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-                    <th class="pb-2 pr-4 font-medium w-16">Thumb</th>
-                    <th class="pb-2 pr-4 font-medium">Title</th>
-                    <th class="pb-2 pr-4 font-medium">Status</th>
-                    <th class="pb-2 pr-4 font-medium">Duration</th>
-                    <th class="pb-2 pr-4 font-medium">Uploaded</th>
-                    <th class="pb-2 pr-4 font-medium">Notifications</th>
-                    <th class="pb-2 font-medium">Actions</th>
+                    <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium w-16">Thumb</th>
+                    <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Title</th>
+                    <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Status</th>
+                    <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Duration</th>
+                    <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Uploaded</th>
+                    <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Notifications</th>
+                    <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
@@ -173,6 +177,11 @@
                         </button>
                       </div>
                       <p class="text-xs text-gray-400 dark:text-gray-500 truncate">{{ video.id }}</p>
+                      <div class="mt-1 flex flex-wrap gap-1">
+                        <span v-if="video.r2_exists === false" class="inline-flex items-center gap-1 rounded-full bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300 px-2 py-0.5 text-[10px] font-semibold">⚠ R2 missing</span>
+                        <span v-if="video.publish_status === 'published' && !video.push_notified_at" class="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 px-2 py-0.5 text-[10px] font-semibold">🔔 Push pending</span>
+                        <span v-if="video.publish_status !== 'published'" class="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-0.5 text-[10px] font-semibold">📝 Draft</span>
+                      </div>
                     </td>
                     <td class="py-3 pr-4">
                       <span
@@ -234,13 +243,13 @@
                           v-if="video.publish_status !== 'archived'"
                           class="px-2 py-1 text-xs rounded bg-gray-400 hover:bg-gray-500 text-white font-medium disabled:opacity-50"
                           :disabled="statusUpdating[video.id]"
-                          @click="updateVideoStatus(video, 'archived')"
+                          @click="openConfirmModal(video, 'archive')"
                         >Archive</button>
                         <button
                           class="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50"
                           :disabled="trashing[video.id] || statusUpdating[video.id]"
                           :title="`Permanently delete ${video.title} from D1 and R2`"
-                          @click="trashVideo(video)"
+                          @click="openConfirmModal(video, 'trash')"
                         >{{ trashing[video.id] ? 'Deleting…' : 'Trash' }}</button>
                       </div>
                     </td>
@@ -265,9 +274,40 @@
             </div>
           </div>
         </div>
+
+
+        <div v-if="activeAdminTab === 'notifications'" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-3">
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white">Notifications</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400">Published videos without a push are listed below.</p>
+          <div v-for="video in chronologicallySortedUploads.filter(v => v.publish_status === 'published' && !v.push_notified_at)" :key="`notify-${video.id}`" class="flex items-center justify-between rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2">
+            <p class="text-sm text-gray-800 dark:text-gray-200 truncate pr-4">{{ video.title }}</p>
+            <button class="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white" :disabled="notifying[video.id]" @click="sendNotification(video)">Notify</button>
+          </div>
+        </div>
+
+        <div v-if="activeAdminTab === 'system'" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-4">
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white">System</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400">Operational controls and refresh actions.</p>
+          <button class="px-4 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-sm" @click="reloadAll">Reload data</button>
+        </div>
       </section>
 
     </main>
+
+    <div class="fixed top-20 right-4 z-50 space-y-2">
+      <div v-for="toast in toasts" :key="toast.id" class="rounded-lg border px-3 py-2 text-sm shadow" :class="toast.type === 'success' ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200' : 'border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200'">{{ toast.message }}</div>
+    </div>
+
+    <div v-if="confirmModal.open" class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" @click.self="confirmModal.open = false">
+      <div class="w-full max-w-lg rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-5">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">{{ confirmModal.action === 'trash' ? 'Permanently delete video?' : 'Archive video?' }}</h3>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">{{ confirmModal.impactText }}</p>
+        <div class="flex justify-end gap-2">
+          <button class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 text-sm" @click="confirmModal.open = false">Cancel</button>
+          <button class="px-3 py-2 rounded text-sm text-white" :class="confirmModal.action === 'trash' ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'" @click="runConfirmedAction">Confirm</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="pickerOpen" class="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center p-4" @click.self="closePicker">
       <div class="w-full max-w-3xl max-h-[80vh] overflow-y-auto rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-5">
@@ -343,6 +383,13 @@ const statusUpdating = ref<Record<string, boolean>>({})
 const notifying = ref<Record<string, boolean>>({})
 const trashing = ref<Record<string, boolean>>({})
 const activeVideoTab = ref<'all' | 'locks'>('all')
+const activeAdminTab = ref<'videos' | 'homepage' | 'notifications' | 'system'>('videos')
+const adminTabs = [
+  { id: 'videos' as const, label: 'Videos' },
+  { id: 'homepage' as const, label: 'Homepage' },
+  { id: 'notifications' as const, label: 'Notifications' },
+  { id: 'system' as const, label: 'System' },
+]
 const editingTitle = ref<{ id: string; value: string } | null>(null)
 const titleInputEl = ref<HTMLInputElement | null>(null)
 const videoTabs = [
@@ -561,8 +608,10 @@ async function updateVideoStatus(video: Video, newStatus: 'draft' | 'published' 
     const { video: updated } = await res.json()
     const idx = uploads.value.findIndex(v => v.id === video.id)
     if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], ...updated }
+    showToast('success', `Status updated: ${video.title} → ${newStatus}.`)
   } catch (e: any) {
     saveMessage.value = `Failed to update "${video.title}": ${e.message}`
+    showToast('error', `Failed to update ${video.title}: ${e.message}`)
     saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
   } finally {
     statusUpdating.value[video.id] = false
@@ -583,8 +632,10 @@ async function sendNotification(video: Video) {
     const { push_notified_at } = await res.json()
     const idx = uploads.value.findIndex(v => v.id === video.id)
     if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], push_notified_at }
+    showToast('success', `Notification sent for ${video.title}.`)
   } catch (e: any) {
     saveMessage.value = `Failed to send notification for "${video.title}": ${e.message}`
+    showToast('error', `Failed to notify ${video.title}: ${e.message}`)
     saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
   } finally {
     notifying.value[video.id] = false
@@ -592,11 +643,6 @@ async function sendNotification(video: Video) {
 }
 
 async function trashVideo(video: Video) {
-  const confirmed = window.confirm(
-    `Permanently delete "${video.title}"?\n\nThis will remove the video from the database AND delete all files in R2 (videos/${video.id}/). This cannot be undone.`
-  )
-  if (!confirmed) return
-
   trashing.value[video.id] = true
   try {
     const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
@@ -612,6 +658,7 @@ async function trashVideo(video: Video) {
       slot?.id === video.id ? null : slot
     )
     saveMessage.value = `"${video.title}" has been permanently deleted.`
+    showToast('success', `${video.title} deleted.`)
     saveMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
   } catch (e: any) {
     saveMessage.value = `Failed to delete "${video.title}": ${e.message}`
@@ -621,5 +668,49 @@ async function trashVideo(video: Video) {
   }
 }
 
-onMounted(reloadAll)
+
+
+type Toast = { id: number; type: 'success' | 'error'; message: string }
+const toasts = ref<Toast[]>([])
+let toastId = 0
+function showToast(type: Toast['type'], message: string) {
+  const id = ++toastId
+  toasts.value.push({ id, type, message })
+  setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id) }, 3200)
+}
+
+const confirmModal = ref<{ open: boolean; action: 'trash' | 'archive' | null; video: Video | null; impactText: string }>({
+  open: false,
+  action: null,
+  video: null,
+  impactText: '',
+})
+
+function openConfirmModal(video: Video, action: 'trash' | 'archive') {
+  confirmModal.value = {
+    open: true,
+    action,
+    video,
+    impactText: action === 'trash'
+      ? `This permanently removes ${video.title} from the database and deletes all files in R2 (videos/${video.id}/). This cannot be undone.`
+      : `This hides ${video.title} from published surfaces. It remains restorable from Drafts.`
+  }
+}
+
+async function runConfirmedAction() {
+  const current = confirmModal.value
+  if (!current.video || !current.action) return
+  confirmModal.value.open = false
+  if (current.action === 'trash') await trashVideo(current.video)
+  else await updateVideoStatus(current.video, 'archived')
+}
+
+onMounted(async () => {
+  const route = useRoute()
+  const qTab = route.query.tab
+  if (qTab && ['videos', 'homepage', 'notifications', 'system'].includes(String(qTab))) {
+    activeAdminTab.value = qTab as any
+  }
+  await reloadAll()
+})
 </script>
