@@ -175,6 +175,8 @@ export function usePushNotifications() {
           pushError.value = retryError instanceof Error
             ? `Failed to enable notifications: ${retryError.message}`
             : 'Failed to enable notifications. Please try again.'
+          // Roll back the fresh subscription created during the retry
+          if (pushSubscription) await pushSubscription.unsubscribe().catch(() => {})
           await _reconcile()
           return
         }

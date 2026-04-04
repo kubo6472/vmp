@@ -400,6 +400,13 @@ async function handleVideoProxy(request, env, corsHeaders) {
   const previewUntilSeconds = Number.isFinite(previewUntil) && previewUntil > 0 ? previewUntil : null
   if (!objectPath) return jsonResponse({ error: 'Missing proxied object path' }, 400, corsHeaders)
 
+  // This platform is HLS-only. Explicitly reject DASH manifest requests (.mpd)
+  // so they fail clearly rather than passing through the proxy unprocessed
+  // (where preview limits would not be enforced).
+  if (objectPath.endsWith('.mpd')) {
+    return jsonResponse({ error: 'DASH streaming is not supported. Use HLS.' }, 410, corsHeaders)
+  }
+
   // Normalize the path to resolve any dot-segments, leading slashes, etc.
   // This prevents rewritten URLs from rewriteSegmentPath() that produce root-relative
   // or dot-containing paths from bypassing the subtree check.
@@ -848,6 +855,24 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
   if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
   if (video.publish_status !== 'published') {
     return jsonResponse({ error: 'Only published videos can trigger notifications' }, 422, corsHeaders)
+  }
+
+  // KV-based cooldown: prevent accidental spam from double-clicks or repeated sends.
+  // TTL matches the cooldown window so the key auto-expires.
+  const NOTIFY_COOLDOWN_SECONDS = 300 // 5 minutes
+  if (env.RATE_LIMIT_KV) {
+    const cooldownKey = `notify:video:${videoId}`
+    const lastSent = await env.RATE_LIMIT_KV.get(cooldownKey)
+    if (lastSent) {
+      const secondsAgo = Math.floor((Date.now() - Number(lastSent)) / 1000)
+      const retryAfter = NOTIFY_COOLDOWN_SECONDS - secondsAgo
+      return jsonResponse(
+        { error: 'Notification cooldown active — wait 5 minutes between sends.', code: 'cooldown', retryAfter },
+        429,
+        corsHeaders,
+      )
+    }
+    await env.RATE_LIMIT_KV.put(cooldownKey, String(Date.now()), { expirationTtl: NOTIFY_COOLDOWN_SECONDS })
   }
 
   const responseTimestamp = new Date().toISOString()
