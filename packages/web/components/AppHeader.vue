@@ -173,10 +173,11 @@ async function handleBellClick() {
   if (pushSubscribed.value) {
     const before = pushSubscribed.value
     await pushUnsubscribe()
-    if (before && !pushSubscribed.value) showPushToast('success', 'Notifications turned off.')
-    else if (pushError.value) {
+    if (pushError.value) {
       showPushToast('error', pushError.value)
       clearPushError()
+    } else if (before && !pushSubscribed.value) {
+      showPushToast('success', 'Notifications turned off.')
     }
   } else {
     const before = pushSubscribed.value
