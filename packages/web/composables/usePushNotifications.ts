@@ -131,11 +131,14 @@ export function usePushNotifications() {
     // Reuse any existing subscription rather than creating a duplicate
     const existingSubscription = await reg.pushManager.getSubscription()
     let pushSubscription: PushSubscription | null = existingSubscription
-    try {
-      pushSubscription = existingSubscription ?? await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: _urlB64ToUint8Array(vapidPublicKey),
-      })
+
+    async function doSubscribe(): Promise<void> {
+      if (!pushSubscription) {
+        pushSubscription = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: _urlB64ToUint8Array(vapidPublicKey),
+        })
+      }
 
       const subJson = pushSubscription.toJSON()
       const res = await fetch(`${apiUrl}/api/push/subscribe`, {
@@ -153,17 +156,38 @@ export function usePushNotifications() {
       if (!res.ok) {
         throw new Error(await _extractApiErrorMessage(res))
       }
-    } catch (error) {
-      console.error('Failed to save push subscription:', error)
-      pushError.value = error instanceof Error
-        ? `Failed to enable notifications: ${error.message}`
-        : 'Failed to enable notifications. Please try again.'
-      // Roll back a newly created browser subscription; leave pre-existing ones alone
-      if (!existingSubscription && pushSubscription) {
-        await pushSubscription.unsubscribe().catch(() => {})
+    }
+
+    try {
+      await doSubscribe()
+    } catch (firstError) {
+      // If the existing subscription was stale (wrong VAPID key, expired endpoint,
+      // or missing keys from a pre-VAPID session) unsubscribe it and retry once
+      // with a fresh subscription.
+      if (existingSubscription) {
+        console.warn('Existing push subscription rejected by server, retrying with fresh one:', firstError)
+        await existingSubscription.unsubscribe().catch(() => {})
+        pushSubscription = null
+        try {
+          await doSubscribe()
+        } catch (retryError) {
+          console.error('Failed to save push subscription after retry:', retryError)
+          pushError.value = retryError instanceof Error
+            ? `Failed to enable notifications: ${retryError.message}`
+            : 'Failed to enable notifications. Please try again.'
+          await _reconcile()
+          return
+        }
+      } else {
+        console.error('Failed to save push subscription:', firstError)
+        pushError.value = firstError instanceof Error
+          ? `Failed to enable notifications: ${firstError.message}`
+          : 'Failed to enable notifications. Please try again.'
+        // Roll back the newly created browser subscription
+        if (pushSubscription) await pushSubscription.unsubscribe().catch(() => {})
+        await _reconcile()
+        return
       }
-      await _reconcile()
-      return
     }
 
     isSubscribed.value = true
