@@ -736,6 +736,17 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
 
   const db = getDatabaseBinding(env)
 
+  // Guard: reject a slug that equals another video's id — resolveVideoByIdOrSlug
+  // resolves by id before slug, so the slug would become permanently shadowed.
+  if (hasSlug && body.slug !== null) {
+    const idCollision = await db.prepare(
+      'SELECT 1 FROM videos WHERE id = ? AND id != ? LIMIT 1'
+    ).bind(body.slug, videoId).first()
+    if (idCollision) {
+      return jsonResponse({ error: 'Slug conflicts with an existing video ID' }, 409, corsHeaders)
+    }
+  }
+
   try {
     // When both title and slug are supplied, write them atomically so a slug
     // constraint violation cannot leave the title committed but the slug not.
@@ -985,37 +996,9 @@ async function handleVideoSwap(request, env, corsHeaders) {
     ? Math.min(oldVideo.preview_duration ?? 0, newVideo.full_duration)
     : (oldVideo.preview_duration ?? 0)
 
-  // Copy thumbnail R2 objects from the old video to the new video so the new
-  // video owns its own copies and isn't broken if the old record is later deleted.
-  let newThumbnailUrl = null
-  if (env.BUCKET && oldVideo.thumbnail_url) {
-    const thumbnailFiles = ['original.jpg', 'large.jpg', 'medium.jpg', 'small.jpg']
-    const copyResults = await Promise.allSettled(thumbnailFiles.map(async (file) => {
-      const srcKey = `thumbnails/${publishedId}/${file}`
-      const dstKey = `thumbnails/${draftId}/${file}`
-      const obj = await env.BUCKET.get(srcKey)
-      if (obj) {
-        await env.BUCKET.put(dstKey, obj.body, { httpMetadata: obj.httpMetadata })
-        return true
-      }
-      return false
-    }))
-    const failures = copyResults.filter(r => r.status === 'rejected')
-    if (failures.length) {
-      console.warn(`Thumbnail copy: ${failures.length}/${thumbnailFiles.length} failed for swap ${publishedId} -> ${draftId}`)
-    }
-    // Only point the promoted row at the new R2 key if large.jpg was actually
-    // written; otherwise fall back to the old URL so we never reference a missing object.
-    const largeCopyOk = copyResults[1]?.status === 'fulfilled' && copyResults[1].value === true
-    if (env.R2_BASE_URL && largeCopyOk) {
-      newThumbnailUrl = `${env.R2_BASE_URL}/thumbnails/${draftId}/large.jpg`
-    } else {
-      newThumbnailUrl = oldVideo.thumbnail_url
-    }
-  }
-
   // Promote the draft and retire the old video atomically via D1 batch so both
   // updates succeed or both fail — no half-swapped state.
+  // thumbnail_url starts as the old video's URL; upgraded below after the copy succeeds.
   const promoteStmt = db.prepare(`
     UPDATE videos SET
       title            = ?,
@@ -1031,7 +1014,7 @@ async function handleVideoSwap(request, env, corsHeaders) {
   `).bind(
     oldVideo.title,
     oldVideo.description ?? null,
-    newThumbnailUrl,
+    oldVideo.thumbnail_url ?? null,
     oldVideo.slug ?? null,
     oldVideo.upload_date,
     cappedPreviewDuration,
@@ -1057,23 +1040,55 @@ async function handleVideoSwap(request, env, corsHeaders) {
     return jsonResponse({ error: 'Swap failed: video status changed concurrently, please retry' }, 409, corsHeaders)
   }
 
+  // Copy thumbnails only after the swap has committed so a failed swap never
+  // overwrites the draft's existing thumbnail assets.
+  if (env.BUCKET && oldVideo.thumbnail_url) {
+    const thumbnailFiles = ['original.jpg', 'large.jpg', 'medium.jpg', 'small.jpg']
+    const copyResults = await Promise.allSettled(thumbnailFiles.map(async (file) => {
+      const srcKey = `thumbnails/${publishedId}/${file}`
+      const dstKey = `thumbnails/${draftId}/${file}`
+      const obj = await env.BUCKET.get(srcKey)
+      if (obj) {
+        await env.BUCKET.put(dstKey, obj.body, { httpMetadata: obj.httpMetadata })
+        return true
+      }
+      return false
+    }))
+    const failures = copyResults.filter(r => r.status === 'rejected')
+    if (failures.length) {
+      console.warn(`Thumbnail copy: ${failures.length}/${thumbnailFiles.length} failed for swap ${publishedId} -> ${draftId}`)
+    }
+    // Upgrade the thumbnail URL on the newly promoted row only if large.jpg was
+    // actually written; the initial value set in the batch was oldVideo.thumbnail_url.
+    const largeCopyOk = copyResults[1]?.status === 'fulfilled' && copyResults[1].value === true
+    if (env.R2_BASE_URL && largeCopyOk) {
+      await db.prepare(`UPDATE videos SET thumbnail_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+        .bind(`${env.R2_BASE_URL}/thumbnails/${draftId}/large.jpg`, draftId).run()
+    }
+  }
+
   // Update homepage featured slots: replace old ID with new ID so the page
   // doesn't silently show a stale/empty featured card after the swap.
-  await ensureAdminSettingsTable(db)
-  const homepageRow = await db.prepare(
-    'SELECT value FROM admin_settings WHERE key = ? LIMIT 1'
-  ).bind('homepage').first()
-  if (homepageRow?.value) {
-    const homepage = safeJsonParse(homepageRow.value, defaultHomepageConfig())
-    const before = Array.isArray(homepage.featuredVideoIds) ? homepage.featuredVideoIds : []
-    const after  = before.map(id => id === publishedId ? draftId : id)
-    if (after.some((id, i) => id !== before[i])) {
-      homepage.featuredVideoIds = after
-      await db.prepare(`
-        INSERT INTO admin_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-      `).bind('homepage', JSON.stringify(homepage)).run()
+  // Best-effort: the swap itself already committed — don't let this fail the response.
+  try {
+    await ensureAdminSettingsTable(db)
+    const homepageRow = await db.prepare(
+      'SELECT value FROM admin_settings WHERE key = ? LIMIT 1'
+    ).bind('homepage').first()
+    if (homepageRow?.value) {
+      const homepage = safeJsonParse(homepageRow.value, defaultHomepageConfig())
+      const before = Array.isArray(homepage.featuredVideoIds) ? homepage.featuredVideoIds : []
+      const after  = before.map(id => id === publishedId ? draftId : id)
+      if (after.some((id, i) => id !== before[i])) {
+        homepage.featuredVideoIds = after
+        await db.prepare(`
+          INSERT INTO admin_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+        `).bind('homepage', JSON.stringify(homepage)).run()
+      }
     }
+  } catch (err) {
+    console.warn('Homepage featured-slot update failed after swap (non-fatal):', err?.message)
   }
 
   const [published, retired] = await Promise.all([
