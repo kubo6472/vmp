@@ -40,7 +40,7 @@ process_video() {
 
     # smarter stale lock detection
     if [ -f "$LOCK" ]; then
-        if ! pgrep -f "$VIDEO_ID" > /dev/null; then
+        if ! pgrep -f "process_video.*$VIDEO_ID" > /dev/null; then
             log "âš ï¸ Stale lock detected for $VIDEO_ID â€” recovering"
             rm -f "$LOCK"
         else
@@ -229,7 +229,7 @@ garbage_collect() {
 
         # Clear stale locks using the same heuristic as process_video():
         # if a lock exists but no process is running for this VIDEO_ID, the job crashed.
-        if [ -f "$LOCK" ] && ! pgrep -f "$VIDEO_ID" > /dev/null; then
+        if [ -f "$LOCK" ] && ! pgrep -f "process_video.*$VIDEO_ID" > /dev/null; then
             log "🗑️  GC: removing stale lock for $VIDEO_ID"
             rm -f "$LOCK"
         fi

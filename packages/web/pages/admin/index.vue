@@ -995,7 +995,7 @@ async function executeSwap() {
     }
     swapModal.value.open = false
     showToast('success', 'Swap complete — video list updated.')
-    await loadVideos()
+    await reloadAll()
   } catch (e: any) {
     showToast('error', `Swap failed: ${e.message}`)
     swapModal.value.step = 1

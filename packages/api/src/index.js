@@ -362,6 +362,13 @@ async function handleVideoAccess(request, env, corsHeaders) {
 
     // Treat all non-viewer staff roles as premium-equivalent entitlements.
     const hasElevatedRole = isAdministrativeRole(authUser?.role)
+
+    // Reject unpublished videos for non-staff so drafts/archived videos can't
+    // receive signed playlist tokens via a slug or ID they happen to know.
+    if (video && video.publish_status !== 'published' && !hasElevatedRole) {
+      return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+    }
+
     // Any active monthly/yearly/club subscription grants full access
     const hasPremiumSubscription = Boolean(subscription)
     const hasPremiumAccess = hasElevatedRole || hasPremiumSubscription
@@ -958,6 +965,15 @@ async function handleVideoSwap(request, env, corsHeaders) {
   if (newVideo.publish_status !== 'draft') {
     return jsonResponse({ error: 'Target video must be a draft' }, 422, corsHeaders)
   }
+  if (env.BUCKET) {
+    const exists = await hasProcessedPlaybackArtifact(env.BUCKET, draftId)
+    if (!exists) {
+      return jsonResponse({
+        error: 'Cannot swap: processed media not found in R2. Upload and process the target draft first.',
+        code: 'r2_missing',
+      }, 422, corsHeaders)
+    }
+  }
 
   // Cap the preview lock to the new video's actual duration (which may differ).
   const cappedPreviewDuration = newVideo.full_duration > 0
@@ -1025,7 +1041,9 @@ async function handleVideoSwap(request, env, corsHeaders) {
     WHERE id = ?
   `).bind(publishedId)
 
-  await db.batch([promoteStmt, retireStmt])
+  // Retire must run first to clear the slug before the draft claims it — otherwise
+  // D1 raises a UNIQUE constraint violation on the partial index on videos.slug.
+  await db.batch([retireStmt, promoteStmt])
 
   // Update homepage featured slots: replace old ID with new ID so the page
   // doesn't silently show a stale/empty featured card after the swap.
