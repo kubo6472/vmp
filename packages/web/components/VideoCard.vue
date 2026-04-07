@@ -14,13 +14,13 @@
 
       <!-- Duration Badge -->
       <div class="absolute bottom-2 right-2 bg-black bg-opacity-80 text-white text-xs px-2 py-1 rounded">
-        {{ video.full_duration ? formatDuration(video.full_duration) : '--' }}
+        {{ displayDurationSeconds ? formatDuration(displayDurationSeconds) : '--' }}
       </div>
 
       <!-- Premium Badge — show when preview is explicitly shorter than full, or when
-           full_duration is unknown (0) but a non-zero preview_duration is set -->
+      full duration is unknown (0) but a non-zero preview_duration is set -->
       <div
-        v-if="video.full_duration > 0 ? video.preview_duration < video.full_duration : video.preview_duration > 0"
+        v-if="displayDurationSeconds > 0 ? video.preview_duration < displayDurationSeconds : video.preview_duration > 0"
         class="absolute top-2 left-2 bg-yellow-500 text-black text-xs font-semibold px-2 py-1 rounded"
       >
         PREMIUM
@@ -46,7 +46,14 @@ interface Video {
   title: string
   description: string
   thumbnail_url: string
-  full_duration: number
+  /**
+   * Legacy snake_case duration from older API responses.
+   */
+  full_duration?: number
+  /**
+   * Newer camelCase duration used by video-access and, in some cases, list endpoints.
+   */
+  fullDuration?: number
   preview_duration: number
   upload_date: string
   slug?: string | null
@@ -55,6 +62,11 @@ interface Video {
 const props = defineProps<{ video: Video }>()
 
 const { sizedUrl } = useThumbnail(computed(() => props.video.thumbnail_url))
+
+// Prefer camelCase `fullDuration` when present, with a fallback to legacy `full_duration`.
+const displayDurationSeconds = computed(
+  () => props.video.fullDuration ?? props.video.full_duration ?? 0
+)
 
 const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60)
