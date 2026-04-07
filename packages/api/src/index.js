@@ -1410,14 +1410,13 @@ async function resolvePlaylistDurationFromUrl(url, depth = 0) {
     // Prefer AbortSignal.timeout when available; otherwise use AbortController.
     const timeoutMs = 5000
     let controller = null
-    let timer = null
     let signal = undefined
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
       signal = AbortSignal.timeout(timeoutMs)
     } else if (typeof AbortController !== 'undefined') {
       controller = new AbortController()
       signal = controller.signal
-      timer = setTimeout(() => controller.abort(), timeoutMs)
+      setTimeout(() => controller.abort(), timeoutMs)
     }
 
     const res = await fetch(url, signal ? { signal } : undefined)
@@ -1445,7 +1444,7 @@ async function resolvePlaylistDurationFromUrl(url, depth = 0) {
   } catch {
     // Silent: callers treat null as "unknown"
   } finally {
-    if (timer) clearTimeout(timer)
+    if (controller) clearTimeout()
   }
   return null
 }
