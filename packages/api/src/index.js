@@ -29,6 +29,7 @@ import {
 } from './stripe.js'
 import { isAdministrativeRole } from './roles.js'
 import { handleThumbnailUpload, handleThumbnailDelete } from './thumbnails.js'
+import { handleAdminNewsletterSend, handleAdminNewsletterSettings } from './brevo.js'
 
 // ─── Durable Object for atomic segment rate limiting (Step 4c) ───────────────
 // Binding is configured in wrangler.json under durable_objects.bindings.
@@ -173,6 +174,12 @@ export default {
     }
     if (url.pathname === '/api/admin/push/test' && request.method === 'POST') {
       return handleAdminPushTest(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/newsletter/settings' && (request.method === 'GET' || request.method === 'PATCH')) {
+      return handleAdminNewsletterSettings(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/newsletter/send' && request.method === 'POST') {
+      return handleAdminNewsletterSend(request, env, corsHeaders)
     }
     if (url.pathname === '/api/account/pricing' && request.method === 'GET') {
       return handleGetPricing(request, env, corsHeaders)
