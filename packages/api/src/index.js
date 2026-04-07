@@ -1385,26 +1385,38 @@ async function resolveVideoDurationSeconds(videoId, env) {
   }
 
   const candidates = buildEntrypointCandidates(env.R2_BASE_URL, videoId)
+  let lastResult = null
   for (const entrypoint of candidates) {
-    const resolved = await resolvePlaylistDurationFromUrl(entrypoint, 0)
-    if (resolved && resolved > 0) {
+    const result = await resolvePlaylistDurationFromUrl(entrypoint, 0)
+    lastResult = result
+
+    if (result.kind === 'ok' && result.duration && result.duration > 0) {
       if (kv && cacheKey) {
-        await kv.put(cacheKey, String(resolved), { expirationTtl: 86400 }) // 24h
+        await kv.put(cacheKey, String(result.duration), { expirationTtl: 86400 }) // 24h
       }
-      return resolved
+      return result.duration
     }
+
+    // If we hit a transient error, stop trying and bubble it up (don't cache)
+    if (result.kind === 'transient') {
+      return null
+    }
+
+    // If not_found, continue to next candidate
   }
 
-  // Negative caching: avoid re-fetching missing/broken manifests on every request.
-  // Only set when KV exists; keep TTL short to allow newly processed uploads to recover.
-  if (kv && cacheKey) {
-    await kv.put(cacheKey, '-1', { expirationTtl: 300 }) // 5 minutes
+  // All candidates returned not_found — write negative cache sentinel
+  // Only write -1 for definitive not_found, not for transient errors
+  if (lastResult && lastResult.kind === 'not_found') {
+    if (kv && cacheKey) {
+      await kv.put(cacheKey, '-1', { expirationTtl: 300 }) // 5 minutes
+    }
   }
   return null
 }
 
 async function resolvePlaylistDurationFromUrl(url, depth = 0) {
-  if (!url || depth > 2) return null
+  if (!url || depth > 2) return { duration: null, kind: 'not_found' }
   try {
     // Avoid indefinite hangs on upstream fetch (network stalls, origin issues).
     // Prefer AbortSignal.timeout when available; otherwise use AbortController.
@@ -1420,7 +1432,16 @@ async function resolvePlaylistDurationFromUrl(url, depth = 0) {
     }
 
     const res = await fetch(url, signal ? { signal } : undefined)
-    if (!res.ok) return null
+
+    // Distinguish between not-found (404) and transient errors
+    if (!res.ok) {
+      if (res.status === 404) {
+        return { duration: null, kind: 'not_found' }
+      }
+      // Other HTTP errors (5xx, 403, etc.) are transient
+      return { duration: null, kind: 'transient' }
+    }
+
     const text = await res.text()
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
 
@@ -1432,7 +1453,10 @@ async function resolvePlaylistDurationFromUrl(url, depth = 0) {
         return Number.isFinite(n) ? sum + n : sum
       }, 0)
       const rounded = Math.round(total)
-      return Number.isFinite(rounded) && rounded > 0 ? rounded : null
+      if (Number.isFinite(rounded) && rounded > 0) {
+        return { duration: rounded, kind: 'ok' }
+      }
+      return { duration: null, kind: 'not_found' }
     }
 
     // Master playlist: follow first variant
@@ -1441,12 +1465,13 @@ async function resolvePlaylistDurationFromUrl(url, depth = 0) {
       const nextUrl = new URL(lines[idx + 1], url).toString()
       return resolvePlaylistDurationFromUrl(nextUrl, depth + 1)
     }
-  } catch {
-    // Silent: callers treat null as "unknown"
+  } catch (error) {
+    // Network errors, timeouts, and aborts are transient
+    return { duration: null, kind: 'transient' }
   } finally {
     if (controller) clearTimeout()
   }
-  return null
+  return { duration: null, kind: 'not_found' }
 }
 
 // ─── All the unchanged helper functions from the original index.js ─────────────
