@@ -147,8 +147,22 @@ function ecdsaSignatureToJose(signature) {
     throw new Error('Trailing bytes in DER signature')
   }
 
-  const r = rParsed.value.length > 32 ? rParsed.value.slice(rParsed.value.length - 32) : rParsed.value
-  const s = sParsed.value.length > 32 ? sParsed.value.slice(sParsed.value.length - 32) : sParsed.value
+  let r = rParsed.value
+  let s = sParsed.value
+  if (r.length > 32) {
+    if (r.length === 33 && r[0] === 0x00) {
+      r = r.slice(1)
+    } else {
+      throw new Error('Invalid DER integer length')
+    }
+  }
+  if (s.length > 32) {
+    if (s.length === 33 && s[0] === 0x00) {
+      s = s.slice(1)
+    } else {
+      throw new Error('Invalid DER integer length')
+    }
+  }
 
   const out = new Uint8Array(64)
   out.set(r, 32 - r.length)
