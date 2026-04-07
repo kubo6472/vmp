@@ -260,7 +260,20 @@ async function handleVideosList(request, env, corsHeaders) {
          ORDER BY upload_date DESC`
 
     const videos = await db.prepare(query).all()
-    return jsonResponse({ videos: videos.results || [] }, 200, corsHeaders)
+
+    // Best-effort duration hydration for legacy rows where full_duration=0.
+    // Cached in KV so this stays cheap for repeated list loads.
+    const results = videos.results || []
+    if (env.R2_BASE_URL) {
+      await Promise.all(results.map(async (v) => {
+        if (!v || typeof v.id !== 'string') return
+        if (typeof v.full_duration === 'number' && v.full_duration > 0) return
+        const resolved = await resolveVideoDurationSeconds(v.id, env)
+        if (resolved && resolved > 0) v.full_duration = resolved
+      }))
+    }
+
+    return jsonResponse({ videos: results }, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
@@ -378,7 +391,33 @@ async function handleVideoAccess(request, env, corsHeaders) {
     const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0
     const resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId: resolvedVideoId })
     const basePlaylistUrl = buildProxyPlaylistUrl(request, resolvedEntrypointUrl, hasPremiumAccess ? null : previewDuration)
-    const fullDuration = video?.full_duration ?? previewDuration
+    // Unify duration logic with the frontend: if D1 has 0/unknown duration,
+    // attempt to resolve from the HLS playlist stored in R2.
+    let fullDuration = video?.full_duration ?? previewDuration
+    if ((!fullDuration || fullDuration === 0) && env.R2_BASE_URL) {
+      const resolved = await resolveVideoDurationSeconds(resolvedVideoId, env)
+      if (resolved && resolved > 0) {
+        fullDuration = resolved
+        // Best-effort: backfill D1 so list endpoints and cards stop showing "--".
+        if (video && video.full_duration === 0) {
+          try {
+            await db.prepare(
+              `UPDATE videos
+               SET full_duration = ?,
+                   preview_duration = CASE
+                     WHEN preview_duration IS NULL THEN NULL
+                     WHEN preview_duration <= 0 THEN preview_duration
+                     ELSE MIN(preview_duration, ?)
+                   END,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`
+            ).bind(fullDuration, fullDuration, resolvedVideoId).run()
+          } catch (e) {
+            console.warn(`Duration backfill failed for ${resolvedVideoId}:`, e?.message ?? e)
+          }
+        }
+      }
+    }
 
     // Sign the playlist URL with a short-lived video token so the proxy can
     // authenticate every subsequent manifest and segment request.
@@ -1317,6 +1356,69 @@ async function hasProcessedPlaybackArtifact(bucket, videoId) {
     if (object) return true
   }
   return false
+}
+
+// ─── Duration resolver (shared by /video-access and /videos) ───────────────────
+//
+// Resolves total duration by summing #EXTINF lines in the HLS media playlist.
+// Follows a master playlist to its first variant if needed.
+// Cached in KV to avoid repeatedly fetching/parsing manifests.
+
+async function resolveVideoDurationSeconds(videoId, env) {
+  if (!videoId) return null
+  if (!env.R2_BASE_URL) return null
+
+  const kv = env.RATE_LIMIT_KV
+  const cacheKey = kv ? `duration:${videoId}` : null
+  if (kv && cacheKey) {
+    const cached = await kv.get(cacheKey)
+    const n = cached ? Number.parseInt(cached, 10) : NaN
+    if (Number.isFinite(n) && n > 0) return n
+  }
+
+  const candidates = buildEntrypointCandidates(env.R2_BASE_URL, videoId)
+  for (const entrypoint of candidates) {
+    const resolved = await resolvePlaylistDurationFromUrl(entrypoint, 0)
+    if (resolved && resolved > 0) {
+      if (kv && cacheKey) {
+        await kv.put(cacheKey, String(resolved), { expirationTtl: 86400 }) // 24h
+      }
+      return resolved
+    }
+  }
+
+  return null
+}
+
+async function resolvePlaylistDurationFromUrl(url, depth = 0) {
+  if (!url || depth > 2) return null
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const text = await res.text()
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+
+    // Media playlist: sum EXTINF segment durations
+    const extInf = lines.filter(l => l.startsWith('#EXTINF:'))
+    if (extInf.length) {
+      const total = extInf.reduce((sum, l) => {
+        const n = Number.parseFloat(l.slice('#EXTINF:'.length))
+        return Number.isFinite(n) ? sum + n : sum
+      }, 0)
+      const rounded = Math.round(total)
+      return Number.isFinite(rounded) && rounded > 0 ? rounded : null
+    }
+
+    // Master playlist: follow first variant
+    const idx = lines.findIndex(l => l.startsWith('#EXT-X-STREAM-INF'))
+    if (idx >= 0 && lines[idx + 1]) {
+      const nextUrl = new URL(lines[idx + 1], url).toString()
+      return resolvePlaylistDurationFromUrl(nextUrl, depth + 1)
+    }
+  } catch {
+    // Silent: callers treat null as "unknown"
+  }
+  return null
 }
 
 // ─── All the unchanged helper functions from the original index.js ─────────────
