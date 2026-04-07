@@ -153,6 +153,8 @@ export async function handleThumbnailUpload(request, env, corsHeaders) {
   }
 
   const r2BaseUrl = (env.R2_BASE_URL || '').replace(/\/$/, '')
+  // Change the URL on each upload so CDN/browser caches cannot serve stale images.
+  const cacheVersion = Date.now().toString()
 
   // Derive the correct extension and content-type from the uploaded file's MIME type.
   const { ext: origExt, contentType: origContentType } = extensionForMime(file.type)
@@ -176,7 +178,7 @@ export async function handleThumbnailUpload(request, env, corsHeaders) {
     // Store the original with its actual MIME type / extension.
     await env.BUCKET.put(origKey, sourceBuffer, { httpMetadata: { contentType: origContentType } })
     writtenKeys.push(origKey)
-    thumbUrls.original = `${r2BaseUrl}/${origKey}`
+    thumbUrls.original = `${r2BaseUrl}/${origKey}?v=${cacheVersion}`
 
     // Resize to each size variant.
     // When the Canvas API is unavailable the original bytes are stored instead
@@ -200,7 +202,7 @@ export async function handleThumbnailUpload(request, env, corsHeaders) {
         { httpMetadata: { contentType: blob.type || 'image/jpeg' } },
       )
       writtenKeys.push(variantKey)
-      thumbUrls[key] = `${r2BaseUrl}/${variantKey}`
+      thumbUrls[key] = `${r2BaseUrl}/${variantKey}?v=${cacheVersion}`
     }
 
     // Update D1 to point at the large variant.
