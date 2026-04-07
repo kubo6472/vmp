@@ -260,7 +260,20 @@ async function handleVideosList(request, env, corsHeaders) {
          ORDER BY upload_date DESC`
 
     const videos = await db.prepare(query).all()
-    return jsonResponse({ videos: videos.results || [] }, 200, corsHeaders)
+
+    // Best-effort duration hydration for legacy rows where full_duration=0.
+    // Cached in KV so this stays cheap for repeated list loads.
+    const results = videos.results || []
+    if (env.R2_BASE_URL) {
+      await Promise.all(results.map(async (v) => {
+        if (!v || typeof v.id !== 'string') return
+        if (typeof v.full_duration === 'number' && v.full_duration > 0) return
+        const resolved = await resolveVideoDurationSeconds(v.id, env)
+        if (resolved && resolved > 0) v.full_duration = resolved
+      }))
+    }
+
+    return jsonResponse({ videos: results }, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
@@ -378,7 +391,36 @@ async function handleVideoAccess(request, env, corsHeaders) {
     const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0
     const resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId: resolvedVideoId })
     const basePlaylistUrl = buildProxyPlaylistUrl(request, resolvedEntrypointUrl, hasPremiumAccess ? null : previewDuration)
-    const fullDuration = video?.full_duration ?? previewDuration
+    // Unify duration logic with the frontend: if D1 has 0/unknown duration,
+    // attempt to resolve from the HLS playlist stored in R2.
+    let fullDuration = video?.full_duration ?? previewDuration
+    // Avoid racing the video-processor duration sync while a video is still in the
+    // "uploaded" (not yet processed) state.
+    const isProcessingInFlight = Boolean(video && video.status && video.status !== 'processed')
+    if ((!fullDuration || fullDuration === 0) && env.R2_BASE_URL && !isProcessingInFlight) {
+      const resolved = await resolveVideoDurationSeconds(resolvedVideoId, env)
+      if (resolved && resolved > 0) {
+        fullDuration = resolved
+        // Best-effort: backfill D1 so list endpoints and cards stop showing "--".
+        if (video && (video.full_duration == null || video.full_duration === 0)) {
+          try {
+            await db.prepare(
+              `UPDATE videos
+               SET full_duration = ?,
+                   preview_duration = CASE
+                     WHEN preview_duration IS NULL THEN 0
+                     WHEN preview_duration <= 0 THEN preview_duration
+                     ELSE MIN(preview_duration, ?)
+                   END,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND status = 'processed'`
+            ).bind(fullDuration, fullDuration, resolvedVideoId).run()
+          } catch (e) {
+            console.warn(`Duration backfill failed for ${resolvedVideoId}:`, e?.message ?? e)
+          }
+        }
+      }
+    }
 
     // Sign the playlist URL with a short-lived video token so the proxy can
     // authenticate every subsequent manifest and segment request.
@@ -1317,6 +1359,132 @@ async function hasProcessedPlaybackArtifact(bucket, videoId) {
     if (object) return true
   }
   return false
+}
+
+// ─── Duration resolver (shared by /video-access and /videos) ───────────────────
+//
+// Resolves total duration by summing #EXTINF lines in the HLS media playlist.
+// Follows a master playlist to its first variant if needed.
+// Cached in KV to avoid repeatedly fetching/parsing manifests.
+
+async function resolveVideoDurationSeconds(videoId, env) {
+  if (!videoId) return null
+  if (!env.R2_BASE_URL) return null
+
+  const kv = env.RATE_LIMIT_KV
+  const cacheKey = kv ? `duration:${videoId}` : null
+  if (kv && cacheKey) {
+    try {
+      const cached = await kv.get(cacheKey)
+      // Three states:
+      // - missing key => attempt resolve
+      // - sentinel "-1" => treat as unresolvable (short TTL) and return null immediately
+      // - positive integer => duration seconds
+      if (cached === '-1') return null
+      const n = cached ? Number.parseInt(cached, 10) : NaN
+      if (Number.isFinite(n) && n > 0) return n
+    } catch {
+      // Treat KV read failure as a cache miss - proceed with resolution
+    }
+  }
+
+  const candidates = buildEntrypointCandidates(env.R2_BASE_URL, videoId)
+  let lastResult = null
+  for (const entrypoint of candidates) {
+    const result = await resolvePlaylistDurationFromUrl(entrypoint, 0)
+    lastResult = result
+
+    if (result.kind === 'ok' && result.duration && result.duration > 0) {
+      if (kv && cacheKey) {
+        try {
+          await kv.put(cacheKey, String(result.duration), { expirationTtl: 86400 }) // 24h
+        } catch {
+          // Ignore KV write failures - duration resolution still succeeded
+        }
+      }
+      return result.duration
+    }
+
+    // If we hit a transient error, stop trying and bubble it up (don't cache)
+    if (result.kind === 'transient') {
+      return null
+    }
+
+    // If not_found, continue to next candidate
+  }
+
+  // All candidates returned not_found — write negative cache sentinel
+  // Only write -1 for definitive not_found, not for transient errors
+  if (lastResult && lastResult.kind === 'not_found') {
+    if (kv && cacheKey) {
+      try {
+        await kv.put(cacheKey, '-1', { expirationTtl: 300 }) // 5 minutes
+      } catch {
+        // Ignore KV write failures - not_found result is still valid
+      }
+    }
+  }
+  return null
+}
+
+async function resolvePlaylistDurationFromUrl(url, depth = 0) {
+  if (!url || depth > 2) return { duration: null, kind: 'not_found' }
+  try {
+    // Avoid indefinite hangs on upstream fetch (network stalls, origin issues).
+    // Prefer AbortSignal.timeout when available; otherwise use AbortController.
+    const timeoutMs = 5000
+    let controller = null
+    let timeoutId = null
+    let signal = undefined
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+      signal = AbortSignal.timeout(timeoutMs)
+    } else if (typeof AbortController !== 'undefined') {
+      controller = new AbortController()
+      signal = controller.signal
+      timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    }
+
+    const res = await fetch(url, signal ? { signal } : undefined)
+
+    // Distinguish between not-found (404) and transient errors
+    if (!res.ok) {
+      if (res.status === 404) {
+        return { duration: null, kind: 'not_found' }
+      }
+      // Other HTTP errors (5xx, 403, etc.) are transient
+      return { duration: null, kind: 'transient' }
+    }
+
+    const text = await res.text()
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+
+    // Media playlist: sum EXTINF segment durations
+    const extInf = lines.filter(l => l.startsWith('#EXTINF:'))
+    if (extInf.length) {
+      const total = extInf.reduce((sum, l) => {
+        const n = Number.parseFloat(l.slice('#EXTINF:'.length))
+        return Number.isFinite(n) ? sum + n : sum
+      }, 0)
+      const rounded = Math.round(total)
+      if (Number.isFinite(rounded) && rounded > 0) {
+        return { duration: rounded, kind: 'ok' }
+      }
+      return { duration: null, kind: 'not_found' }
+    }
+
+    // Master playlist: follow first variant
+    const idx = lines.findIndex(l => l.startsWith('#EXT-X-STREAM-INF'))
+    if (idx >= 0 && lines[idx + 1]) {
+      const nextUrl = new URL(lines[idx + 1], url).toString()
+      return resolvePlaylistDurationFromUrl(nextUrl, depth + 1)
+    }
+  } catch (error) {
+    // Network errors, timeouts, and aborts are transient
+    return { duration: null, kind: 'transient' }
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
+  return { duration: null, kind: 'not_found' }
 }
 
 // ─── All the unchanged helper functions from the original index.js ─────────────
