@@ -408,12 +408,12 @@ async function handleVideoAccess(request, env, corsHeaders) {
               `UPDATE videos
                SET full_duration = ?,
                    preview_duration = CASE
-                     WHEN preview_duration IS NULL THEN NULL
+                     WHEN preview_duration IS NULL THEN 0
                      WHEN preview_duration <= 0 THEN preview_duration
                      ELSE MIN(preview_duration, ?)
                    END,
                    updated_at = CURRENT_TIMESTAMP
-               WHERE (full_duration IS NULL OR full_duration = 0) AND id = ? AND status = 'processed'`
+               WHERE id = ? AND status = 'processed'`
             ).bind(fullDuration, fullDuration, resolvedVideoId).run()
           } catch (e) {
             console.warn(`Duration backfill failed for ${resolvedVideoId}:`, e?.message ?? e)
