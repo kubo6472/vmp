@@ -1422,13 +1422,14 @@ async function resolvePlaylistDurationFromUrl(url, depth = 0) {
     // Prefer AbortSignal.timeout when available; otherwise use AbortController.
     const timeoutMs = 5000
     let controller = null
+    let timeoutId = null
     let signal = undefined
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
       signal = AbortSignal.timeout(timeoutMs)
     } else if (typeof AbortController !== 'undefined') {
       controller = new AbortController()
       signal = controller.signal
-      setTimeout(() => controller.abort(), timeoutMs)
+      timeoutId = setTimeout(() => controller.abort(), timeoutMs)
     }
 
     const res = await fetch(url, signal ? { signal } : undefined)
@@ -1469,7 +1470,7 @@ async function resolvePlaylistDurationFromUrl(url, depth = 0) {
     // Network errors, timeouts, and aborts are transient
     return { duration: null, kind: 'transient' }
   } finally {
-    if (controller) clearTimeout()
+    if (timeoutId) clearTimeout(timeoutId)
   }
   return { duration: null, kind: 'not_found' }
 }
