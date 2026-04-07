@@ -111,7 +111,7 @@ Steps 1–7 are complete. Work continues from step 8.
 
 ### Step 9 — RSS / Podcast Feed
 
-- Per-user stable RSS token: `HMAC-SHA256(JWT_SECRET, 'rss:' + userId)`.
+- Per-user stable RSS token: `HMAC-SHA256(RSS_SECRET, 'rss:' + userId)`.
 - `GET /api/feed/:userId/:token` — validates token + active subscription, returns RSS 2.0 with iTunes podcast tags for all published videos.
 - Account page section with copyable RSS URL and instructions.
 
