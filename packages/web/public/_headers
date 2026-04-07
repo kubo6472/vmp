@@ -13,3 +13,7 @@
 /workbox-*.js
   Content-Type: text/javascript; charset=utf-8
   Cache-Control: no-cache, no-store, must-revalidate
+
+/sw-push.js
+  Content-Type: text/javascript; charset=utf-8
+  Cache-Control: no-cache, no-store, must-revalidate

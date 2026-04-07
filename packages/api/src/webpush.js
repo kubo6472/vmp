@@ -12,7 +12,7 @@
  *                        (set via `wrangler secret put VAPID_PRIVATE_KEY`)
  *   VAPID_PUBLIC_KEY   — base64url-encoded uncompressed 65-byte EC P-256 public key
  *                        (set in wrangler.json vars)
- *   FRONTEND_URL       — used as the VAPID subject (mailto: or https: URI)
+ *   SENDER_EMAIL       — used as the VAPID subject (mailto: URI)
  */
 
 // ─── Encoding helpers ─────────────────────────────────────────────────────────
@@ -43,53 +43,44 @@ function concatBuffers(...bufs) {
 
 // ─── VAPID JWT (ES256) ────────────────────────────────────────────────────────
 
-async function importVapidPrivateKey(b64urlPrivate) {
-  // The VAPID private key is stored as raw 32 bytes in base64url.
-  // We must import it as a JWK so SubtleCrypto can use it for ES256 signing.
+async function importVapidPrivateKey(b64urlPrivate, b64urlPublic) {
+  // VAPID keys are provided as raw base64url values:
+  // - private key: 32-byte scalar (d)
+  // - public key: uncompressed 65-byte point (0x04 || X || Y)
+  //
+  // Import as JWK so SubtleCrypto signs with the exact key pair used by clients.
   const rawPrivate = b64urlToUint8(b64urlPrivate)
+  const rawPublic = b64urlToUint8(b64urlPublic)
 
-  // Build JWK for a P-256 private key (x/y come from the public key).
-  // We derive x/y by performing a scalar multiplication — easiest via
-  // importing the key as pkcs8 (DER-encoded) using the ECDH import path
-  // and then re-exporting as JWK to get x/y, but that requires us to
-  // construct a DER manually.
-  //
-  // Simpler: the SubtleCrypto spec allows importing raw private key bytes
-  // directly for ECDSA via JWK with x/y computed. However, SubtleCrypto
-  // does NOT support raw P-256 private key import for ECDSA directly.
-  //
-  // Solution: build a minimal PKCS#8 DER structure for the EC private key.
-  // PKCS#8 for P-256: a well-known fixed byte header + the 32-byte private key.
+  if (rawPrivate.length !== 32) {
+    throw new Error('Invalid VAPID private key length')
+  }
+  if (rawPublic.length !== 65 || rawPublic[0] !== 0x04) {
+    throw new Error('Invalid VAPID public key format')
+  }
 
-  // PKCS#8 DER prefix for EC P-256 private key (RFC 5958 OneAsymmetricKey):
-  // SEQUENCE {
-  //   INTEGER 0 (version)
-  //   SEQUENCE { OID ecPublicKey, OID prime256v1 }
-  //   OCTET STRING { SEC1 ECPrivateKey { INTEGER 1, OCTET STRING <privkey> } }
-  // }
-  const pkcs8Header = new Uint8Array([
-    0x30, 0x41, // SEQUENCE, 65 bytes total
-      0x02, 0x01, 0x00, // INTEGER 0 (version)
-      0x30, 0x13, // SEQUENCE, 19 bytes
-        0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // OID ecPublicKey
-        0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, // OID prime256v1
-      0x04, 0x27, // OCTET STRING, 39 bytes
-        0x30, 0x25, // SEQUENCE (SEC1 ECPrivateKey), 37 bytes
-          0x02, 0x01, 0x01, // INTEGER 1 (version)
-          0x04, 0x20, // OCTET STRING, 32 bytes (the private key follows)
-  ])
-  const pkcs8 = concatBuffers(pkcs8Header, rawPrivate)
+  const x = uint8ToB64url(rawPublic.slice(1, 33))
+  const y = uint8ToB64url(rawPublic.slice(33, 65))
+  const d = uint8ToB64url(rawPrivate)
 
   return crypto.subtle.importKey(
-    'pkcs8',
-    pkcs8,
+    'jwk',
+    {
+      kty: 'EC',
+      crv: 'P-256',
+      x,
+      y,
+      d,
+      ext: false,
+      key_ops: ['sign'],
+    },
     { name: 'ECDSA', namedCurve: 'P-256' },
     false,
     ['sign'],
   )
 }
 
-async function signVapidJwt(audience, subject, vapidPrivateKeyB64, expiresIn = 43200) {
+async function signVapidJwt(audience, subject, vapidPrivateKeyB64, vapidPublicKeyB64, expiresIn = 43200) {
   const now = Math.floor(Date.now() / 1000)
   const header = { typ: 'JWT', alg: 'ES256' }
   const payload = { aud: audience, exp: now + expiresIn, sub: subject }
@@ -99,38 +90,84 @@ async function signVapidJwt(audience, subject, vapidPrivateKeyB64, expiresIn = 4
   const payloadB64 = uint8ToB64url(enc.encode(JSON.stringify(payload)))
   const signingInput = `${headerB64}.${payloadB64}`
 
-  const key = await importVapidPrivateKey(vapidPrivateKeyB64)
+  const key = await importVapidPrivateKey(vapidPrivateKeyB64, vapidPublicKeyB64)
   const sigDer = await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' },
     key,
     enc.encode(signingInput),
   )
 
-  // SubtleCrypto returns DER-encoded signature for ECDSA; JWT requires raw r||s (64 bytes)
-  const sig = derToRaw(new Uint8Array(sigDer))
+  // JWT ES256 requires JOSE raw r||s (64 bytes).
+  const sig = ecdsaSignatureToJose(new Uint8Array(sigDer))
   return `${signingInput}.${uint8ToB64url(sig)}`
 }
 
-/** Convert DER-encoded ECDSA signature to raw r||s (64 bytes) */
-function derToRaw(der) {
-  // DER: 0x30 <len> 0x02 <rlen> <r> 0x02 <slen> <s>
-  let offset = 2 // skip 0x30 <totalLen>
-  offset++ // skip 0x02
-  const rLen = der[offset++]
-  const r = der.slice(offset, offset + rLen)
-  offset += rLen
-  offset++ // skip 0x02
-  const sLen = der[offset++]
-  const s = der.slice(offset, offset + sLen)
+function parseDerLength(bytes, offset) {
+  if (offset >= bytes.length) throw new Error('Invalid DER length')
+  const first = bytes[offset]
+  if (first < 0x80) return { length: first, nextOffset: offset + 1 }
+  const octets = first & 0x7f
+  if (octets < 1 || octets > 2 || offset + 1 + octets > bytes.length) {
+    throw new Error('Invalid DER length')
+  }
+  let length = 0
+  for (let i = 0; i < octets; i++) {
+    length = (length << 8) | bytes[offset + 1 + i]
+  }
+  return { length, nextOffset: offset + 1 + octets }
+}
 
-  // r and s may have a leading 0x00 padding byte (to avoid sign bit ambiguity)
-  const rPadded = r.length > 32 ? r.slice(r.length - 32) : r
-  const sPadded = s.length > 32 ? s.slice(s.length - 32) : s
+function parseDerInteger(bytes, offset) {
+  if (bytes[offset] !== 0x02) throw new Error('Invalid DER integer tag')
+  const { length, nextOffset } = parseDerLength(bytes, offset + 1)
+  const end = nextOffset + length
+  if (end > bytes.length) throw new Error('Invalid DER integer length')
+  return { value: bytes.slice(nextOffset, end), nextOffset: end }
+}
 
-  const raw = new Uint8Array(64)
-  raw.set(rPadded, 32 - rPadded.length)
-  raw.set(sPadded, 64 - sPadded.length)
-  return raw
+/** Convert ECDSA signature to JOSE raw r||s (64 bytes). */
+function ecdsaSignatureToJose(signature) {
+  // Some runtimes already return IEEE-P1363 raw signatures.
+  if (signature.length === 64) return signature
+
+  // DER fallback: SEQUENCE(INTEGER(r), INTEGER(s))
+  if (signature.length < 8 || signature[0] !== 0x30) {
+    throw new Error('Unsupported ECDSA signature format')
+  }
+
+  const seq = parseDerLength(signature, 1)
+  let offset = seq.nextOffset
+  if (offset + seq.length !== signature.length) {
+    throw new Error('Invalid DER sequence length')
+  }
+
+  const rParsed = parseDerInteger(signature, offset)
+  const sParsed = parseDerInteger(signature, rParsed.nextOffset)
+  if (sParsed.nextOffset !== signature.length) {
+    throw new Error('Trailing bytes in DER signature')
+  }
+
+  let r = rParsed.value
+  let s = sParsed.value
+  if (r.length > 32) {
+    if (r.length === 33 && r[0] === 0x00) {
+      r = r.slice(1)
+    } else {
+      throw new Error('Invalid DER integer length')
+    }
+  }
+  if (s.length > 32) {
+    if (s.length === 33 && s[0] === 0x00) {
+      s = s.slice(1)
+    } else {
+      throw new Error('Invalid DER integer length')
+    }
+  }
+
+  const out = new Uint8Array(64)
+  out.set(r, 32 - r.length)
+  out.set(s, 64 - s.length)
+  return out
 }
 
 // ─── RFC 8291: Web Push Message Encryption ───────────────────────────────────
@@ -280,7 +317,7 @@ export async function sendPushNotification(subscription, payload, env) {
   const audience = `${endpointUrl.protocol}//${endpointUrl.host}`
   const subject = `mailto:${env.SENDER_EMAIL || 'noreply@example.com'}`
 
-  const vapidJwt = await signVapidJwt(audience, subject, env.VAPID_PRIVATE_KEY)
+  const vapidJwt = await signVapidJwt(audience, subject, env.VAPID_PRIVATE_KEY, env.VAPID_PUBLIC_KEY)
   const vapidAuthHeader = `vapid t=${vapidJwt},k=${env.VAPID_PUBLIC_KEY}`
   const webPushAuthHeader = `WebPush ${vapidJwt}`
 

@@ -52,9 +52,16 @@ export function usePushNotifications() {
     return Uint8Array.from(rawData, c => c.charCodeAt(0))
   }
 
+  async function _getServiceWorkerRegistration(): Promise<ServiceWorkerRegistration> {
+    const existing = await navigator.serviceWorker.getRegistration()
+    if (existing) return existing
+    await navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    return navigator.serviceWorker.ready
+  }
+
   async function _getCurrentSubscription(): Promise<PushSubscription | null> {
     if (!isSupported.value) return null
-    const reg = await navigator.serviceWorker.ready
+    const reg = await _getServiceWorkerRegistration()
     return reg.pushManager.getSubscription()
   }
 
@@ -126,7 +133,7 @@ export function usePushNotifications() {
       return
     }
 
-    const reg = await navigator.serviceWorker.ready
+    const reg = await _getServiceWorkerRegistration()
 
     // Reuse any existing subscription rather than creating a duplicate
     const existingSubscription = await reg.pushManager.getSubscription()
