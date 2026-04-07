@@ -1429,13 +1429,14 @@ async function resolveVideoDurationSeconds(videoId, env) {
 
 async function resolvePlaylistDurationFromUrl(url, depth = 0) {
   if (!url || depth > 2) return { duration: null, kind: 'not_found' }
+  // Declared outside `try` so `finally` can clear the timer (try-block `let` is not in scope in `finally`).
+  const timeoutMs = 5000
+  let controller = null
+  let timeoutId = null
+  let signal = undefined
   try {
     // Avoid indefinite hangs on upstream fetch (network stalls, origin issues).
     // Prefer AbortSignal.timeout when available; otherwise use AbortController.
-    const timeoutMs = 5000
-    let controller = null
-    let timeoutId = null
-    let signal = undefined
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
       signal = AbortSignal.timeout(timeoutMs)
     } else if (typeof AbortController !== 'undefined') {
