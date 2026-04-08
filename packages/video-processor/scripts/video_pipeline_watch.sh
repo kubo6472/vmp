@@ -74,12 +74,12 @@ has_remote_hls_complete() {
     fi
 
     for required in master.m3u8 manifest.mpd init_1080.mp4 init_720.mp4 init_480.mp4; do
-        echo "$remote" | rg -x "$required" >/dev/null || return 1
+        echo "$remote" | grep -qx "$required" || return 1
     done
 
     for res in 1080 720 480; do
         local cnt
-        cnt=$(echo "$remote" | rg -c "^seg_${res}_" || true)
+        cnt=$(echo "$remote" | grep -c "^seg_${res}_" || true)
         [ "${cnt:-0}" -gt 0 ] || return 1
     done
 
@@ -252,7 +252,7 @@ process_video() {
         if [ "$HAS_AUDIO" -gt 0 ]; then
             log "🎧 Encoding podcast MP3"
             ffmpeg -hide_banner -y -i "$INPUT_PATH" \
-                -vn -map 0:a:0 -c:a libmp3lame -b:a 192k "$TMP_DIR/$MP3_NAME.tmp.$$"
+                -vn -map 0:a:0 -c:a libmp3lame -b:a 192k -f mp3 "$TMP_DIR/$MP3_NAME.tmp.$$"
             mv "$TMP_DIR/$MP3_NAME.tmp.$$" "$TMP_DIR/$MP3_NAME"
             log "✅ MP3 encoding done"
         else
@@ -346,24 +346,24 @@ for i in {1..5}; do
 
     if [ "$should_process_video" = "1" ]; then
         for required in master.m3u8 manifest.mpd init_1080.mp4 init_720.mp4 init_480.mp4; do
-            echo "$REMOTE" | rg -x "$required" >/dev/null || MISSING="$MISSING $required"
+            echo "$REMOTE" | grep -qx "$required" || MISSING="$MISSING $required"
         done
 
         # Check for audio artifacts if audio was present
         if [ "$HAS_AUDIO" -gt 0 ]; then
-            echo "$REMOTE" | rg -x "init_audio.mp4" >/dev/null || MISSING="$MISSING init_audio.mp4"
-            audio_seg_cnt=$(echo "$REMOTE" | rg -c "^seg_audio_" || true)
+            echo "$REMOTE" | grep -qx "init_audio.mp4" || MISSING="$MISSING init_audio.mp4"
+            audio_seg_cnt=$(echo "$REMOTE" | grep -c "^seg_audio_" || true)
             [ "${audio_seg_cnt:-0}" -gt 0 ] || MISSING="$MISSING seg_audio_*.m4s(none)"
         fi
 
         for res in 1080 720 480; do
-            cnt=$(echo "$REMOTE" | rg -c "^seg_${res}_" || true)
+            cnt=$(echo "$REMOTE" | grep -c "^seg_${res}_" || true)
             [ "${cnt:-0}" -gt 0 ] || MISSING="$MISSING seg_${res}_*.m4s(none)"
         done
     fi
 
     if [ "$HAS_AUDIO" -gt 0 ]; then
-        echo "$REMOTE" | rg -x "$MP3_NAME" >/dev/null || MISSING="$MISSING $MP3_NAME"
+        echo "$REMOTE" | grep -qx "$MP3_NAME" || MISSING="$MISSING $MP3_NAME"
     fi
 
     if [ -z "$MISSING" ]; then
