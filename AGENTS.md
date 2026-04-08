@@ -186,5 +186,5 @@ STRIPE_SECRET_KEY       — from stripe.com dashboard
 STRIPE_WEBHOOK_SECRET   — from stripe webhook registration
 TOTP_ENCRYPTION_KEY     — AES-256-GCM encryption key for TOTP secrets
 VAPID_PRIVATE_KEY       — generated with web-push generate-vapid-keys
-RSS_SECRET              — 32+ random chars (signs per-user RSS feed tokens)
+RSS_SECRET              — 32+ random chars used only to sign/tokenize personal account RSS URLs (`/api/feed/:userId/:token` and `/api/account/rss`); not required for the public feed endpoint (`/api/feed/public`)
 ```

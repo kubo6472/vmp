@@ -28,7 +28,7 @@ import {
   handlePortal,
 } from './stripe.js'
 import { isAdministrativeRole } from './roles.js'
-import { resolveMediaEntrypointUrl, buildProxyPlaylistUrl } from './mediaEntrypoints.js'
+import { buildEntrypointCandidates, resolveMediaEntrypointUrl, buildProxyPlaylistUrl } from './mediaEntrypoints.js'
 import { handleThumbnailUpload, handleThumbnailDelete } from './thumbnails.js'
 import { handleAdminNewsletterSend, handleAdminNewsletterSettings } from './brevo.js'
 import { signVideoToken, verifyVideoToken } from './videoTokens.js'

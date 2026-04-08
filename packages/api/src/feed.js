@@ -10,6 +10,7 @@
 import { isAdministrativeRole } from './roles.js'
 import { signVideoToken } from './videoTokens.js'
 import { resolveMediaEntrypointUrl, buildProxyPlaylistUrl } from './mediaEntrypoints.js'
+import { computeRssTokenHex } from './rssToken.js'
  
 function xmlEscape(text) {
   if (text == null) return ''
@@ -138,15 +139,11 @@ async function recordFeedPoll(db, { endpoint, userId }) {
       ON CONFLICT(endpoint, user_id) DO UPDATE SET
         poll_count = poll_count + 1,
         last_polled_at = CURRENT_TIMESTAMP
-    `).bind(endpoint, userId ?? null).run()
+    `).bind(endpoint, userId ?? 'public').run()
   } catch (e) {
     // Best-effort: analytics must never break feed delivery.
     console.warn('[rss] recordFeedPoll failed', e?.message ?? e)
   }
-}
-
-function hexFromBytes(bytes) {
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
 }
 
 function constantTimeEqual(a, b) {
@@ -155,23 +152,6 @@ function constantTimeEqual(a, b) {
   let diff = 0
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
   return diff === 0
-}
-
-async function importRssHmacKey(secret) {
-  return crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-}
-
-async function computeRssTokenHex(rssSecret, userId) {
-  const key = await importRssHmacKey(rssSecret)
-  const msg = new TextEncoder().encode(`rss:${userId}`)
-  const sig = await crypto.subtle.sign('HMAC', key, msg)
-  return hexFromBytes(new Uint8Array(sig))
 }
 
 async function getUserById(db, userId) {
@@ -190,178 +170,212 @@ async function getActiveSubscriptionRow(db, userId) {
 }
 
 export async function handlePublicFeed(request, env, corsHeaders) {
-  if (request.method !== 'GET') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    })
-  }
- 
-  const db = getDatabaseBinding(env)
-  const cache = caches?.default
-  if (cache) {
-    const cached = await cache.match(feedCacheKey(request, { v: 1 }))
-    if (cached) return cached
-  }
-  const origin = new URL(request.url).origin
- 
-  const [titleSetting, descSetting, imageSetting] = await Promise.all([
-    getAdminSetting(db, 'podcast_title'),
-    getAdminSetting(db, 'podcast_description'),
-    getAdminSetting(db, 'podcast_image_url'),
-  ])
- 
-  const channel = {
-    title: titleSetting || 'VMP Podcast',
-    description: descSetting || 'Preview episodes from VMP. Subscribe to unlock full access in your personal feed.',
-    link: env.FRONTEND_URL || origin,
-    language: 'en',
-    imageUrl: imageSetting,
-  }
- 
-  const videos = await listPublishedVideos(db)
- 
-  const items = []
-  for (const v of videos) {
-    const videoId = v.id
-    if (!videoId) continue
-    const previewDuration = v.preview_duration ?? v.full_duration ?? 0
-    const entrypointUrl = await resolveMediaEntrypointUrl({ env, videoId })
-    const basePlaylistUrl = buildProxyPlaylistUrl(request, entrypointUrl, previewDuration && previewDuration > 0 ? previewDuration : null)
- 
-    let enclosureUrl = basePlaylistUrl
-    if (env.JWT_SECRET) {
-      const vt = await signVideoToken('anonymous', videoId, env.JWT_SECRET, previewDuration && previewDuration > 0 ? previewDuration : null)
-      enclosureUrl = basePlaylistUrl.includes('?') ? `${basePlaylistUrl}&vt=${vt}` : `${basePlaylistUrl}?vt=${vt}`
+  try {
+    if (request.method !== 'GET') {
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      })
     }
- 
-    items.push({
-      title: v.title || `Episode ${videoId}`,
-      description: v.description || '',
-      guid: videoId,
-      pubDate: toRfc2822Date(v.published_at),
-      enclosureUrl,
-      enclosureType: 'application/vnd.apple.mpegurl',
-      itunesDuration: secondsToItunesDuration(v.full_duration ?? previewDuration ?? 0),
-    })
+
+    const db = getDatabaseBinding(env)
+    const cache = caches?.default
+    const publicPollMeta = { endpoint: 'feed_public', userId: 'public' }
+    if (cache) {
+      const cached = await cache.match(feedCacheKey(request, { v: 1 }))
+      if (cached) {
+        await recordFeedPoll(db, publicPollMeta)
+        return cached
+      }
+    }
+    const origin = new URL(request.url).origin
+
+    const [titleSetting, descSetting, imageSetting] = await Promise.all([
+      getAdminSetting(db, 'podcast_title'),
+      getAdminSetting(db, 'podcast_description'),
+      getAdminSetting(db, 'podcast_image_url'),
+    ])
+
+    const channel = {
+      title: titleSetting || 'VMP Podcast',
+      description: descSetting || 'Preview episodes from VMP. Subscribe to unlock full access in your personal feed.',
+      link: env.FRONTEND_URL || origin,
+      language: 'en',
+      imageUrl: imageSetting,
+    }
+
+    const videos = await listPublishedVideos(db)
+
+    const items = []
+    for (const v of videos) {
+      const videoId = v.id
+      if (!videoId) continue
+      const previewDuration = v.preview_duration ?? v.full_duration ?? 0
+      const entrypointUrl = await resolveMediaEntrypointUrl({ env, videoId })
+      const basePlaylistUrl = buildProxyPlaylistUrl(request, entrypointUrl, previewDuration && previewDuration > 0 ? previewDuration : null)
+
+      let enclosureUrl = basePlaylistUrl
+      if (env.JWT_SECRET) {
+        const vt = await signVideoToken(
+          'anonymous',
+          videoId,
+          env.JWT_SECRET,
+          previewDuration && previewDuration > 0 ? previewDuration : null,
+          { ttlSeconds: 60 * 60 * 24 * 30 }
+        )
+        enclosureUrl = basePlaylistUrl.includes('?') ? `${basePlaylistUrl}&vt=${vt}` : `${basePlaylistUrl}?vt=${vt}`
+      }
+
+      items.push({
+        title: v.title || `Episode ${videoId}`,
+        description: v.description || '',
+        guid: videoId,
+        pubDate: toRfc2822Date(v.published_at),
+        enclosureUrl,
+        enclosureType: 'application/vnd.apple.mpegurl',
+        itunesDuration: secondsToItunesDuration(v.full_duration ?? previewDuration ?? 0),
+      })
+    }
+
+    const xml = buildRssXml({ channel, items })
+    await recordFeedPoll(db, publicPollMeta)
+    const response = feedResponse(xml, corsHeaders, 'public, max-age=300, s-maxage=300')
+    if (cache) await cache.put(feedCacheKey(request, { v: 1 }), response.clone())
+    return response
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: err?.message || 'Internal error', code: 'internal_error' }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    )
   }
- 
-  const xml = buildRssXml({ channel, items })
-  await recordFeedPoll(db, { endpoint: 'feed_public', userId: null })
-  const response = feedResponse(xml, corsHeaders, 'public, max-age=300, s-maxage=300')
-  if (cache) await cache.put(feedCacheKey(request, { v: 1 }), response.clone())
-  return response
 }
  
 export async function handlePersonalFeed(request, env, corsHeaders) {
-  if (request.method !== 'GET') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    })
-  }
-
-  const rssSecret = env.RSS_SECRET?.trim()
-  if (!rssSecret) {
-    return new Response(JSON.stringify({ error: 'RSS not configured' }), {
-      status: 503,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    })
-  }
-
-  const url = new URL(request.url)
-  const parts = url.pathname.split('/').filter(Boolean) // api, feed, :userId, :token
-  if (parts.length !== 4) {
-    return new Response(JSON.stringify({ error: 'Invalid path format' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    })
-  }
-
-  const userId = parts[2]
-  const token = parts[3]
-  if (!userId || !token) {
-    return new Response(JSON.stringify({ error: 'Invalid path format' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    })
-  }
-
-  const cache = caches?.default
-  const expectedToken = await computeRssTokenHex(rssSecret, userId)
-  if (!constantTimeEqual(expectedToken, token)) {
-    // 404 to avoid leaking valid user IDs.
-    return new Response(JSON.stringify({ error: 'Not Found' }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    })
-  }
-
-  const db = getDatabaseBinding(env)
-  const user = await getUserById(db, userId)
-  if (!user) {
-    return new Response(JSON.stringify({ error: 'Not Found' }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    })
-  }
-
-  const subscription = await getActiveSubscriptionRow(db, userId)
-  const hasPremiumAccess = isAdministrativeRole(user.role) || Boolean(subscription)
-  if (cache) {
-    const cached = await cache.match(feedCacheKey(request, { v: 1, uid: userId, premium: hasPremiumAccess ? 1 : 0 }))
-    if (cached) return cached
-  }
-
-  const origin = new URL(request.url).origin
-  const [titleSetting, descSetting, imageSetting] = await Promise.all([
-    getAdminSetting(db, 'podcast_title'),
-    getAdminSetting(db, 'podcast_description'),
-    getAdminSetting(db, 'podcast_image_url'),
-  ])
-
-  const channel = {
-    title: titleSetting || 'VMP Podcast',
-    description: descSetting || 'Your VMP podcast feed.',
-    link: env.FRONTEND_URL || origin,
-    language: 'en',
-    imageUrl: imageSetting,
-  }
-
-  const videos = await listPublishedVideos(db)
-
-  const items = []
-  for (const v of videos) {
-    const videoId = v.id
-    if (!videoId) continue
-
-    const previewDuration = v.preview_duration ?? v.full_duration ?? 0
-    const previewUntil = hasPremiumAccess ? null : (previewDuration && previewDuration > 0 ? previewDuration : null)
-
-    const entrypointUrl = await resolveMediaEntrypointUrl({ env, videoId })
-    const basePlaylistUrl = buildProxyPlaylistUrl(request, entrypointUrl, previewUntil && previewUntil > 0 ? previewUntil : null)
-
-    let enclosureUrl = basePlaylistUrl
-    if (env.JWT_SECRET) {
-      const vt = await signVideoToken(userId, videoId, env.JWT_SECRET, previewUntil)
-      enclosureUrl = basePlaylistUrl.includes('?') ? `${basePlaylistUrl}&vt=${vt}` : `${basePlaylistUrl}?vt=${vt}`
+  try {
+    if (request.method !== 'GET') {
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      })
     }
 
-    items.push({
-      title: v.title || `Episode ${videoId}`,
-      description: v.description || '',
-      guid: videoId,
-      pubDate: toRfc2822Date(v.published_at),
-      enclosureUrl,
-      enclosureType: 'application/vnd.apple.mpegurl',
-      itunesDuration: secondsToItunesDuration(v.full_duration ?? previewDuration ?? 0),
-    })
-  }
+    const rssSecret = env.RSS_SECRET?.trim()
+    if (!rssSecret) {
+      return new Response(JSON.stringify({ error: 'RSS not configured' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      })
+    }
 
-  const xml = buildRssXml({ channel, items })
-  await recordFeedPoll(db, { endpoint: 'feed_user', userId })
-  const response = feedResponse(xml, corsHeaders, 'private, max-age=300, stale-while-revalidate=60')
-  if (cache) await cache.put(feedCacheKey(request, { v: 1, uid: userId, premium: hasPremiumAccess ? 1 : 0 }), response.clone())
-  return response
+    const url = new URL(request.url)
+    const parts = url.pathname.split('/').filter(Boolean) // api, feed, :userId, :token
+    if (parts.length !== 4) {
+      return new Response(JSON.stringify({ error: 'Invalid path format' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      })
+    }
+
+    const userId = parts[2]
+    const token = parts[3]
+    if (!userId || !token) {
+      return new Response(JSON.stringify({ error: 'Invalid path format' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      })
+    }
+
+    const cache = caches?.default
+    const expectedToken = await computeRssTokenHex(rssSecret, userId)
+    if (!constantTimeEqual(expectedToken, token)) {
+      // 404 to avoid leaking valid user IDs.
+      return new Response(JSON.stringify({ error: 'Not Found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      })
+    }
+
+    const db = getDatabaseBinding(env)
+    const user = await getUserById(db, userId)
+    if (!user) {
+      return new Response(JSON.stringify({ error: 'Not Found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      })
+    }
+
+    const subscription = await getActiveSubscriptionRow(db, userId)
+    const hasPremiumAccess = isAdministrativeRole(user.role) || Boolean(subscription)
+    const userPollMeta = { endpoint: 'feed_user', userId }
+    if (cache) {
+      const cached = await cache.match(feedCacheKey(request, { v: 1, uid: userId, premium: hasPremiumAccess ? 1 : 0 }))
+      if (cached) {
+        await recordFeedPoll(db, userPollMeta)
+        return cached
+      }
+    }
+
+    const origin = new URL(request.url).origin
+    const [titleSetting, descSetting, imageSetting] = await Promise.all([
+      getAdminSetting(db, 'podcast_title'),
+      getAdminSetting(db, 'podcast_description'),
+      getAdminSetting(db, 'podcast_image_url'),
+    ])
+
+    const channel = {
+      title: titleSetting || 'VMP Podcast',
+      description: descSetting || 'Your VMP podcast feed.',
+      link: env.FRONTEND_URL || origin,
+      language: 'en',
+      imageUrl: imageSetting,
+    }
+
+    const videos = await listPublishedVideos(db)
+
+    const items = []
+    for (const v of videos) {
+      const videoId = v.id
+      if (!videoId) continue
+
+      const previewDuration = v.preview_duration ?? v.full_duration ?? 0
+      const previewUntil = hasPremiumAccess ? null : (previewDuration && previewDuration > 0 ? previewDuration : null)
+
+      const entrypointUrl = await resolveMediaEntrypointUrl({ env, videoId })
+      const basePlaylistUrl = buildProxyPlaylistUrl(request, entrypointUrl, previewUntil && previewUntil > 0 ? previewUntil : null)
+
+      let enclosureUrl = basePlaylistUrl
+      if (env.JWT_SECRET) {
+        const vt = await signVideoToken(
+          userId,
+          videoId,
+          env.JWT_SECRET,
+          previewUntil,
+          { ttlSeconds: 60 * 60 * 24 * 30 }
+        )
+        enclosureUrl = basePlaylistUrl.includes('?') ? `${basePlaylistUrl}&vt=${vt}` : `${basePlaylistUrl}?vt=${vt}`
+      }
+
+      items.push({
+        title: v.title || `Episode ${videoId}`,
+        description: v.description || '',
+        guid: videoId,
+        pubDate: toRfc2822Date(v.published_at),
+        enclosureUrl,
+        enclosureType: 'application/vnd.apple.mpegurl',
+        itunesDuration: secondsToItunesDuration(v.full_duration ?? previewDuration ?? 0),
+      })
+    }
+
+    const xml = buildRssXml({ channel, items })
+    await recordFeedPoll(db, userPollMeta)
+    const response = feedResponse(xml, corsHeaders, 'private, max-age=300, stale-while-revalidate=60')
+    if (cache) await cache.put(feedCacheKey(request, { v: 1, uid: userId, premium: hasPremiumAccess ? 1 : 0 }), response.clone())
+    return response
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: err?.message || 'Internal error', code: 'internal_error' }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    )
+  }
 }
 

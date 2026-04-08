@@ -131,6 +131,7 @@
                 {{ copiedWhich === 'public' ? 'Copied' : 'Copy' }}
               </button>
             </div>
+            <p v-if="copyError && copiedWhich === 'public'" class="text-xs text-red-600 dark:text-red-400">{{ copyError }}</p>
           </div>
 
           <div class="space-y-2">
@@ -148,6 +149,7 @@
                 {{ copiedWhich === 'personal' ? 'Copied' : 'Copy' }}
               </button>
             </div>
+            <p v-if="copyError && copiedWhich === 'personal'" class="text-xs text-red-600 dark:text-red-400">{{ copyError }}</p>
           </div>
         </template>
       </div>
@@ -222,6 +224,7 @@ const portalError       = ref<string | null>(null)
 const showWelcomeBanner = ref(route.query.subscribed === '1')
 const loadingRss        = ref(true)
 const rssError          = ref<string | null>(null)
+const copyError         = ref<string | null>(null)
 const rssPublicUrl      = ref('')
 const rssPersonalUrl    = ref('')
 const copiedWhich       = ref<'public' | 'personal' | null>(null)
@@ -313,6 +316,7 @@ async function fetchRssUrls() {
 
 async function copyText(value: string, which: 'public' | 'personal') {
   if (!value) return
+  copyError.value = null
   try {
     await navigator.clipboard.writeText(value)
     copiedWhich.value = which
@@ -320,7 +324,8 @@ async function copyText(value: string, which: 'public' | 'personal') {
       if (copiedWhich.value === which) copiedWhich.value = null
     }, 1200)
   } catch {
-    rssError.value = 'Could not copy to clipboard.'
+    copiedWhich.value = which
+    copyError.value = 'Could not copy to clipboard. You can copy manually from the field.'
   }
 }
 </script>
