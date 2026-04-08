@@ -163,7 +163,7 @@ process_video() {
     # wait for upload completion
     PREV=-1
     while true; do
-        [ ! -f "$INPUT_PATH" ] && { log "❌ Missing input"; rm -f "$LOCK"; return; }
+        [ ! -f "$INPUT_PATH" ] && { log "❌ Missing input"; rm -f "$LOCK"; release_slot "$BASHPID"; return; }
         CUR=$(stat -c%s "$INPUT_PATH")
         [[ "$CUR" -eq "$PREV" ]] && break
         PREV=$CUR
