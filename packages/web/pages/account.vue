@@ -99,6 +99,59 @@
         </NuxtLink>
       </div>
 
+      <!-- Podcast RSS -->
+      <div class="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6 space-y-4">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900 dark:text-white">Podcast RSS</h2>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Submit the public URL to podcast directories. Use your personal URL in your podcast app for full episodes while subscribed.
+          </p>
+        </div>
+
+        <div v-if="rssError" class="text-sm text-red-600 dark:text-red-400">
+          {{ rssError }}
+        </div>
+        <div v-else-if="loadingRss" class="space-y-2">
+          <div class="h-4 w-3/4 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+          <div class="h-4 w-3/4 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+        </div>
+        <template v-else>
+          <div class="space-y-2">
+            <p class="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Public listing URL</p>
+            <div class="flex items-center gap-2">
+              <input
+                :value="rssPublicUrl"
+                readonly
+                class="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+              >
+              <button
+                class="px-3 py-2 text-sm font-medium rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-white"
+                @click="copyText(rssPublicUrl, 'public')"
+              >
+                {{ copiedWhich === 'public' ? 'Copied' : 'Copy' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <p class="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Your personal URL</p>
+            <div class="flex items-center gap-2">
+              <input
+                :value="rssPersonalUrl"
+                readonly
+                class="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+              >
+              <button
+                class="px-3 py-2 text-sm font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
+                @click="copyText(rssPersonalUrl, 'personal')"
+              >
+                {{ copiedWhich === 'personal' ? 'Copied' : 'Copy' }}
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+
       <!-- Security / 2FA card -->
       <div class="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6">
         <div class="flex items-center gap-3 mb-4">
@@ -167,6 +220,11 @@ const loadingSub        = ref(true)
 const openingPortal     = ref(false)
 const portalError       = ref<string | null>(null)
 const showWelcomeBanner = ref(route.query.subscribed === '1')
+const loadingRss        = ref(true)
+const rssError          = ref<string | null>(null)
+const rssPublicUrl      = ref('')
+const rssPersonalUrl    = ref('')
+const copiedWhich       = ref<'public' | 'personal' | null>(null)
 
 onMounted(async () => {
   if (showWelcomeBanner.value) {
@@ -182,6 +240,8 @@ onMounted(async () => {
     await fetchSubscription()
   }
   loadingSub.value = false
+
+  await fetchRssUrls()
 })
 
 function planDisplayName(planType: string): string {
@@ -226,6 +286,41 @@ async function openPortal() {
     portalError.value = 'Network error. Please try again.'
   } finally {
     openingPortal.value = false
+  }
+}
+
+async function fetchRssUrls() {
+  loadingRss.value = true
+  rssError.value = null
+  try {
+    const res = await fetch(`${apiUrl}/api/account/rss`, {
+      headers: authHeader(),
+      credentials: 'include',
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      rssError.value = data.error ?? 'Could not load RSS URLs.'
+      return
+    }
+    rssPublicUrl.value = data.publicUrl ?? ''
+    rssPersonalUrl.value = data.personalUrl ?? ''
+  } catch {
+    rssError.value = 'Network error while loading RSS URLs.'
+  } finally {
+    loadingRss.value = false
+  }
+}
+
+async function copyText(value: string, which: 'public' | 'personal') {
+  if (!value) return
+  try {
+    await navigator.clipboard.writeText(value)
+    copiedWhich.value = which
+    setTimeout(() => {
+      if (copiedWhich.value === which) copiedWhich.value = null
+    }, 1200)
+  } catch {
+    rssError.value = 'Could not copy to clipboard.'
   }
 }
 </script>

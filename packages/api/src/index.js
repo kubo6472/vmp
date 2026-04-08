@@ -33,6 +33,7 @@ import { handleThumbnailUpload, handleThumbnailDelete } from './thumbnails.js'
 import { handleAdminNewsletterSend, handleAdminNewsletterSettings } from './brevo.js'
 import { signVideoToken, verifyVideoToken } from './videoTokens.js'
 import { handlePublicFeed, handlePersonalFeed } from './feed.js'
+import { handleGetAccountRss } from './rssAccount.js'
 
 // ─── Durable Object for atomic segment rate limiting (Step 4c) ───────────────
 // Binding is configured in wrangler.json under durable_objects.bindings.
@@ -201,6 +202,9 @@ export default {
     }
     if (url.pathname === '/api/account/subscription' && request.method === 'GET') {
       return handleGetSubscription(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/account/rss' && request.method === 'GET') {
+      return handleGetAccountRss(request, env, corsHeaders)
     }
     if (url.pathname === '/api/payments/portal' && request.method === 'POST') {
       return handlePortal(request, env, corsHeaders)

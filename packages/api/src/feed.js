@@ -104,6 +104,19 @@ function feedResponse(xml, corsHeaders, cacheControl) {
   })
 }
  
+function feedCacheKey(request, extraParams = {}) {
+  const u = new URL(request.url)
+  // Never include raw tokens in cache keys.
+  const base = `${u.origin}${u.pathname}`
+  const params = new URLSearchParams()
+  for (const [k, v] of Object.entries(extraParams)) {
+    if (v == null) continue
+    params.set(k, String(v))
+  }
+  const suffix = params.toString()
+  return new Request(suffix ? `${base}?${suffix}` : base, { method: 'GET' })
+}
+
 async function recordFeedPoll(db, { endpoint, userId }) {
   try {
     await db.prepare(`
@@ -172,6 +185,11 @@ export async function handlePublicFeed(request, env, corsHeaders) {
   }
  
   const db = getDatabaseBinding(env)
+  const cache = caches?.default
+  if (cache) {
+    const cached = await cache.match(feedCacheKey(request, { v: 1 }))
+    if (cached) return cached
+  }
   const origin = new URL(request.url).origin
  
   const [titleSetting, descSetting, imageSetting] = await Promise.all([
@@ -217,7 +235,9 @@ export async function handlePublicFeed(request, env, corsHeaders) {
  
   const xml = buildRssXml({ channel, items })
   await recordFeedPoll(db, { endpoint: 'feed_public', userId: null })
-  return feedResponse(xml, corsHeaders, 'public, max-age=300, s-maxage=300')
+  const response = feedResponse(xml, corsHeaders, 'public, max-age=300, s-maxage=300')
+  if (cache) await cache.put(feedCacheKey(request, { v: 1 }), response.clone())
+  return response
 }
  
 export async function handlePersonalFeed(request, env, corsHeaders) {
@@ -254,6 +274,7 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
     })
   }
 
+  const cache = caches?.default
   const expectedToken = await computeRssTokenHex(rssSecret, userId)
   if (!constantTimeEqual(expectedToken, token)) {
     // 404 to avoid leaking valid user IDs.
@@ -274,6 +295,10 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
 
   const subscription = await getActiveSubscriptionRow(db, userId)
   const hasPremiumAccess = isAdministrativeRole(user.role) || Boolean(subscription)
+  if (cache) {
+    const cached = await cache.match(feedCacheKey(request, { v: 1, uid: userId, premium: hasPremiumAccess ? 1 : 0 }))
+    if (cached) return cached
+  }
 
   const origin = new URL(request.url).origin
   const [titleSetting, descSetting, imageSetting] = await Promise.all([
@@ -322,6 +347,8 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
 
   const xml = buildRssXml({ channel, items })
   await recordFeedPoll(db, { endpoint: 'feed_user', userId })
-  return feedResponse(xml, corsHeaders, 'private, max-age=300, stale-while-revalidate=60')
+  const response = feedResponse(xml, corsHeaders, 'private, max-age=300, stale-while-revalidate=60')
+  if (cache) await cache.put(feedCacheKey(request, { v: 1, uid: userId, premium: hasPremiumAccess ? 1 : 0 }), response.clone())
+  return response
 }
 
