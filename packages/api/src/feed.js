@@ -104,6 +104,21 @@ function feedResponse(xml, corsHeaders, cacheControl) {
   })
 }
  
+async function recordFeedPoll(db, { endpoint, userId }) {
+  try {
+    await db.prepare(`
+      INSERT INTO rss_feed_polls (endpoint, user_id, poll_count, last_polled_at)
+      VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+      ON CONFLICT(endpoint, user_id) DO UPDATE SET
+        poll_count = poll_count + 1,
+        last_polled_at = CURRENT_TIMESTAMP
+    `).bind(endpoint, userId ?? null).run()
+  } catch (e) {
+    // Best-effort: analytics must never break feed delivery.
+    console.warn('[rss] recordFeedPoll failed', e?.message ?? e)
+  }
+}
+
 function hexFromBytes(bytes) {
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
 }
@@ -201,6 +216,7 @@ export async function handlePublicFeed(request, env, corsHeaders) {
   }
  
   const xml = buildRssXml({ channel, items })
+  await recordFeedPoll(db, { endpoint: 'feed_public', userId: null })
   return feedResponse(xml, corsHeaders, 'public, max-age=300, s-maxage=300')
 }
  
@@ -305,6 +321,7 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
   }
 
   const xml = buildRssXml({ channel, items })
+  await recordFeedPoll(db, { endpoint: 'feed_user', userId })
   return feedResponse(xml, corsHeaders, 'private, max-age=300')
 }
 
