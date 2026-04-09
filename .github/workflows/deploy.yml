@@ -19,7 +19,7 @@ jobs:
   
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           # Remove cache: npm here if using stickydisk for ~/.npm below
   
       - name: Mount npm cache
