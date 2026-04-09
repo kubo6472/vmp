@@ -310,14 +310,20 @@ async function handleVideosList(request, env, corsHeaders) {
 
     const query = isEditor
       ? `SELECT v.id, v.title, v.description, v.thumbnail_url, v.full_duration, v.preview_duration, v.upload_date, v.publish_status, v.slug,
-                vca.category_id
+                vc.id AS category_id,
+                vc.name AS category_name,
+                vc.slug AS category_slug
          FROM videos v
          LEFT JOIN video_category_assignments vca ON vca.video_id = v.id
+         LEFT JOIN video_categories vc ON vc.id = vca.category_id
          ORDER BY v.upload_date DESC`
       : `SELECT v.id, v.title, v.description, v.thumbnail_url, v.full_duration, v.preview_duration, v.upload_date, v.publish_status, v.slug,
-                vca.category_id
+                vc.id AS category_id,
+                vc.name AS category_name,
+                vc.slug AS category_slug
          FROM videos v
          LEFT JOIN video_category_assignments vca ON vca.video_id = v.id
+         LEFT JOIN video_categories vc ON vc.id = vca.category_id
          WHERE v.publish_status = 'published'
          ORDER BY v.upload_date DESC`
 
@@ -875,12 +881,15 @@ async function handleAdminCategories(request, env, corsHeaders) {
         if (reassignToCategoryId === id) return jsonResponse({ error: 'reassignToCategoryId must be different from deleted category' }, 400, corsHeaders)
         const reassignCategory = await db.prepare('SELECT id FROM video_categories WHERE id = ?').bind(reassignToCategoryId).first()
         if (!reassignCategory) return jsonResponse({ error: 'Reassignment category not found' }, 404, corsHeaders)
-        await db.prepare(`
+      const reassignStmt = db.prepare(`
           UPDATE video_category_assignments
           SET category_id = ?
           WHERE category_id = ?
-        `).bind(reassignToCategoryId, id).run()
-        await db.prepare('DELETE FROM video_categories WHERE id = ?').bind(id).run()
+        `).bind(reassignToCategoryId, id)
+      const deleteStmt = db.prepare('DELETE FROM video_categories WHERE id = ?').bind(id)
+      const [, deleteResult] = await db.batch([reassignStmt, deleteStmt])
+      const deleteChanges = deleteResult.meta?.changes ?? deleteResult.changes ?? 0
+      if (!deleteChanges) return jsonResponse({ error: 'Category not found' }, 404, corsHeaders)
         return jsonResponse({ ok: true }, 200, corsHeaders)
       }
 
@@ -1011,6 +1020,20 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
   const db = getDatabaseBinding(env)
   const videoExists = await db.prepare('SELECT 1 FROM videos WHERE id = ?').bind(videoId).first()
   if (!videoExists) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+  let validatedCategoryId = null
+  if (hasCategoryId) {
+    if (body.categoryId === null) {
+      validatedCategoryId = null
+    } else if (typeof body.categoryId === 'string' && body.categoryId.trim()) {
+      validatedCategoryId = body.categoryId.trim()
+      const category = await db.prepare(`SELECT id FROM video_categories WHERE id = ?`).bind(validatedCategoryId).first()
+      if (!category) {
+        return jsonResponse({ error: 'Category not found' }, 404, corsHeaders)
+      }
+    } else {
+      return jsonResponse({ error: 'categoryId must be a string or null' }, 400, corsHeaders)
+    }
+  }
 
   // Guard: reject a slug that equals another video's id — resolveVideoByIdOrSlug
   // resolves by id before slug, so the slug would become permanently shadowed.
@@ -1047,21 +1070,14 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     }
 
     if (hasCategoryId) {
-      if (body.categoryId === null) {
+      if (validatedCategoryId === null) {
         await db.prepare(`DELETE FROM video_category_assignments WHERE video_id = ?`).bind(videoId).run()
-      } else if (typeof body.categoryId === 'string' && body.categoryId.trim()) {
-        const categoryId = body.categoryId.trim()
-        const category = await db.prepare(`SELECT id FROM video_categories WHERE id = ?`).bind(categoryId).first()
-        if (!category) {
-          return jsonResponse({ error: 'Category not found' }, 404, corsHeaders)
-        }
+      } else {
         await db.prepare(`
           INSERT INTO video_category_assignments (video_id, category_id, assigned_at)
           VALUES (?, ?, CURRENT_TIMESTAMP)
           ON CONFLICT(video_id) DO UPDATE SET category_id = excluded.category_id, assigned_at = CURRENT_TIMESTAMP
-        `).bind(videoId, categoryId).run()
-      } else {
-        return jsonResponse({ error: 'categoryId must be a string or null' }, 400, corsHeaders)
+        `).bind(videoId, validatedCategoryId).run()
       }
     }
 
