@@ -86,4 +86,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN_PROD }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_PROD }}
-          command: pages deploy packages/web/dist --project-name vmp-web
+          command: pages deploy packages/web/dist --project-name vmp-web --branch main
