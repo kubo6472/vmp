@@ -542,6 +542,7 @@
                 <option value="super_admin">super_admin</option>
               </select>
               <select :value="u.subscription_status || 'none'" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" @change="(e) => updateUser(u.id, { subscriptionStatus: (e.target as HTMLSelectElement).value })">
+                <option value="none">none</option>
                 <option value="active">active</option>
                 <option value="trialing">trialing</option>
                 <option value="past_due">past_due</option>
@@ -1013,16 +1014,22 @@ const loadUsers = async () => {
 }
 
 const updateUser = async (userId: string, patch: Record<string, string>) => {
-  const res = await fetch(`${config.public.apiUrl}/api/admin/users`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ userId, ...patch }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.error || `HTTP ${res.status}`)
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/users`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ userId, ...patch }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    await loadUsers()
+    showToast('success', 'User updated.')
+  } catch (error: any) {
+    console.error('Failed to update user', error)
+    showToast('error', `Failed to update user: ${error.message || 'unknown error'}`)
   }
-  await loadUsers()
 }
 
 const loadAnalytics = async () => {

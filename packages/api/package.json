@@ -10,7 +10,8 @@
     "deploy": "wrangler deploy",
     "db:create": "wrangler d1 execute video-subscription-db --file=./migrations/0001_canonical_schema.sql",
     "db:seed": "wrangler d1 execute video-subscription-db --file=./migrations/0002_canonical_seed.sql",
-    "db:reset": "npm run db:create && npm run db:seed"
+    "db:teardown": "wrangler d1 execute video-subscription-db --file=./scripts/db_teardown.sql",
+    "db:reset": "npm run db:teardown && npm run db:create && npm run db:seed"
   },
   "dependencies": {
     "@vmp/shared": "*"

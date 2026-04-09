@@ -3,7 +3,7 @@
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex items-center justify-between h-16">
         <NuxtLink to="/" class="flex min-w-0 items-center space-x-2 shrink">
-          <img src="/icons/pwa-192.png" alt="VMP icon" class="w-8 h-8 rounded-lg shrink-0" />
+          <img src="/icons/pwa-192.png" alt="" aria-hidden="true" class="w-8 h-8 rounded-lg shrink-0" />
           <span class="text-lg font-bold text-gray-900 dark:text-white sm:hidden">VMP</span>
           <span class="hidden sm:block text-xl font-bold text-gray-900 dark:text-white max-w-[12rem] md:max-w-none truncate">
             Video Monetization Platform

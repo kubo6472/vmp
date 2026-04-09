@@ -30,8 +30,10 @@ The workflow in `.github/workflows/deploy.yml` uses:
 
 Required repository secrets:
 
-- `CF_API_TOKEN`
-- `CF_ACCOUNT_ID`
-- `CF_STAGING_PROJECT`
-- `CF_PROD_PROJECT`
+- `CLOUDFLARE_API_TOKEN_STAGING`
+- `CLOUDFLARE_API_TOKEN_PROD`
+- `CLOUDFLARE_ACCOUNT_ID_STAGING`
+- `CLOUDFLARE_ACCOUNT_ID_PROD`
+
+Note: the deploy workflow reads these exact `CLOUDFLARE_*_STAGING/PROD` secret names.
 

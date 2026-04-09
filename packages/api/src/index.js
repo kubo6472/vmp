@@ -630,14 +630,16 @@ async function handleVideoProxy(request, env, corsHeaders, ctx) {
     const referer = request.headers.get('referer') || ''
     let sourceHost = null
     try { sourceHost = referer ? (new URL(referer)).host : null } catch {}
+    // Segment filenames are usually ordinal indexes (e.g. segment-42.m4s), not
+    // wall-clock playback seconds, unless a specific packager naming scheme is used.
     const segmentMatch = normalizedPath.match(/(\d+)(?:\.\w+)?$/)
-    const positionSeconds = segmentMatch ? Number(segmentMatch[1]) : null
+    const segmentIndex = segmentMatch ? Number(segmentMatch[1]) : null
     ctx?.waitUntil?.(logSegmentEvent(env, {
       videoId: proxyVideoId,
       userId: tokenClaims?.userId || null,
       requestPath: normalizedPath,
       eventType: 'segment',
-      positionSeconds,
+      segmentIndex,
       referer,
       sourceHost,
       ipHash: request.headers.get('CF-Connecting-IP') || null,

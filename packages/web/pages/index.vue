@@ -81,7 +81,52 @@
             />
           </div>
 
-          <div v-else-if="block.type === 'video_grid'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div v-else-if="block.type === 'video_grid'" class="space-y-10">
+            <div>
+              <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3">Recent videos</h3>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <VideoCard
+                  v-for="video in recentTwoByTwoVideos"
+                  :key="`recent-${video.id}`"
+                  :video="video"
+                />
+              </div>
+            </div>
+
+            <div v-for="section in categorySections" :key="section.category.id" class="space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="text-xl font-semibold text-gray-900 dark:text-white">{{ section.category.name }}</h3>
+                <NuxtLink :to="`/category/${section.category.slug}`" class="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline">
+                  More -&gt;
+                </NuxtLink>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                <VideoCard
+                  v-for="video in section.visible"
+                  :key="`category-${section.category.id}-${video.id}`"
+                  :video="video"
+                />
+              </div>
+              <p v-if="section.overflowCount > 0" class="text-xs text-gray-500 dark:text-gray-400">
+                +{{ section.overflowCount }} more in this category
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3">All uncategorized videos</h3>
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                <VideoCard
+                  v-for="video in videos.filter(v => !categoryAssignedIds.has(v.id))"
+                  :key="`grid-${video.id}`"
+                  :video="video"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="block.type === 'hero'" class="hidden"></div>
+
+          <div v-else-if="block.type === 'video_grid_legacy'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             <VideoCard
               v-for="video in videos"
               :key="`grid-${video.id}`"
@@ -113,7 +158,7 @@
           <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Available Videos</h2>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             <VideoCard
-              v-for="video in videos"
+              v-for="video in videos.filter(v => !categoryAssignedIds.has(v.id))"
               :key="video.id"
               :video="video"
             />
@@ -165,6 +210,7 @@ interface VideoCategory {
 }
 
 const config = useRuntimeConfig()
+const { authHeader } = useAuth()
 const loading = ref(true)
 const error   = ref<string | null>(null)
 const videos  = ref<any[]>([])
@@ -213,12 +259,14 @@ const featuredVideos = computed(() => {
     const pinned = videoById.value.get(featuredVideoId.value)
     return pinned ? [pinned] : (latest ? [latest] : [])
   }
-  if (latest) return [latest]
-  if (!featuredVideoIds.value.length) return sortedByUpload.value.slice(0, 1)
-  return featuredVideoIds.value
-    .map(id => videoById.value.get(id))
-    .filter(Boolean)
-    .slice(0, 1)
+  if (featuredVideoIds.value.length) {
+    const configured = featuredVideoIds.value
+      .map(id => videoById.value.get(id))
+      .filter(Boolean)
+      .slice(0, 1)
+    if (configured.length) return configured
+  }
+  return latest ? [latest] : []
 })
 
 const recentTwoByTwoVideos = computed(() => {
@@ -245,7 +293,9 @@ const categorySections = computed(() =>
 )
 
 const loadAdminConfig = async () => {
-  const res = await fetch(`${config.public.apiUrl}/api/admin/config`)
+  const res = await fetch(`${config.public.apiUrl}/api/admin/config`, {
+    headers: authHeader(),
+  })
   if (!res.ok) return
   const data = await res.json()
   layoutBlocks.value     = Array.isArray(data?.config?.layoutBlocks)    ? data.config.layoutBlocks    : []
@@ -255,7 +305,9 @@ const loadAdminConfig = async () => {
 }
 
 const loadCategories = async () => {
-  const res = await fetch(`${config.public.apiUrl}/api/admin/categories`)
+  const res = await fetch(`${config.public.apiUrl}/api/admin/categories`, {
+    headers: authHeader(),
+  })
   if (!res.ok) return
   const data = await res.json()
   categories.value = Array.isArray(data?.categories) ? data.categories : []

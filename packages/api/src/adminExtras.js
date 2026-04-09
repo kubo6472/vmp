@@ -67,7 +67,9 @@ export async function handlePillsPublic(request, env, corsHeaders) {
 export async function handlePillsUpdate(request, env, corsHeaders) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const db = getDb(env)
-  const expected = await getAdminSetting(db, 'pills_api_key')
+  const storedKey = await getAdminSetting(db, 'pills_api_key')
+  const envKey = typeof env.PILLS_API_KEY === 'string' ? env.PILLS_API_KEY.trim() : ''
+  const expected = envKey || (typeof storedKey === 'string' ? storedKey.trim() : '')
   const provided = request.headers.get('x-api-key') || ''
   if (!expected || provided !== expected) {
     return jsonResponse({ error: 'Unauthorized', code: 'invalid_api_key' }, 401, corsHeaders)
@@ -106,6 +108,15 @@ export async function handlePillsUpdate(request, env, corsHeaders) {
   return jsonResponse({ ok: true, updated: statements.length }, 200, corsHeaders)
 }
 
+export async function ensurePillsApiKeySetting(env) {
+  const db = getDb(env)
+  const envKey = typeof env.PILLS_API_KEY === 'string' ? env.PILLS_API_KEY.trim() : ''
+  if (!envKey) return
+  const stored = await getAdminSetting(db, 'pills_api_key')
+  if ((stored ?? '').trim() === envKey) return
+  await setAdminSetting(db, 'pills_api_key', envKey)
+}
+
 export async function handleAdminUsers(request, env, corsHeaders) {
   try {
     await requireRole(request, env, 'admin', 'super_admin')
@@ -141,11 +152,30 @@ export async function handleAdminUsers(request, env, corsHeaders) {
     await db.prepare('UPDATE users SET role = ? WHERE id = ?').bind(body.role, userId).run()
   }
   if (typeof body?.subscriptionStatus === 'string') {
-    await db.prepare(`
-      UPDATE subscriptions
-      SET status = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = ?
-    `).bind(body.subscriptionStatus, userId).run()
+    const nextStatus = body.subscriptionStatus === 'none' ? null : body.subscriptionStatus
+    if (nextStatus === null) {
+      await db.prepare(`
+        UPDATE subscriptions
+        SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+        WHERE id = (
+          SELECT id FROM subscriptions
+          WHERE user_id = ?
+          ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+          LIMIT 1
+        )
+      `).bind(userId).run()
+    } else {
+      await db.prepare(`
+        UPDATE subscriptions
+        SET status = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = (
+          SELECT id FROM subscriptions
+          WHERE user_id = ? AND status = 'active'
+          ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+          LIMIT 1
+        )
+      `).bind(nextStatus, userId).run()
+    }
   }
   return jsonResponse({ ok: true }, 200, corsHeaders)
 }
@@ -204,7 +234,7 @@ export async function logSegmentEvent(env, payload) {
     payload.userId || null,
     requestPath,
     eventType,
-    Number.isFinite(payload.positionSeconds) ? payload.positionSeconds : null,
+    Number.isFinite(payload.segmentIndex) ? payload.segmentIndex : null,
     payload.referer || null,
     payload.sourceHost || null,
     payload.ipHash || null,
