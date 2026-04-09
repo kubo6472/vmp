@@ -17,6 +17,6 @@
     "@vmp/shared": "*"
   },
   "devDependencies": {
-    "wrangler": "^4.79.0"
+    "wrangler": "^4.81.0"
   }
 }

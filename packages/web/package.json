@@ -20,12 +20,12 @@
     "qrcode": "^1.5.4",
     "video.js": "^8.23.7",
     "videojs-video-element": "^1.4.4",
-    "vue": "3.5.30"
+    "vue": "^3.5.32"
   },
   "devDependencies": {
     "@nuxtjs/tailwindcss": "^6.12.2",
     "@types/qrcode": "^1.5.6",
-    "wrangler": "^4.79.0"
+    "wrangler": "^4.81.0"
   },
   "overrides": {
     "serialize-javascript": ">=7.0.3",
