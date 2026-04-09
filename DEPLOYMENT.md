@@ -30,7 +30,7 @@ Other `cd-*` workflows are manual-only (`workflow_dispatch`) to avoid duplicate 
 The canonical workflow uses:
 
 - pushes to `main` -> staging deploy
-- version tags (`v*`) -> production deploy
+- version tags (`v*.*.*`) -> production deploy
 
 Required repository secrets:
 
