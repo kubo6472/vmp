@@ -170,7 +170,7 @@ export async function handleAdminUsers(request, env, corsHeaders) {
         SET status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = (
           SELECT id FROM subscriptions
-          WHERE user_id = ? AND status = 'active'
+          WHERE user_id = ?
           ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
           LIMIT 1
         )

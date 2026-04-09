@@ -41,6 +41,7 @@ import {
   handlePillsUpdate,
   handleAdminUsers,
   handleAdminAnalytics,
+  ensurePillsApiKeySetting,
   logSegmentEvent,
 } from './adminExtras.js'
 
@@ -94,6 +95,7 @@ export class SegmentRateLimiterDO {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url)
+    await maybeSyncPillsApiKey(env)
 
     // ── CORS ──────────────────────────────────────────────────────────────────
     //
@@ -166,6 +168,9 @@ export default {
     }
     if (url.pathname === '/api/admin/config') {
       return handleAdminConfig(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/categories' && request.method === 'GET') {
+      return handleAdminCategories(request, env, corsHeaders)
     }
     if (url.pathname === '/api/admin/preview-locks') {
       return handlePreviewLocks(request, env, corsHeaders)
@@ -634,6 +639,8 @@ async function handleVideoProxy(request, env, corsHeaders, ctx) {
     // wall-clock playback seconds, unless a specific packager naming scheme is used.
     const segmentMatch = normalizedPath.match(/(\d+)(?:\.\w+)?$/)
     const segmentIndex = segmentMatch ? Number(segmentMatch[1]) : null
+    const rawIp = request.headers.get('CF-Connecting-IP')
+    const ipHash = rawIp ? await sha256Hex(rawIp) : null
     ctx?.waitUntil?.(logSegmentEvent(env, {
       videoId: proxyVideoId,
       userId: tokenClaims?.userId || null,
@@ -642,7 +649,7 @@ async function handleVideoProxy(request, env, corsHeaders, ctx) {
       segmentIndex,
       referer,
       sourceHost,
-      ipHash: request.headers.get('CF-Connecting-IP') || null,
+      ipHash,
     }))
   }
 
@@ -707,7 +714,7 @@ async function handleAdminConfig(request, env, corsHeaders) {
 
   if (request.method === 'GET') {
     const row = await db.prepare('SELECT value FROM admin_settings WHERE key = ? LIMIT 1').bind('homepage').first()
-    const value = safeJsonParse(row?.value, defaultHomepageConfig())
+    const value = normalizeHomepageConfig(safeJsonParse(row?.value, defaultHomepageConfig()))
     return jsonResponse({ config: value }, 200, corsHeaders)
   }
 
@@ -749,6 +756,21 @@ async function handlePreviewLocks(request, env, corsHeaders) {
     `).bind(lockSeconds, lockSeconds, lockEntry.videoId).run()
   }
   return jsonResponse({ ok: true }, 200, corsHeaders)
+}
+
+async function handleAdminCategories(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+  const db = getDatabaseBinding(env)
+  const rows = await db.prepare(`
+    SELECT id, slug, name, sort_order, direction
+    FROM video_categories
+    ORDER BY sort_order ASC, name ASC
+  `).all()
+  return jsonResponse({ categories: rows?.results ?? [] }, 200, corsHeaders)
 }
 
 async function handleAdminVideosList(request, env, corsHeaders) {
@@ -1716,7 +1738,14 @@ function safeJsonParse(v, fallback) {
   try { return JSON.parse(v) } catch { return fallback }
 }
 
-function defaultHomepageConfig() { return { featuredVideoIds: [], layoutBlocks: [] } }
+function defaultHomepageConfig() {
+  return {
+    featuredVideoIds: [],
+    layoutBlocks: [],
+    featuredMode: 'latest',
+    featuredVideoId: null,
+  }
+}
 
 function normalizeHomepageConfig(config) {
   return {
@@ -1731,6 +1760,8 @@ function normalizeHomepageConfig(config) {
           body:  typeof b.body  === 'string' ? b.body  : '',
         }))
       : [],
+    featuredMode: config?.featuredMode === 'specific' ? 'specific' : 'latest',
+    featuredVideoId: typeof config?.featuredVideoId === 'string' ? config.featuredVideoId : null,
   }
 }
 
@@ -1755,6 +1786,24 @@ function jsonResponse(data, status = 200, corsHeaders = {}) {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   })
+}
+
+let pillsKeySyncPromise = null
+async function maybeSyncPillsApiKey(env) {
+  if (!env?.PILLS_API_KEY) return
+  if (!pillsKeySyncPromise) {
+    pillsKeySyncPromise = ensurePillsApiKeySetting(env).catch((error) => {
+      console.error('Failed to sync PILLS_API_KEY into admin_settings:', error)
+    })
+  }
+  await pillsKeySyncPromise
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(value)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 // ─── Segment duration helpers (Step 4b) ──────────────────────────────────────

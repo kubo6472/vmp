@@ -539,7 +539,7 @@
                 <option value="analyst">analyst</option>
                 <option value="editor">editor</option>
                 <option value="admin">admin</option>
-                <option value="super_admin">super_admin</option>
+                <option v-if="user?.role === 'super_admin'" value="super_admin">super_admin</option>
               </select>
               <select :value="u.subscription_status || 'none'" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" @change="(e) => updateUser(u.id, { subscriptionStatus: (e.target as HTMLSelectElement).value })">
                 <option value="none">none</option>
@@ -739,7 +739,7 @@ interface LayoutBlock {
 }
 
 const config = useRuntimeConfig()
-const { authHeader, isAdmin } = useAuth()
+const { authHeader, isAdmin, user } = useAuth()
 const router = useRouter()
 const route = useRoute()
 const loading = ref(true)
@@ -911,7 +911,10 @@ const loadVideos = async () => {
 }
 
 const loadConfig = async () => {
-  const res = await fetch(`${config.public.apiUrl}/api/admin/config`)
+  const auth = authHeader()
+  const res = await fetch(`${config.public.apiUrl}/api/admin/config`, {
+    headers: Object.keys(auth).length ? auth : undefined,
+  })
   if (!res.ok) {
     layoutBlocks.value  = getDefaultBlocks()
     featuredSlots.value = [...chronologicallySortedUploads.value.slice(0, 4)]
