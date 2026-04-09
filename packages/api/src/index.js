@@ -44,6 +44,7 @@ import {
   ensurePillsApiKeySetting,
   logSegmentEvent,
 } from './adminExtras.js'
+import { getReadSession, applySessionBookmark } from './d1Session.js'
 
 // ─── Durable Object for atomic segment rate limiting (Step 4c) ───────────────
 // Binding is configured in wrangler.json under durable_objects.bindings.
@@ -297,7 +298,7 @@ function parseAllowedOrigins(envValue) {
 
 async function handleVideosList(request, env, corsHeaders) {
   try {
-    const db = getDatabaseBinding(env)
+    const { session } = getReadSession(env, request)
 
     // Editors and above see all statuses; everyone else only sees published videos.
     let isEditor = false
@@ -317,7 +318,7 @@ async function handleVideosList(request, env, corsHeaders) {
          WHERE publish_status = 'published'
          ORDER BY upload_date DESC`
 
-    const videos = await db.prepare(query).all()
+    const videos = await session.prepare(query).all()
 
     // Best-effort duration hydration for legacy rows where full_duration=0.
     // Cached in KV so this stays cheap for repeated list loads.
@@ -331,7 +332,9 @@ async function handleVideosList(request, env, corsHeaders) {
       }))
     }
 
-    return jsonResponse({ videos: results }, 200, corsHeaders)
+    const response = jsonResponse({ videos: results }, 200, corsHeaders)
+    applySessionBookmark(response.headers, session)
+    return response
   } catch (error) {
     console.error('Error:', error)
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)

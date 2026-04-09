@@ -1,4 +1,5 @@
 import { requireAuth, requireRole } from './auth.js'
+import { getSetting, setSetting, setSettings } from './settingsStore.js'
 
 function getDb(env) {
   const db = env.DB || env.video_subscription_db
@@ -13,18 +14,6 @@ function jsonResponse(data, status = 200, corsHeaders = {}) {
   })
 }
 
-async function getAdminSetting(db, key) {
-  const row = await db.prepare('SELECT value FROM admin_settings WHERE key = ? LIMIT 1').bind(key).first()
-  return row?.value ?? null
-}
-
-async function setAdminSetting(db, key, value) {
-  await db.prepare(`
-    INSERT INTO admin_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-  `).bind(key, value).run()
-}
-
 export async function handleHomepageContent(request, env, corsHeaders) {
   try {
     await requireRole(request, env, 'admin', 'super_admin')
@@ -34,8 +23,8 @@ export async function handleHomepageContent(request, env, corsHeaders) {
   const db = getDb(env)
   if (request.method === 'GET') {
     const [title, subtitle] = await Promise.all([
-      getAdminSetting(db, 'homepage_hero_title'),
-      getAdminSetting(db, 'homepage_hero_subtitle'),
+      getSetting(env, 'homepage_hero_title'),
+      getSetting(env, 'homepage_hero_subtitle'),
     ])
     return jsonResponse({
       title: title ?? 'Discover Premium Video Content',
@@ -47,9 +36,9 @@ export async function handleHomepageContent(request, env, corsHeaders) {
   const title = typeof body?.title === 'string' ? body.title.trim() : ''
   const subtitle = typeof body?.subtitle === 'string' ? body.subtitle.trim() : ''
   if (!title || !subtitle) return jsonResponse({ error: 'title and subtitle are required' }, 400, corsHeaders)
-  await Promise.all([
-    setAdminSetting(db, 'homepage_hero_title', title),
-    setAdminSetting(db, 'homepage_hero_subtitle', subtitle),
+  await setSettings(env, [
+    ['homepage_hero_title', title],
+    ['homepage_hero_subtitle', subtitle],
   ])
   return jsonResponse({ ok: true, title, subtitle }, 200, corsHeaders)
 }
@@ -67,7 +56,7 @@ export async function handlePillsPublic(request, env, corsHeaders) {
 export async function handlePillsUpdate(request, env, corsHeaders) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const db = getDb(env)
-  const storedKey = await getAdminSetting(db, 'pills_api_key')
+  const storedKey = await getSetting(env, 'pills_api_key')
   const envKey = typeof env.PILLS_API_KEY === 'string' ? env.PILLS_API_KEY.trim() : ''
   const expected = envKey || (typeof storedKey === 'string' ? storedKey.trim() : '')
   const provided = request.headers.get('x-api-key') || ''
@@ -109,12 +98,11 @@ export async function handlePillsUpdate(request, env, corsHeaders) {
 }
 
 export async function ensurePillsApiKeySetting(env) {
-  const db = getDb(env)
   const envKey = typeof env.PILLS_API_KEY === 'string' ? env.PILLS_API_KEY.trim() : ''
   if (!envKey) return
-  const stored = await getAdminSetting(db, 'pills_api_key')
+  const stored = await getSetting(env, 'pills_api_key')
   if ((stored ?? '').trim() === envKey) return
-  await setAdminSetting(db, 'pills_api_key', envKey)
+  await setSetting(env, 'pills_api_key', envKey)
 }
 
 export async function handleAdminUsers(request, env, corsHeaders) {

@@ -11,6 +11,8 @@ import { isAdministrativeRole } from './roles.js'
 import { signVideoToken } from './videoTokens.js'
 import { resolveMediaEntrypointUrl, buildProxyPlaylistUrl } from './mediaEntrypoints.js'
 import { computeRssTokenHex } from './rssToken.js'
+import { getSetting } from './settingsStore.js'
+import { getReadSession, applySessionBookmark, getDb } from './d1Session.js'
  
 function xmlEscape(text) {
   if (text == null) return ''
@@ -40,21 +42,6 @@ function secondsToItunesDuration(seconds) {
   const sec = s % 60
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
   return `${m}:${String(sec).padStart(2, '0')}`
-}
- 
-function getDatabaseBinding(env) {
-  const db = env.DB || env.video_subscription_db
-  if (!db) throw new Error('Database binding not configured')
-  return db
-}
- 
-async function getAdminSetting(db, key) {
-  try {
-    const row = await db.prepare('SELECT value FROM admin_settings WHERE key = ? LIMIT 1').bind(key).first()
-    return typeof row?.value === 'string' ? row.value : null
-  } catch {
-    return null
-  }
 }
  
 function buildRssXml({ channel, items }) {
@@ -178,7 +165,8 @@ export async function handlePublicFeed(request, env, corsHeaders) {
       })
     }
 
-    const db = getDatabaseBinding(env)
+    const { session } = getReadSession(env, request)
+    const db = getDb(env)
     const cache = caches?.default
     const publicPollMeta = { endpoint: 'feed_public', userId: 'public' }
     if (cache) {
@@ -191,9 +179,9 @@ export async function handlePublicFeed(request, env, corsHeaders) {
     const origin = new URL(request.url).origin
 
     const [titleSetting, descSetting, imageSetting] = await Promise.all([
-      getAdminSetting(db, 'podcast_title'),
-      getAdminSetting(db, 'podcast_description'),
-      getAdminSetting(db, 'podcast_image_url'),
+      getSetting(env, 'podcast_title', { defaultValue: null }),
+      getSetting(env, 'podcast_description', { defaultValue: null }),
+      getSetting(env, 'podcast_image_url', { defaultValue: null }),
     ])
 
     const channel = {
@@ -204,7 +192,7 @@ export async function handlePublicFeed(request, env, corsHeaders) {
       imageUrl: imageSetting,
     }
 
-    const videos = await listPublishedVideos(db)
+    const videos = await listPublishedVideos(session)
 
     const items = []
     for (const v of videos) {
@@ -240,6 +228,7 @@ export async function handlePublicFeed(request, env, corsHeaders) {
     const xml = buildRssXml({ channel, items })
     await recordFeedPoll(db, publicPollMeta)
     const response = feedResponse(xml, corsHeaders, 'public, max-age=300, s-maxage=300')
+    applySessionBookmark(response.headers, session)
     if (cache) await cache.put(feedCacheKey(request, { v: 1 }), response.clone())
     return response
   } catch (err) {
@@ -295,8 +284,9 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
       })
     }
 
-    const db = getDatabaseBinding(env)
-    const user = await getUserById(db, userId)
+    const { session } = getReadSession(env, request)
+    const db = getDb(env)
+    const user = await getUserById(session, userId)
     if (!user) {
       return new Response(JSON.stringify({ error: 'Not Found' }), {
         status: 404,
@@ -304,7 +294,7 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
       })
     }
 
-    const subscription = await getActiveSubscriptionRow(db, userId)
+    const subscription = await getActiveSubscriptionRow(session, userId)
     const hasPremiumAccess = isAdministrativeRole(user.role) || Boolean(subscription)
     const userPollMeta = { endpoint: 'feed_user', userId }
     if (cache) {
@@ -317,9 +307,9 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
 
     const origin = new URL(request.url).origin
     const [titleSetting, descSetting, imageSetting] = await Promise.all([
-      getAdminSetting(db, 'podcast_title'),
-      getAdminSetting(db, 'podcast_description'),
-      getAdminSetting(db, 'podcast_image_url'),
+      getSetting(env, 'podcast_title', { defaultValue: null }),
+      getSetting(env, 'podcast_description', { defaultValue: null }),
+      getSetting(env, 'podcast_image_url', { defaultValue: null }),
     ])
 
     const channel = {
@@ -330,7 +320,7 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
       imageUrl: imageSetting,
     }
 
-    const videos = await listPublishedVideos(db)
+    const videos = await listPublishedVideos(session)
 
     const items = []
     for (const v of videos) {
@@ -369,6 +359,7 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
     const xml = buildRssXml({ channel, items })
     await recordFeedPoll(db, userPollMeta)
     const response = feedResponse(xml, corsHeaders, 'private, max-age=300, stale-while-revalidate=60')
+    applySessionBookmark(response.headers, session)
     if (cache) await cache.put(feedCacheKey(request, { v: 1, uid: userId, premium: hasPremiumAccess ? 1 : 0 }), response.clone())
     return response
   } catch (err) {

@@ -17,6 +17,7 @@
 
 import { requireAuth } from './auth.js'
 import { isAdministrativeRole } from './roles.js'
+import { getSetting } from './settingsStore.js'
 import {
   removeSubscriberFromNewsletter,
   syncNewsletterForStripeSubscription,
@@ -135,20 +136,15 @@ function getDb(env) {
   return db
 }
 
-async function getAdminSetting(db, key) {
-  const row = await db.prepare('SELECT value FROM admin_settings WHERE key = ?').bind(key).first()
-  return row?.value ?? null
-}
-
 /**
  * Resolve plan_type ('monthly'|'yearly'|'club') from a Stripe price ID
  * by comparing against the price IDs stored in admin_settings.
  */
-async function resolvePlanType(db, stripePriceId) {
+async function resolvePlanType(db, stripePriceId, env) {
   const keys = ['stripe_price_monthly', 'stripe_price_yearly', 'stripe_price_club']
   const planNames = ['monthly', 'yearly', 'club']
   for (let i = 0; i < keys.length; i++) {
-    const stored = await getAdminSetting(db, keys[i])
+    const stored = await getSetting(env, keys[i], { ttlSeconds: 300 })
     if (stored && stored === stripePriceId) return planNames[i]
   }
   return 'monthly' // fallback
@@ -160,7 +156,7 @@ async function resolvePlanType(db, stripePriceId) {
  */
 async function upsertSubscription(db, userId, stripeSub) {
   const priceId = stripeSub.items?.data?.[0]?.price?.id ?? null
-  const planType = priceId ? await resolvePlanType(db, priceId) : 'monthly'
+  const planType = priceId ? await resolvePlanType(db, priceId, this?.env ?? {}) : 'monthly'
   const status = normalizeStripeStatus(stripeSub.status)
   const currentPeriodEnd = stripeSub.current_period_end
     ? new Date(stripeSub.current_period_end * 1000).toISOString()
@@ -213,9 +209,9 @@ export async function handleGetPricing(request, env, corsHeaders) {
   try {
     const db = getDb(env)
     const [monthly, yearly, club] = await Promise.all([
-      getAdminSetting(db, 'monthly_price_eur'),
-      getAdminSetting(db, 'yearly_price_eur'),
-      getAdminSetting(db, 'club_price_eur'),
+      getSetting(env, 'monthly_price_eur', { ttlSeconds: 300 }),
+      getSetting(env, 'yearly_price_eur', { ttlSeconds: 300 }),
+      getSetting(env, 'club_price_eur', { ttlSeconds: 300 }),
     ])
     return jsonResponse({
       monthly: Number(monthly ?? 6.90),
@@ -264,7 +260,7 @@ export async function handleCheckout(request, env, corsHeaders) {
       }, 409, corsHeaders)
     }
 
-    const priceId = await getAdminSetting(db, `stripe_price_${body.planType}`)
+    const priceId = await getSetting(env, `stripe_price_${body.planType}`, { ttlSeconds: 300 })
     if (!priceId) {
       return jsonResponse({
         error: 'Stripe prices not yet configured. Ask an admin to set stripe_price_* in admin_settings.',
