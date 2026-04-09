@@ -81,7 +81,52 @@
             />
           </div>
 
-          <div v-else-if="block.type === 'video_grid'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div v-else-if="block.type === 'video_grid'" class="space-y-10">
+            <div>
+              <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3">Recent videos</h3>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <VideoCard
+                  v-for="video in recentTwoByTwoVideos"
+                  :key="`recent-${video.id}`"
+                  :video="video"
+                />
+              </div>
+            </div>
+
+            <div v-for="section in categorySections" :key="section.category.id" class="space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="text-xl font-semibold text-gray-900 dark:text-white">{{ section.category.name }}</h3>
+                <NuxtLink :to="`/category/${section.category.slug}`" class="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline">
+                  More -&gt;
+                </NuxtLink>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                <VideoCard
+                  v-for="video in section.visible"
+                  :key="`category-${section.category.id}-${video.id}`"
+                  :video="video"
+                />
+              </div>
+              <p v-if="section.overflowCount > 0" class="text-xs text-gray-500 dark:text-gray-400">
+                +{{ section.overflowCount }} more in this category
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3">All uncategorized videos</h3>
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                <VideoCard
+                  v-for="video in videos.filter(v => !categoryAssignedIds.has(v.id))"
+                  :key="`grid-${video.id}`"
+                  :video="video"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="block.type === 'hero'" class="hidden"></div>
+
+          <div v-else-if="block.type === 'video_grid_legacy'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             <VideoCard
               v-for="video in videos"
               :key="`grid-${video.id}`"
@@ -113,7 +158,7 @@
           <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Available Videos</h2>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             <VideoCard
-              v-for="video in videos"
+              v-for="video in videos.filter(v => !categoryAssignedIds.has(v.id))"
               :key="video.id"
               :video="video"
             />
@@ -157,12 +202,23 @@ interface LayoutBlock {
   body: string
 }
 
+interface VideoCategory {
+  id: string
+  slug: string
+  name: string
+  direction: 'asc' | 'desc'
+}
+
 const config = useRuntimeConfig()
+const { authHeader } = useAuth()
 const loading = ref(true)
 const error   = ref<string | null>(null)
 const videos  = ref<any[]>([])
 const layoutBlocks       = ref<LayoutBlock[]>([])
 const featuredVideoIds   = ref<string[]>([])
+const featuredMode = ref<'latest' | 'specific'>('latest')
+const featuredVideoId = ref<string | null>(null)
+const categories = ref<VideoCategory[]>([])
 
 const blockLabelMap: Record<LayoutBlock['type'], string> = {
   hero:         'Hero',
@@ -183,18 +239,78 @@ const heroBlock = computed(() =>
 const hasVideoGridBlock = computed(() =>
   renderedBlocks.value.some(b => b.type === 'video_grid')
 )
-const featuredVideos = computed(() => {
-  if (!featuredVideoIds.value.length) return videos.value.slice(0, 4)
-  const byId = new Map(videos.value.map(v => [v.id, v]))
-  return featuredVideoIds.value.map(id => byId.get(id)).filter(Boolean)
+const videoById = computed(() => new Map(videos.value.map(v => [v.id, v])))
+
+const categoryAssignedIds = computed(() => {
+  const assigned = new Set<string>()
+  for (const v of videos.value) {
+    if (v.category_id) assigned.add(v.id)
+  }
+  return assigned
 })
 
+const sortedByUpload = computed(() =>
+  [...videos.value].sort((a, b) => new Date(b.upload_date).getTime() - new Date(a.upload_date).getTime())
+)
+
+const featuredVideos = computed(() => {
+  const latest = sortedByUpload.value[0]
+  if (featuredMode.value === 'specific' && featuredVideoId.value) {
+    const pinned = videoById.value.get(featuredVideoId.value)
+    return pinned ? [pinned] : (latest ? [latest] : [])
+  }
+  if (featuredVideoIds.value.length) {
+    const configured = featuredVideoIds.value
+      .map(id => videoById.value.get(id))
+      .filter(Boolean)
+      .slice(0, 1)
+    if (configured.length) return configured
+  }
+  return latest ? [latest] : []
+})
+
+const recentTwoByTwoVideos = computed(() => {
+  const featuredId = featuredVideos.value[0]?.id
+  return sortedByUpload.value
+    .filter(v => v.id !== featuredId && !v.category_id)
+    .slice(0, 4)
+})
+
+const categorySections = computed(() =>
+  categories.value.map((category) => {
+    const vids = videos.value
+      .filter(v => v.category_id === category.id)
+      .sort((a, b) => {
+        const cmp = new Date(b.upload_date).getTime() - new Date(a.upload_date).getTime()
+        return category.direction === 'asc' ? -cmp : cmp
+      })
+    return {
+      category,
+      visible: vids.slice(0, 3),
+      overflowCount: Math.max(0, vids.length - 3),
+    }
+  }).filter(section => section.visible.length > 0)
+)
+
 const loadAdminConfig = async () => {
-  const res = await fetch(`${config.public.apiUrl}/api/admin/config`)
+  const res = await fetch(`${config.public.apiUrl}/api/admin/config`, {
+    headers: authHeader(),
+  })
   if (!res.ok) return
   const data = await res.json()
   layoutBlocks.value     = Array.isArray(data?.config?.layoutBlocks)    ? data.config.layoutBlocks    : []
   featuredVideoIds.value = Array.isArray(data?.config?.featuredVideoIds) ? data.config.featuredVideoIds : []
+  featuredMode.value = data?.config?.featuredMode === 'specific' ? 'specific' : 'latest'
+  featuredVideoId.value = typeof data?.config?.featuredVideoId === 'string' ? data.config.featuredVideoId : null
+}
+
+const loadCategories = async () => {
+  const res = await fetch(`${config.public.apiUrl}/api/admin/categories`, {
+    headers: authHeader(),
+  })
+  if (!res.ok) return
+  const data = await res.json()
+  categories.value = Array.isArray(data?.categories) ? data.categories : []
 }
 
 onMounted(async () => {
@@ -202,6 +318,7 @@ onMounted(async () => {
     const [videosRes] = await Promise.all([
       fetch(`${config.public.apiUrl}/api/videos`),
       loadAdminConfig(),
+      loadCategories(),
     ])
     if (!videosRes.ok) throw new Error('Failed to load videos')
     const data = await videosRes.json()

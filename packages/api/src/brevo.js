@@ -127,6 +127,29 @@ export async function syncPayingSubscriberToNewsletter(db, userId, env) {
   }
 }
 
+async function syncAllEligibleSubscribers(db, env) {
+  const rows = await db.prepare(`
+    SELECT u.id
+    FROM users u
+    LEFT JOIN subscriptions s
+      ON s.user_id = u.id
+      AND s.status IN ('active', 'trialing')
+      AND (s.current_period_end IS NULL OR datetime(s.current_period_end) > CURRENT_TIMESTAMP)
+    GROUP BY u.id
+    HAVING
+      MAX(CASE WHEN s.user_id IS NOT NULL THEN 1 ELSE 0 END) = 1
+      OR u.role IN ('super_admin', 'admin', 'editor', 'analyst', 'moderator')
+  `).all()
+
+  const userIds = (rows?.results ?? []).map(r => r.id).filter(Boolean)
+  let synced = 0
+  for (const userId of userIds) {
+    await syncPayingSubscriberToNewsletter(db, userId, env)
+    synced += 1
+  }
+  return synced
+}
+
 /**
  * Remove a user's email from the subscriber list (e.g. subscription ended).
  */
@@ -298,9 +321,20 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
   }
 
   const body = await request.json().catch(() => null)
-  const subject = typeof body?.subject === 'string' ? body.subject.trim() : ''
-  const htmlBody = typeof body?.htmlBody === 'string' ? body.htmlBody : ''
+  const templateId = typeof body?.templateId === 'string' ? body.templateId.trim() : ''
+  let subject = typeof body?.subject === 'string' ? body.subject.trim() : ''
+  let htmlBody = typeof body?.htmlBody === 'string' ? body.htmlBody : ''
   const dedupeKey = typeof body?.dedupeKey === 'string' ? body.dedupeKey.trim() : ''
+  if (templateId) {
+    const template = await getDb(env).prepare(
+      'SELECT subject, html_body FROM newsletter_templates WHERE id = ? LIMIT 1',
+    ).bind(templateId).first()
+    if (!template) {
+      return jsonResponse({ error: 'Template not found', code: 'template_not_found' }, 404, corsHeaders)
+    }
+    subject = String(template.subject || '').trim()
+    htmlBody = String(template.html_body || '')
+  }
   if (!subject || !htmlBody.trim()) {
     return jsonResponse({ error: 'subject and htmlBody are required', code: 'validation' }, 400, corsHeaders)
   }
@@ -438,4 +472,64 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
   `).bind(sentAt, dedupeKey).run()
 
   return jsonResponse({ ok: true, campaignId: Number(campaignId) }, 200, corsHeaders)
+}
+
+export async function handleAdminNewsletterCampaigns(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+  if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
+  const limit = 20
+  const res = await brevoFetch(`/emailCampaigns?limit=${limit}&offset=0&sort=desc`, { method: 'GET' }, env)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    return jsonResponse({ error: err.message || 'Failed to fetch campaigns', code: 'brevo_campaigns_error' }, res.status, corsHeaders)
+  }
+  const data = await res.json().catch(() => ({}))
+  return jsonResponse({ campaigns: data?.campaigns ?? [] }, 200, corsHeaders)
+}
+
+export async function handleAdminNewsletterTemplates(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+  const db = getDb(env)
+  if (request.method === 'GET') {
+    const rows = await db.prepare(`
+      SELECT id, name, subject, html_body, created_at, updated_at
+      FROM newsletter_templates
+      ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+    `).all()
+    return jsonResponse({ templates: rows?.results ?? [] }, 200, corsHeaders)
+  }
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
+  const body = await request.json().catch(() => null)
+  const name = typeof body?.name === 'string' ? body.name.trim() : ''
+  const subject = typeof body?.subject === 'string' ? body.subject.trim() : ''
+  const htmlBody = typeof body?.htmlBody === 'string' ? body.htmlBody : ''
+  if (!name || !subject || !htmlBody.trim()) {
+    return jsonResponse({ error: 'name, subject and htmlBody are required', code: 'validation' }, 400, corsHeaders)
+  }
+  const id = crypto.randomUUID()
+  await db.prepare(`
+    INSERT INTO newsletter_templates (id, name, subject, html_body, created_at, updated_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).bind(id, name, subject, htmlBody).run()
+  return jsonResponse({ ok: true, id }, 201, corsHeaders)
+}
+
+export async function handleAdminNewsletterSync(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
+  const db = getDb(env)
+  const synced = await syncAllEligibleSubscribers(db, env)
+  return jsonResponse({ ok: true, synced }, 200, corsHeaders)
 }

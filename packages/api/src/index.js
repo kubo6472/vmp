@@ -31,9 +31,19 @@ import { isAdministrativeRole } from './roles.js'
 import { buildEntrypointCandidates, resolveMediaEntrypointUrl, buildProxyPlaylistUrl } from './mediaEntrypoints.js'
 import { handleThumbnailUpload, handleThumbnailDelete } from './thumbnails.js'
 import { handleAdminNewsletterSend, handleAdminNewsletterSettings } from './brevo.js'
+import { handleAdminNewsletterCampaigns, handleAdminNewsletterTemplates, handleAdminNewsletterSync } from './brevo.js'
 import { signVideoToken, verifyVideoToken } from './videoTokens.js'
 import { handlePublicFeed, handlePersonalFeed } from './feed.js'
 import { handleGetAccountRss } from './rssAccount.js'
+import {
+  handleHomepageContent,
+  handlePillsPublic,
+  handlePillsUpdate,
+  handleAdminUsers,
+  handleAdminAnalytics,
+  ensurePillsApiKeySetting,
+  logSegmentEvent,
+} from './adminExtras.js'
 
 // ─── Durable Object for atomic segment rate limiting (Step 4c) ───────────────
 // Binding is configured in wrangler.json under durable_objects.bindings.
@@ -85,6 +95,7 @@ export class SegmentRateLimiterDO {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url)
+    await maybeSyncPillsApiKey(env)
 
     // ── CORS ──────────────────────────────────────────────────────────────────
     //
@@ -150,13 +161,16 @@ export default {
       return handleVideoAccess(request, env, corsHeaders)
     }
     if (url.pathname.startsWith('/api/video-proxy/')) {
-      return handleVideoProxy(request, env, corsHeaders)
+      return handleVideoProxy(request, env, corsHeaders, ctx)
     }
     if (url.pathname === '/api/admin/bootstrap' && request.method === 'POST') {
       return handleBootstrap(request, env, corsHeaders)
     }
     if (url.pathname === '/api/admin/config') {
       return handleAdminConfig(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/categories' && request.method === 'GET') {
+      return handleAdminCategories(request, env, corsHeaders)
     }
     if (url.pathname === '/api/admin/preview-locks') {
       return handlePreviewLocks(request, env, corsHeaders)
@@ -190,6 +204,30 @@ export default {
     }
     if (url.pathname === '/api/admin/newsletter/send' && request.method === 'POST') {
       return handleAdminNewsletterSend(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/newsletter/campaigns' && request.method === 'GET') {
+      return handleAdminNewsletterCampaigns(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/newsletter/templates' && (request.method === 'GET' || request.method === 'POST')) {
+      return handleAdminNewsletterTemplates(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/newsletter/sync' && request.method === 'POST') {
+      return handleAdminNewsletterSync(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/homepage/content' && (request.method === 'GET' || request.method === 'PATCH')) {
+      return handleHomepageContent(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/users' && (request.method === 'GET' || request.method === 'PATCH')) {
+      return handleAdminUsers(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/analytics' && request.method === 'GET') {
+      return handleAdminAnalytics(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/pills' && request.method === 'GET') {
+      return handlePillsPublic(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/pills/update' && request.method === 'POST') {
+      return handlePillsUpdate(request, env, corsHeaders)
     }
     if (url.pathname === '/api/account/pricing' && request.method === 'GET') {
       return handleGetPricing(request, env, corsHeaders)
@@ -475,7 +513,7 @@ async function handleVideoAccess(request, env, corsHeaders) {
   }
 }
 
-async function handleVideoProxy(request, env, corsHeaders) {
+async function handleVideoProxy(request, env, corsHeaders, ctx) {
   const requestUrl = new URL(request.url)
   const proxyPrefix = '/api/video-proxy/'
   const objectPath = requestUrl.pathname.slice(proxyPrefix.length)
@@ -593,6 +631,28 @@ async function handleVideoProxy(request, env, corsHeaders) {
 
   const upstreamResponse = await fetch(upstreamUrl, { method: request.method, headers: upstreamHeaders })
 
+  if (isSegment) {
+    const referer = request.headers.get('referer') || ''
+    let sourceHost = null
+    try { sourceHost = referer ? (new URL(referer)).host : null } catch {}
+    // Segment filenames are usually ordinal indexes (e.g. segment-42.m4s), not
+    // wall-clock playback seconds, unless a specific packager naming scheme is used.
+    const segmentMatch = normalizedPath.match(/(\d+)(?:\.\w+)?$/)
+    const segmentIndex = segmentMatch ? Number(segmentMatch[1]) : null
+    const rawIp = request.headers.get('CF-Connecting-IP')
+    const ipHash = rawIp ? await sha256Hex(rawIp) : null
+    ctx?.waitUntil?.(logSegmentEvent(env, {
+      videoId: proxyVideoId,
+      userId: tokenClaims?.userId || null,
+      requestPath: normalizedPath,
+      eventType: 'segment',
+      segmentIndex,
+      referer,
+      sourceHost,
+      ipHash,
+    }))
+  }
+
   const manifestType = getManifestType(objectPath, upstreamResponse)
   if (manifestType === 'hls') {
     const manifest = await upstreamResponse.text()
@@ -654,7 +714,7 @@ async function handleAdminConfig(request, env, corsHeaders) {
 
   if (request.method === 'GET') {
     const row = await db.prepare('SELECT value FROM admin_settings WHERE key = ? LIMIT 1').bind('homepage').first()
-    const value = safeJsonParse(row?.value, defaultHomepageConfig())
+    const value = normalizeHomepageConfig(safeJsonParse(row?.value, defaultHomepageConfig()))
     return jsonResponse({ config: value }, 200, corsHeaders)
   }
 
@@ -696,6 +756,21 @@ async function handlePreviewLocks(request, env, corsHeaders) {
     `).bind(lockSeconds, lockSeconds, lockEntry.videoId).run()
   }
   return jsonResponse({ ok: true }, 200, corsHeaders)
+}
+
+async function handleAdminCategories(request, env, corsHeaders) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+  const db = getDatabaseBinding(env)
+  const rows = await db.prepare(`
+    SELECT id, slug, name, sort_order, direction
+    FROM video_categories
+    ORDER BY sort_order ASC, name ASC
+  `).all()
+  return jsonResponse({ categories: rows?.results ?? [] }, 200, corsHeaders)
 }
 
 async function handleAdminVideosList(request, env, corsHeaders) {
@@ -1663,7 +1738,14 @@ function safeJsonParse(v, fallback) {
   try { return JSON.parse(v) } catch { return fallback }
 }
 
-function defaultHomepageConfig() { return { featuredVideoIds: [], layoutBlocks: [] } }
+function defaultHomepageConfig() {
+  return {
+    featuredVideoIds: [],
+    layoutBlocks: [],
+    featuredMode: 'latest',
+    featuredVideoId: null,
+  }
+}
 
 function normalizeHomepageConfig(config) {
   return {
@@ -1678,6 +1760,8 @@ function normalizeHomepageConfig(config) {
           body:  typeof b.body  === 'string' ? b.body  : '',
         }))
       : [],
+    featuredMode: config?.featuredMode === 'specific' ? 'specific' : 'latest',
+    featuredVideoId: typeof config?.featuredVideoId === 'string' ? config.featuredVideoId : null,
   }
 }
 
@@ -1702,6 +1786,24 @@ function jsonResponse(data, status = 200, corsHeaders = {}) {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   })
+}
+
+let pillsKeySyncPromise = null
+async function maybeSyncPillsApiKey(env) {
+  if (!env?.PILLS_API_KEY) return
+  if (!pillsKeySyncPromise) {
+    pillsKeySyncPromise = ensurePillsApiKeySetting(env).catch((error) => {
+      console.error('Failed to sync PILLS_API_KEY into admin_settings:', error)
+    })
+  }
+  await pillsKeySyncPromise
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(value)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 // ─── Segment duration helpers (Step 4b) ──────────────────────────────────────
