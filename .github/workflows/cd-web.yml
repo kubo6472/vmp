@@ -1,13 +1,6 @@
 name: CD - Web (Cloudflare Pages)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "packages/web/**"
-      - "packages/shared/**"
-      - ".github/workflows/cd-web.yml"
   workflow_dispatch:
 
 concurrency:
