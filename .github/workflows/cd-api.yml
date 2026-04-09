@@ -1,13 +1,6 @@
 name: CD - API (Cloudflare Workers)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "packages/api/**"
-      - "packages/shared/**"
-      - ".github/workflows/cd-api.yml"
   workflow_dispatch:
 
 concurrency:
