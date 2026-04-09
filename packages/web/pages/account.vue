@@ -104,7 +104,7 @@
         <div>
           <h2 class="text-base font-semibold text-gray-900 dark:text-white">Podcast RSS</h2>
           <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Submit the public URL to podcast directories. Use your personal URL in your podcast app for full episodes while subscribed.
+            Use your personal URL in your podcast app for full episodes while subscribed.
           </p>
         </div>
 
@@ -113,27 +113,8 @@
         </div>
         <div v-else-if="loadingRss" class="space-y-2">
           <div class="h-4 w-3/4 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-          <div class="h-4 w-3/4 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
         </div>
         <template v-else>
-          <div class="space-y-2">
-            <p class="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Public listing URL</p>
-            <div class="flex items-center gap-2">
-              <input
-                :value="rssPublicUrl"
-                readonly
-                class="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-              >
-              <button
-                class="px-3 py-2 text-sm font-medium rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-white"
-                @click="copyText(rssPublicUrl, 'public')"
-              >
-                {{ copiedWhich === 'public' ? 'Copied' : 'Copy' }}
-              </button>
-            </div>
-            <p v-if="copyError && copiedWhich === 'public'" class="text-xs text-red-600 dark:text-red-400">{{ copyError }}</p>
-          </div>
-
           <div class="space-y-2">
             <p class="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Your personal URL</p>
             <div class="flex items-center gap-2">
@@ -149,7 +130,7 @@
                 {{ copiedWhich === 'personal' ? 'Copied' : 'Copy' }}
               </button>
             </div>
-            <p v-if="copyError && copiedWhich === 'personal'" class="text-xs text-red-600 dark:text-red-400">{{ copyError }}</p>
+            <p v-if="copyError" class="text-xs text-red-600 dark:text-red-400">{{ copyError }}</p>
           </div>
         </template>
       </div>
@@ -225,9 +206,8 @@ const showWelcomeBanner = ref(route.query.subscribed === '1')
 const loadingRss        = ref(true)
 const rssError          = ref<string | null>(null)
 const copyError         = ref<string | null>(null)
-const rssPublicUrl      = ref('')
 const rssPersonalUrl    = ref('')
-const copiedWhich       = ref<'public' | 'personal' | null>(null)
+const copiedWhich       = ref<'personal' | null>(null)
 
 onMounted(async () => {
   if (showWelcomeBanner.value) {
@@ -305,7 +285,6 @@ async function fetchRssUrls() {
       rssError.value = data.error ?? 'Could not load RSS URLs.'
       return
     }
-    rssPublicUrl.value = data.publicUrl ?? ''
     rssPersonalUrl.value = data.personalUrl ?? ''
   } catch {
     rssError.value = 'Network error while loading RSS URLs.'
@@ -314,7 +293,7 @@ async function fetchRssUrls() {
   }
 }
 
-async function copyText(value: string, which: 'public' | 'personal') {
+async function copyText(value: string, which: 'personal') {
   if (!value) return
   copyError.value = null
   try {
@@ -324,7 +303,6 @@ async function copyText(value: string, which: 'public' | 'personal') {
       if (copiedWhich.value === which) copiedWhich.value = null
     }, 1200)
   } catch {
-    copiedWhich.value = which
     copyError.value = 'Could not copy to clipboard. You can copy manually from the field.'
   }
 }

@@ -23,7 +23,7 @@
         </div>
         <div class="flex items-center gap-2">
           <button
-            class="px-4 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-sm"
+            class="px-4 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-gray-100"
             @click="reloadAll"
           >
             Reload
@@ -42,7 +42,7 @@
         {{ saveMessage }}
       </div>
 
-      <div role="tablist" aria-label="Admin sections" class="flex gap-2 border-b border-gray-200 dark:border-gray-800">
+      <div role="tablist" aria-label="Admin sections" class="flex gap-2 border-b border-gray-200 dark:border-gray-800 overflow-x-auto whitespace-nowrap pb-1">
         <button
           v-for="tab in adminTabs"
           :key="tab.id"
@@ -112,6 +112,12 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <div v-if="activeAdminTab === 'homepage'" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-3">
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white">Homepage hero copy</h2>
+          <input v-model="homepageHeroTitle" type="text" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+          <textarea v-model="homepageHeroSubtitle" rows="2" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"></textarea>
         </div>
 
         <!-- Video Management — tabbed panel -->
@@ -372,8 +378,8 @@
                   <p class="font-medium text-gray-900 dark:text-white">{{ video.title }}</p>
                   <p class="text-xs text-gray-600 dark:text-gray-400">{{ video.id }} · full {{ getActualDuration(video) }}s</p>
                 </div>
-                <input v-model.number="previewLockByVideoId[video.id]" type="number" min="0" :max="getActualDuration(video)" class="w-24 px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900" />
-                <button class="text-xs text-gray-600 dark:text-gray-400 hover:underline" @click="previewLockByVideoId[video.id] = getActualDuration(video)">Unlock full</button>
+                <input v-model.number="previewLockByVideoId[video.id]" type="number" min="0" :max="getActualDuration(video)" class="w-24 px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100" />
+                <button class="text-xs text-gray-600 dark:text-gray-300 hover:underline" @click="previewLockByVideoId[video.id] = getActualDuration(video)">Unlock full</button>
               </div>
             </div>
           </div>
@@ -494,11 +500,24 @@
               >
                 {{ newsletterSaving ? 'Saving…' : 'Save newsletter settings' }}
               </button>
+              <button
+                type="button"
+                class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold disabled:opacity-50"
+                :disabled="newsletterSyncing"
+                @click="syncNewsletterRecipients"
+              >
+                {{ newsletterSyncing ? 'Syncing…' : 'Sync recipients' }}
+              </button>
             </div>
 
             <div class="border-t border-gray-200 dark:border-gray-700 pt-6 space-y-3">
               <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Compose campaign</h3>
               <div class="space-y-2">
+                <label class="block text-sm font-medium text-gray-900 dark:text-white" for="newsletter-template">Template</label>
+                <select id="newsletter-template" v-model="newsletterTemplateId" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                  <option value="">No template (use manual subject/body)</option>
+                  <option v-for="tpl in newsletterTemplates" :key="tpl.id" :value="tpl.id">{{ tpl.name }}</option>
+                </select>
                 <label class="block text-sm font-medium text-gray-900 dark:text-white" for="newsletter-subject">Subject</label>
                 <input
                   id="newsletter-subject"
@@ -551,13 +570,71 @@
                 </div>
               </div>
             </div>
+
+            <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+              <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Recent campaigns (auto-polled on reload)</h3>
+              <div class="space-y-2 max-h-56 overflow-auto">
+                <div v-for="campaign in newsletterCampaigns" :key="campaign.id" class="rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2">
+                  <p class="text-sm font-medium text-gray-900 dark:text-white">{{ campaign.subject || campaign.name }}</p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Status: {{ campaign.status }} · Sent: {{ campaign.sentDate || '—' }}</p>
+                </div>
+              </div>
+            </div>
           </template>
+        </div>
+
+        <div v-if="activeAdminTab === 'users'" id="users-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-4">
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white">Users and roles</h2>
+          <div class="space-y-2">
+            <div v-for="u in users" :key="u.id" class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
+              <div class="md:col-span-2">
+                <p class="text-sm font-medium text-gray-900 dark:text-white">{{ u.email }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ u.id }}</p>
+              </div>
+              <select :value="u.role" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" @change="(e) => updateUser(u.id, { role: (e.target as HTMLSelectElement).value })">
+                <option value="viewer">viewer</option>
+                <option value="moderator">moderator</option>
+                <option value="analyst">analyst</option>
+                <option value="editor">editor</option>
+                <option value="admin">admin</option>
+                <option v-if="user?.role === 'super_admin'" value="super_admin">super_admin</option>
+              </select>
+              <select :value="u.subscription_status || 'none'" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" @change="(e) => updateUser(u.id, { subscriptionStatus: (e.target as HTMLSelectElement).value })">
+                <option value="none">none</option>
+                <option value="active">active</option>
+                <option value="trialing">trialing</option>
+                <option value="past_due">past_due</option>
+                <option value="cancelled">cancelled</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="activeAdminTab === 'analytics'" id="analytics-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-5">
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white">Analytics</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400">Views, retention, traffic source, and subscription status snapshots.</p>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+              <p class="text-xs text-gray-500 dark:text-gray-400">Total segment views</p>
+              <p class="text-2xl font-bold text-gray-900 dark:text-white">{{ analytics.totalViews }}</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+              <h3 class="font-semibold text-gray-900 dark:text-white mb-2">Traffic sources</h3>
+              <p v-for="src in analytics.trafficSources" :key="src.source" class="text-sm text-gray-700 dark:text-gray-200">{{ src.source }}: {{ src.hits }}</p>
+            </div>
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+              <h3 class="font-semibold text-gray-900 dark:text-white mb-2">Subscriptions</h3>
+              <p v-for="row in analytics.subscriptions" :key="row.status" class="text-sm text-gray-700 dark:text-gray-200">{{ row.status }}: {{ row.count }}</p>
+            </div>
+          </div>
         </div>
 
         <div v-if="activeAdminTab === 'system'" id="system-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-4">
           <h2 class="text-xl font-bold text-gray-900 dark:text-white">System</h2>
           <p class="text-sm text-gray-600 dark:text-gray-400">Operational controls and refresh actions.</p>
-          <button class="px-4 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-sm" @click="reloadAll">Reload data</button>
+          <button class="px-4 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-gray-100" @click="reloadAll">Reload data</button>
         </div>
       </section>
 
@@ -730,7 +807,7 @@ interface LayoutBlock {
 }
 
 const config = useRuntimeConfig()
-const { authHeader, isAdmin } = useAuth()
+const { authHeader, isAdmin, user } = useAuth()
 const router = useRouter()
 const route = useRoute()
 const loading = ref(true)
@@ -750,13 +827,15 @@ const notifying = ref<Record<string, boolean>>({})
 const trashing = ref<Record<string, boolean>>({})
 const uploadingFor = ref<string | null>(null)
 const activeVideoTab = ref<'all' | 'locks'>('all')
-const activeAdminTab = ref<'videos' | 'categories' | 'homepage' | 'notifications' | 'newsletter' | 'system'>('videos')
+const activeAdminTab = ref<'videos' | 'categories' | 'homepage' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system'>('videos')
 const adminTabs = [
   { id: 'videos' as const, label: 'Videos' },
   { id: 'categories' as const, label: 'Categories' },
   { id: 'homepage' as const, label: 'Homepage' },
   { id: 'notifications' as const, label: 'Notifications' },
   { id: 'newsletter' as const, label: 'Newsletter' },
+  { id: 'users' as const, label: 'Users & roles' },
+  { id: 'analytics' as const, label: 'Analytics' },
   { id: 'system' as const, label: 'System' },
 ]
 const editingTitle = ref<{ id: string; value: string } | null>(null)
@@ -782,12 +861,25 @@ const newsletterSenderEmail = ref('')
 const newsletterSenderName = ref('')
 const newsletterSubject = ref('')
 const newsletterHtml = ref('')
+const newsletterTemplateId = ref('')
 const newsletterSaving = ref(false)
 const newsletterSending = ref(false)
 const newsletterMessage = ref('')
 const newsletterMessageClass = ref('')
 const categories = ref<Category[]>([])
 const categoryForm = ref({ name: '', slug: '', sortOrder: 0, direction: 'desc' as 'asc' | 'desc' })
+const newsletterSyncing = ref(false)
+const newsletterTemplates = ref<any[]>([])
+const newsletterCampaigns = ref<any[]>([])
+const homepageHeroTitle = ref('')
+const homepageHeroSubtitle = ref('')
+const users = ref<any[]>([])
+const analytics = ref<{ totalViews: number; trafficSources: any[]; retention: any[]; subscriptions: any[] }>({
+  totalViews: 0,
+  trafficSources: [],
+  retention: [],
+  subscriptions: [],
+})
 /** Stable per send attempt until success — retries reuse the same key for server idempotency. */
 const newsletterSendDedupeKey = ref<string | null>(null)
 
@@ -993,7 +1085,10 @@ const deleteCategory = async (category: Category) => {
 }
 
 const loadConfig = async () => {
-  const res = await fetch(`${config.public.apiUrl}/api/admin/config`)
+  const auth = authHeader()
+  const res = await fetch(`${config.public.apiUrl}/api/admin/config`, {
+    headers: Object.keys(auth).length ? auth : undefined,
+  })
   if (!res.ok) {
     layoutBlocks.value  = getDefaultBlocks()
     featuredSlots.value = [...chronologicallySortedUploads.value.slice(0, 4)]
@@ -1028,6 +1123,97 @@ const loadNewsletterSettings = async () => {
     newsletterMessage.value = `Could not load newsletter settings: ${e.message}`
     newsletterMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
   }
+}
+
+const loadNewsletterTemplates = async () => {
+  if (!isAdmin.value) return
+  const res = await fetch(`${config.public.apiUrl}/api/admin/newsletter/templates`, { headers: authHeader() })
+  if (!res.ok) return
+  const data = await res.json()
+  newsletterTemplates.value = data.templates || []
+}
+
+const loadNewsletterCampaigns = async () => {
+  if (!isAdmin.value) return
+  const res = await fetch(`${config.public.apiUrl}/api/admin/newsletter/campaigns`, { headers: authHeader() })
+  if (!res.ok) return
+  const data = await res.json()
+  newsletterCampaigns.value = data.campaigns || []
+}
+
+const syncNewsletterRecipients = async () => {
+  newsletterSyncing.value = true
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/newsletter/sync`, {
+      method: 'POST',
+      headers: authHeader(),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    newsletterMessage.value = `Sync complete. Recipients synced: ${data.synced}`
+    newsletterMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+  } catch (e: any) {
+    newsletterMessage.value = e.message || 'Sync failed'
+    newsletterMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    newsletterSyncing.value = false
+  }
+}
+
+const loadHomepageContent = async () => {
+  if (!isAdmin.value) return
+  const res = await fetch(`${config.public.apiUrl}/api/admin/homepage/content`, { headers: authHeader() })
+  if (!res.ok) return
+  const data = await res.json()
+  homepageHeroTitle.value = data.title || ''
+  homepageHeroSubtitle.value = data.subtitle || ''
+}
+
+const saveHomepageContent = async () => {
+  if (!isAdmin.value) return
+  const res = await fetch(`${config.public.apiUrl}/api/admin/homepage/content`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify({ title: homepageHeroTitle.value, subtitle: homepageHeroSubtitle.value }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+}
+
+const loadUsers = async () => {
+  if (!isAdmin.value) return
+  const res = await fetch(`${config.public.apiUrl}/api/admin/users`, { headers: authHeader() })
+  if (!res.ok) return
+  const data = await res.json()
+  users.value = data.users || []
+}
+
+const updateUser = async (userId: string, patch: Record<string, string>) => {
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/users`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ userId, ...patch }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    await loadUsers()
+    showToast('success', 'User updated.')
+  } catch (error: any) {
+    console.error('Failed to update user', error)
+    showToast('error', `Failed to update user: ${error.message || 'unknown error'}`)
+  }
+}
+
+const loadAnalytics = async () => {
+  if (!isAdmin.value) return
+  const res = await fetch(`${config.public.apiUrl}/api/admin/analytics`, { headers: authHeader() })
+  if (!res.ok) return
+  analytics.value = await res.json()
 }
 
 const saveNewsletterSettings = async () => {
@@ -1085,6 +1271,7 @@ const sendNewsletterCampaign = async () => {
       body: JSON.stringify({
         subject: newsletterSubject.value.trim(),
         htmlBody: newsletterHtml.value,
+        templateId: newsletterTemplateId.value || undefined,
         dedupeKey: newsletterSendDedupeKey.value,
       }),
     })
@@ -1110,6 +1297,7 @@ const saveAll = async () => {
   saveMessage.value = ''
   try {
     const featuredVideoIds = featuredSlots.value.map(v => v?.id).filter(Boolean)
+    await saveHomepageContent()
     const [configRes, locksRes] = await Promise.all([
       fetch(`${config.public.apiUrl}/api/admin/config`, {
         method: 'POST',
@@ -1143,6 +1331,11 @@ const reloadAll = async () => {
     await loadCategories()
     await loadConfig()
     await loadNewsletterSettings()
+    await loadNewsletterTemplates()
+    await loadNewsletterCampaigns()
+    await loadHomepageContent()
+    await loadUsers()
+    await loadAnalytics()
   }
   finally { loading.value = false }
 }
@@ -1433,7 +1626,7 @@ const confirmDialogRef = ref<HTMLElement | null>(null)
 const swapDialogRef    = ref<HTMLElement | null>(null)
 const lastFocusedEl    = ref<HTMLElement | null>(null)
 
-function setAdminTab(tab: 'videos' | 'categories' | 'homepage' | 'notifications' | 'newsletter' | 'system') {
+function setAdminTab(tab: 'videos' | 'categories' | 'homepage' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system') {
   router.replace({ query: { ...route.query, tab } })
 }
 
@@ -1463,7 +1656,7 @@ function onConfirmModalKeydown(e: KeyboardEvent) {
 
 watch(() => route.query, (query) => {
   const tab = query.tab
-  if (tab && ['videos', 'categories', 'homepage', 'notifications', 'newsletter', 'system'].includes(String(tab))) {
+  if (tab && ['videos', 'categories', 'homepage', 'notifications', 'newsletter', 'users', 'analytics', 'system'].includes(String(tab))) {
     activeAdminTab.value = tab as any
   }
 }, { immediate: true })

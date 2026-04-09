@@ -41,6 +41,7 @@ export default defineNuxtConfig({
         // Belt-and-suspenders: @vite-pwa/nuxt injects this automatically, but
         // some Nitro presets miss the injection step — add it explicitly too.
         { rel: 'manifest', href: '/manifest.webmanifest' },
+        { rel: 'icon', type: 'image/png', href: '/icons/pwa-192.png' },
         // iOS home screen icon (Safari ignores the web manifest icons array)
         { rel: 'apple-touch-icon', href: '/icons/pwa-192.png' },
       ],
