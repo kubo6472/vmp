@@ -19,6 +19,10 @@
 		{
 			"binding": "RATE_LIMIT_KV",
 			"id": "96fab13ef30e42afaecedeee8e6875b9"
+		},
+		{
+			"binding": "SETTINGS_KV",
+			"id": "af4ae6316aa14fb0a663b8fe3a71e7ca"
 		}
 	],
 	"durable_objects": {

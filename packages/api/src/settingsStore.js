@@ -13,8 +13,8 @@ function getDb(env) {
 }
 
 function getSettingsKv(env) {
-  // Reuse existing namespace to avoid introducing new infra bindings mid-migration.
-  return env.RATE_LIMIT_KV || null
+  // Dedicated namespace for settings cache; fallback keeps older environments working.
+  return env.SETTINGS_KV || env.RATE_LIMIT_KV || null
 }
 
 function kvKey(key) {
