@@ -1,12 +1,6 @@
 name: CD - Video Processor Admin (Cloudflare Pages)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "packages/video-processor/**"
-      - ".github/workflows/cd-video-processor.yml"
   workflow_dispatch:
 
 concurrency:
