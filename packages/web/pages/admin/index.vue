@@ -154,6 +154,7 @@
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium w-16">Thumb</th>
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Title</th>
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Status</th>
+                    <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Category</th>
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Duration</th>
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Uploaded</th>
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Notifications</th>
@@ -293,6 +294,18 @@
                         {{ video.publish_status ?? 'draft' }}
                       </span>
                     </td>
+                    <td class="py-3 pr-4">
+                      <select
+                        class="w-44 px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white"
+                        :value="video.category_id || ''"
+                        @change="(e) => updateVideoCategory(video, (e.target as HTMLSelectElement).value)"
+                      >
+                        <option value="">Uncategorized</option>
+                        <option v-for="cat in categories" :key="cat.id" :value="cat.id">
+                          {{ cat.name }}
+                        </option>
+                      </select>
+                    </td>
                     <td class="py-3 pr-4 text-gray-600 dark:text-gray-400 whitespace-nowrap">
                       {{ formatSeconds(getActualDuration(video)) }}
                     </td>
@@ -372,6 +385,51 @@
           </div>
         </div>
 
+
+        <div v-if="activeAdminTab === 'categories'" id="categories-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xl font-bold text-gray-900 dark:text-white">Category management</h2>
+            <button class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 text-sm" @click="loadCategories">Refresh</button>
+          </div>
+
+          <div v-if="!isAdmin" class="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+            Only admins and super_admin can create, update, or delete categories.
+          </div>
+
+          <template v-else>
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+              <h3 class="font-semibold text-gray-900 dark:text-white">Create category</h3>
+              <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <input v-model="categoryForm.name" type="text" placeholder="Name" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+                <input v-model="categoryForm.slug" type="text" placeholder="slug-name" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+                <input v-model.number="categoryForm.sortOrder" type="number" placeholder="Sort order" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+                <select v-model="categoryForm.direction" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                  <option value="desc">desc</option>
+                  <option value="asc">asc</option>
+                </select>
+              </div>
+              <button class="px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold" @click="createCategory">Create category</button>
+            </div>
+
+            <div class="space-y-2">
+              <div
+                v-for="category in categories"
+                :key="category.id"
+                class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 md:grid-cols-[1fr_1fr_120px_120px_auto_auto] gap-2 items-center"
+              >
+                <input v-model="category.name" type="text" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+                <input v-model="category.slug" type="text" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+                <input v-model.number="category.sort_order" type="number" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+                <select v-model="category.direction" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                  <option value="desc">desc</option>
+                  <option value="asc">asc</option>
+                </select>
+                <button class="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium" @click="updateCategory(category)">Save</button>
+                <button class="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs font-medium" @click="confirmDeleteCategory(category)">Delete</button>
+              </div>
+            </div>
+          </template>
+        </div>
 
         <div v-if="activeAdminTab === 'notifications'" id="notifications-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-3">
           <h2 class="text-xl font-bold text-gray-900 dark:text-white">Notifications</h2>
@@ -728,6 +786,16 @@ interface Video {
   publish_status: 'draft' | 'published' | 'archived' | null
   r2_exists: boolean | null
   slug?: string | null
+  category_id?: string | null
+}
+
+interface Category {
+  id: string
+  name: string
+  slug: string
+  sort_order: number
+  direction: 'asc' | 'desc'
+  video_count?: number
 }
 
 type BlockType = 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
@@ -759,9 +827,10 @@ const notifying = ref<Record<string, boolean>>({})
 const trashing = ref<Record<string, boolean>>({})
 const uploadingFor = ref<string | null>(null)
 const activeVideoTab = ref<'all' | 'locks'>('all')
-const activeAdminTab = ref<'videos' | 'homepage' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system'>('videos')
+const activeAdminTab = ref<'videos' | 'categories' | 'homepage' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system'>('videos')
 const adminTabs = [
   { id: 'videos' as const, label: 'Videos' },
+  { id: 'categories' as const, label: 'Categories' },
   { id: 'homepage' as const, label: 'Homepage' },
   { id: 'notifications' as const, label: 'Notifications' },
   { id: 'newsletter' as const, label: 'Newsletter' },
@@ -797,6 +866,8 @@ const newsletterSaving = ref(false)
 const newsletterSending = ref(false)
 const newsletterMessage = ref('')
 const newsletterMessageClass = ref('')
+const categories = ref<Category[]>([])
+const categoryForm = ref({ name: '', slug: '', sortOrder: 0, direction: 'desc' as 'asc' | 'desc' })
 const newsletterSyncing = ref(false)
 const newsletterTemplates = ref<any[]>([])
 const newsletterCampaigns = ref<any[]>([])
@@ -908,6 +979,119 @@ const loadVideos = async () => {
   } finally {
     videosLoading.value = false
   }
+}
+
+const loadCategories = async () => {
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/categories`, { headers: authHeader() })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    categories.value = Array.isArray(data.categories) ? data.categories : []
+  } catch (e: any) {
+    saveMessage.value = `Failed to load categories: ${e.message}`
+    saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  }
+}
+
+const updateVideoCategory = async (video: Video, nextCategoryId: string) => {
+  const previousCategoryId = video.category_id ?? null
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ categoryId: nextCategoryId || null }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    const { video: updated } = await res.json()
+    const idx = uploads.value.findIndex(v => v.id === video.id)
+    if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], category_id: updated?.category_id ?? null }
+    showToast('success', `Category updated for ${video.title}.`)
+    await loadCategories()
+  } catch (e: any) {
+    const idx = uploads.value.findIndex(v => v.id === video.id)
+    if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], category_id: previousCategoryId }
+    showToast('error', `Failed to update category: ${e.message}`)
+  }
+}
+
+const createCategory = async () => {
+  try {
+    const payload = {
+      name: categoryForm.value.name.trim(),
+      slug: categoryForm.value.slug.trim(),
+      sortOrder: Number.parseInt(String(categoryForm.value.sortOrder), 10) || 0,
+      direction: categoryForm.value.direction,
+    }
+    const res = await fetch(`${config.public.apiUrl}/api/admin/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    categoryForm.value = { name: '', slug: '', sortOrder: 0, direction: 'desc' }
+    showToast('success', 'Category created.')
+    await loadCategories()
+  } catch (e: any) {
+    showToast('error', `Failed to create category: ${e.message}`)
+  }
+}
+
+const updateCategory = async (category: Category) => {
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/categories`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+        sortOrder: category.sort_order,
+        direction: category.direction,
+      }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    showToast('success', 'Category updated.')
+    await loadCategories()
+  } catch (e: any) {
+    await loadCategories()
+    showToast('error', `Failed to update category: ${e.message}`)
+  }
+}
+
+const deleteCategory = async (category: Category) => {
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/categories`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ id: category.id }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    showToast('success', 'Category deleted.')
+    await Promise.all([loadCategories(), loadVideos()])
+  } catch (e: any) {
+    showToast('error', `Failed to delete category: ${e.message}`)
+  }
+}
+
+const confirmDeleteCategory = async (category: Category) => {
+  const confirmed = window.confirm(`Delete category "${category.name}"? This action cannot be undone.`)
+  if (!confirmed) return
+  await deleteCategory(category)
 }
 
 const loadConfig = async () => {
@@ -1154,6 +1338,7 @@ const reloadAll = async () => {
   loading.value = true
   try {
     await loadVideos()
+    await loadCategories()
     await loadConfig()
     await loadNewsletterSettings()
     await loadNewsletterTemplates()
@@ -1451,7 +1636,7 @@ const confirmDialogRef = ref<HTMLElement | null>(null)
 const swapDialogRef    = ref<HTMLElement | null>(null)
 const lastFocusedEl    = ref<HTMLElement | null>(null)
 
-function setAdminTab(tab: 'videos' | 'homepage' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system') {
+function setAdminTab(tab: 'videos' | 'categories' | 'homepage' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system') {
   router.replace({ query: { ...route.query, tab } })
 }
 
@@ -1481,7 +1666,7 @@ function onConfirmModalKeydown(e: KeyboardEvent) {
 
 watch(() => route.query, (query) => {
   const tab = query.tab
-  if (tab && ['videos', 'homepage', 'notifications', 'newsletter', 'users', 'analytics', 'system'].includes(String(tab))) {
+  if (tab && ['videos', 'categories', 'homepage', 'notifications', 'newsletter', 'users', 'analytics', 'system'].includes(String(tab))) {
     activeAdminTab.value = tab as any
   }
 }, { immediate: true })
