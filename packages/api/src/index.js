@@ -116,7 +116,7 @@ export default {
         headers: {
           ...corsHeaders,
           'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range, x-d1-bookmark',
           'Access-Control-Max-Age': '86400',
         },
       })

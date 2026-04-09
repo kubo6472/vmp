@@ -37,16 +37,16 @@ export async function getSetting(env, key, options = {}) {
   }
 
   let value = defaultValue
-  let dbReadSucceeded = false
+  let hasDbRowValue = false
   try {
     const row = await db.prepare('SELECT value FROM admin_settings WHERE key = ? LIMIT 1').bind(key).first()
     value = row?.value ?? defaultValue
-    dbReadSucceeded = true
+    hasDbRowValue = row != null && row.value != null
   } catch {
     value = defaultValue
   }
 
-  if (kv && dbReadSucceeded) {
+  if (kv && hasDbRowValue) {
     try {
       await kv.put(keyName, value == null ? '' : String(value), { expirationTtl: ttlSeconds })
     } catch {
