@@ -50,14 +50,14 @@ Use this when staging/production D1, KV, and/or R2 were intentionally reset.
 - Confirm only `.github/workflows/deploy.yml` auto-deploys from `main`/tags.
 - Keep `cd-api.yml`, `cd-web.yml`, and `cd-video-processor.yml` manual-only.
 
-2) Recreate bindings/resources (per environment)
+1. Recreate bindings/resources (per environment)
 
 - D1 database
 - KV namespace(s)
 - R2 bucket(s)
 - Update Worker/Page bindings to point to recreated resources.
 
-3) Restore required secrets (per environment)
+1. Restore required secrets (per environment)
 
 - `JWT_SECRET`
 - `BREVO_API_KEY`
@@ -67,23 +67,23 @@ Use this when staging/production D1, KV, and/or R2 were intentionally reset.
 - `VAPID_PRIVATE_KEY`
 - `RSS_SECRET`
 
-4) Re-apply database migrations in order
+1. Re-apply database migrations in order
 
 - Run all SQL files in `packages/api/migrations/` in ascending order.
 - Do not edit historical migration files; add new numbered migrations as needed.
 
-5) Seed data policy
+1. Seed data policy
 
 - Staging: seed freely for smoke testing.
 - Production: seed only intentional baseline config; avoid test/demo data.
 
-6) Deploy order
+1. Deploy order
 
 - Deploy API first.
 - Deploy web second.
 - Deploy video-processor admin (if changed).
 
-7) Post-deploy smoke checks
+1. Post-deploy smoke checks
 
 - `GET /api/health` returns healthy.
 - Auth flow (magic link + session restore) works.
