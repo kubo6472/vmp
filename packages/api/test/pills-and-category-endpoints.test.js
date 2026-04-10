@@ -54,8 +54,14 @@ class FakeDb {
         }
         if (sql.includes('FROM videos v') && sql.includes('WHERE vc.slug = ?')) {
           const [slug, limit, offset] = this.args
+          const sortDirection = sql.includes('ORDER BY datetime(v.upload_date) ASC') ? 'asc' : 'desc'
           const rows = db.videos
             .filter((v) => v.category_slug === slug && v.publish_status === 'published')
+            .sort((a, b) => {
+              const ta = Date.parse(a.upload_date || '') || 0
+              const tb = Date.parse(b.upload_date || '') || 0
+              return sortDirection === 'asc' ? ta - tb : tb - ta
+            })
             .slice(offset, offset + limit)
             .map((v) => ({
               ...v,
