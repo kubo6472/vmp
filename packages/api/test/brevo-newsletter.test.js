@@ -18,8 +18,8 @@ describe('clampNewsletterPollIntervalMs', () => {
     assert.equal(clampNewsletterPollIntervalMs(59_999), DEFAULT_NEWSLETTER_POLL_INTERVAL_MS)
   })
 
-  it('clamps to max 24h', () => {
-    assert.equal(clampNewsletterPollIntervalMs(99_000_000), 86_400_000)
+  it('defaults when above max 24h', () => {
+    assert.equal(clampNewsletterPollIntervalMs(99_000_000), DEFAULT_NEWSLETTER_POLL_INTERVAL_MS)
   })
 
   it('accepts valid range', () => {

@@ -22,8 +22,8 @@ export const DEFAULT_NEWSLETTER_POLL_INTERVAL_MS = 600_000
  */
 export function clampNewsletterPollIntervalMs(raw) {
   const n = raw != null && String(raw).trim() !== '' ? Number.parseInt(String(raw).trim(), 10) : NaN
-  if (!Number.isFinite(n) || n < 60_000) return DEFAULT_NEWSLETTER_POLL_INTERVAL_MS
-  return Math.min(n, 86_400_000)
+  if (!Number.isFinite(n) || n < 60_000 || n > 86_400_000) return DEFAULT_NEWSLETTER_POLL_INTERVAL_MS
+  return n
 }
 
 /**
@@ -319,6 +319,32 @@ async function releaseNewsletterSendClaimAfterSendNowFailure(db, dedupeKey) {
     SET in_flight = 0, claim_acquired_at = NULL
     WHERE dedupe_key = ? AND sent_at IS NULL
   `).bind(dedupeKey).run()
+}
+
+/**
+ * Persist Brevo campaign id before any claim release. Retries on transient races; keeps claim if persist fails.
+ * @returns {{ ok: true } | { ok: false, correlationId: string }}
+ */
+async function persistCampaignIdForDedupeKey(db, dedupeKey, newId, correlationId) {
+  const id = Number(newId)
+  if (!Number.isFinite(id) || id <= 0) return { ok: false, correlationId }
+  const maxAttempts = 4
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 40 * attempt))
+    const upd = await db.prepare(`
+      UPDATE brevo_newsletter_sends SET campaign_id = ? WHERE dedupe_key = ? AND campaign_id IS NULL
+    `).bind(id, dedupeKey).run()
+    const changed = upd.meta?.changes ?? upd.changes ?? 0
+    if (changed > 0) return { ok: true }
+    const row = await db.prepare(
+      'SELECT campaign_id, sent_at FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
+    ).bind(dedupeKey).first()
+    if (row?.sent_at) return { ok: true }
+    const existing = row?.campaign_id != null ? Number(row.campaign_id) : null
+    if (existing === id) return { ok: true }
+  }
+  newsletterLog('send_campaign_id_persist_failed', { correlationId, dedupeKeyLen: dedupeKey.length })
+  return { ok: false, correlationId }
 }
 
 /**
@@ -755,24 +781,28 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
         return jsonResponse({ error: 'Unexpected response creating campaign', code: 'brevo_campaign_error' }, 502, corsHeaders)
       }
 
-      const upd = await db.prepare(`
-        UPDATE brevo_newsletter_sends SET campaign_id = ? WHERE dedupe_key = ? AND campaign_id IS NULL
-      `).bind(Number(newId), dedupeKey).run()
-      const changed = upd.meta?.changes ?? upd.changes ?? 0
-      if (changed === 0) {
-        row = await loadSendRow()
-        if (isNewsletterSendFinished(row)) {
-          await releaseIfHeld()
-          return jsonResponse({
-            ok: true,
-            campaignId: Number(row.campaign_id),
-            idempotent: true,
-          }, 200, corsHeaders)
-        }
-        campaignId = row?.campaign_id != null ? Number(row.campaign_id) : Number(newId)
-      } else {
-        campaignId = Number(newId)
+      const persisted = await persistCampaignIdForDedupeKey(db, dedupeKey, newId, correlationId)
+      if (!persisted.ok) {
+        return jsonResponse(
+          {
+            error: 'Failed to persist campaign id after Brevo create; retry or contact support',
+            code: 'campaign_id_persist_failed',
+          },
+          503,
+          corsHeaders,
+        )
       }
+
+      row = await loadSendRow()
+      if (isNewsletterSendFinished(row)) {
+        await releaseIfHeld()
+        return jsonResponse({
+          ok: true,
+          campaignId: Number(row.campaign_id),
+          idempotent: true,
+        }, 200, corsHeaders)
+      }
+      campaignId = row?.campaign_id != null ? Number(row.campaign_id) : Number(newId)
     }
 
     row = await loadSendRow()
