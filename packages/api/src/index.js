@@ -30,8 +30,14 @@ import {
 import { isAdministrativeRole } from './roles.js'
 import { buildEntrypointCandidates, resolveMediaEntrypointUrl, buildProxyPlaylistUrl } from './mediaEntrypoints.js'
 import { handleThumbnailUpload, handleThumbnailDelete } from './thumbnails.js'
-import { handleAdminNewsletterSend, handleAdminNewsletterSettings } from './brevo.js'
-import { handleAdminNewsletterCampaigns, handleAdminNewsletterTemplates, handleAdminNewsletterSync } from './brevo.js'
+import {
+  handleAdminNewsletterSend,
+  handleAdminNewsletterSettings,
+  handleAdminNewsletterCampaigns,
+  handleAdminNewsletterTemplates,
+  handleAdminNewsletterTemplateById,
+  handleAdminNewsletterSync,
+} from './brevo.js'
 import { signVideoToken, verifyVideoToken } from './videoTokens.js'
 import { handlePublicFeed, handlePersonalFeed } from './feed.js'
 import { handleGetAccountRss } from './rssAccount.js'
@@ -216,6 +222,12 @@ export default {
     }
     if (url.pathname === '/api/admin/newsletter/campaigns' && request.method === 'GET') {
       return handleAdminNewsletterCampaigns(request, env, corsHeaders)
+    }
+    {
+      const templateById = url.pathname.match(/^\/api\/admin\/newsletter\/templates\/([^/]+)$/)
+      if (templateById && (request.method === 'PATCH' || request.method === 'DELETE')) {
+        return handleAdminNewsletterTemplateById(request, env, corsHeaders, templateById[1])
+      }
     }
     if (url.pathname === '/api/admin/newsletter/templates' && (request.method === 'GET' || request.method === 'POST')) {
       return handleAdminNewsletterTemplates(request, env, corsHeaders)
