@@ -37,6 +37,8 @@ export function isNewsletterSendFinished(row) {
 const BREVO_CAMPAIGN_SENT_STATUSES = new Set(['sent', 'completed'])
 
 function correlationFromRequest(request) {
+  const clientCid = request.headers?.get?.('x-correlation-id')?.trim()
+  if (clientCid) return clientCid
   const cf = request.headers?.get?.('CF-Ray')
   const trace = request.headers?.get?.('X-Amzn-Trace-Id')
   const rid = request.headers?.get?.('X-Request-Id')
@@ -218,7 +220,7 @@ export async function removeSubscriberFromNewsletter(db, userId, env) {
   }
 }
 
-const STALE_CLAIM_MINUTES = 10
+const STALE_CLAIM_MINUTES = 2
 
 async function ensureBrevoNewsletterSendsTable(db) {
   await db.prepare(`
@@ -876,6 +878,7 @@ export async function handleAdminNewsletterCampaigns(request, env, corsHeaders) 
 }
 
 export async function handleAdminNewsletterTemplates(request, env, corsHeaders) {
+  const correlationId = correlationFromRequest(request) || crypto.randomUUID()
   try {
     await requireRole(request, env, 'admin', 'super_admin')
   } catch {
@@ -903,7 +906,7 @@ export async function handleAdminNewsletterTemplates(request, env, corsHeaders) 
     INSERT INTO newsletter_templates (id, name, subject, html_body, created_at, updated_at)
     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `).bind(id, name, subject, htmlBody).run()
-  newsletterLog('template_created', { templateId: id })
+  newsletterLog('template_created', { templateId: id, correlationId })
   return jsonResponse({ ok: true, id }, 201, corsHeaders)
 }
 
