@@ -274,7 +274,7 @@ export async function handleAdminPillsSettings(request, env, corsHeaders) {
     return jsonResponse({
       hasKey: Boolean(active),
       managedByEnv: Boolean(envKey),
-      maskedKey: active ? buildMaskedKey(active, Boolean(envKey)) : '',
+      maskedKey: active ? buildMaskedKey(active) : '',
     }, 200, corsHeaders)
   }
   if (request.method !== 'PATCH') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
@@ -286,7 +286,7 @@ export async function handleAdminPillsSettings(request, env, corsHeaders) {
   if (!nextKey) return jsonResponse({ error: 'apiKey is required' }, 400, corsHeaders)
   const nextHash = await hashPillsApiKey(nextKey)
   await setSetting(env, 'pills_api_key', nextHash)
-  return jsonResponse({ ok: true, hasKey: true, maskedKey: buildMaskedKey(nextHash, false) }, 200, corsHeaders)
+  return jsonResponse({ ok: true, hasKey: true, maskedKey: buildMaskedKey(nextHash) }, 200, corsHeaders)
 }
 
 export async function handleCategoryVideosBySlug(request, env, corsHeaders) {
@@ -439,8 +439,8 @@ function getPillsKeyFingerprint(keyHash) {
   return keyHash.slice(-12)
 }
 
-function buildMaskedKey(keyValue, isRaw) {
-  const suffix = isRaw ? keyValue.slice(-4) : keyValue.slice(-4)
+function buildMaskedKey(keyValue) {
+  const suffix = keyValue.slice(-4)
   return `••••••••${suffix}`
 }
 

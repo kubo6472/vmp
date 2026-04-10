@@ -91,16 +91,16 @@ class FakeDb {
   }
 }
 
-function envWithDb() {
+async function envWithDb() {
   const DB = new FakeDb()
-  const hashForTests = `${hashPillsApiKeyValue('secret-key')}`
+  const hashForTests = await hashPillsApiKeyValue('secret-key')
   DB.settings.set('pills_api_key', hashForTests)
   return { DB, RATE_LIMIT_KV: new FakeKV() }
 }
 
 describe('pills update endpoint', () => {
   it('returns 401 when API key is missing', async () => {
-    const env = envWithDb()
+    const env = await envWithDb()
     env.DB.settings.set('pills_api_key', await hashPillsApiKeyValue('secret-key'))
     const req = new Request('http://localhost/api/pills/update', {
       method: 'POST',
@@ -112,7 +112,7 @@ describe('pills update endpoint', () => {
   })
 
   it('returns 429 when rate-limited and succeeds otherwise', async () => {
-    const env = envWithDb()
+    const env = await envWithDb()
     env.DB.settings.set('pills_api_key', await hashPillsApiKeyValue('secret-key'))
     const req = () => new Request('http://localhost/api/pills/update', {
       method: 'POST',
@@ -130,7 +130,7 @@ describe('pills update endpoint', () => {
   })
 
   it('persists pills and exposes them on /api/pills', async () => {
-    const env = envWithDb()
+    const env = await envWithDb()
     env.DB.settings.set('pills_api_key', await hashPillsApiKeyValue('secret-key'))
     const updateReq = new Request('http://localhost/api/pills/update', {
       method: 'POST',
@@ -149,14 +149,14 @@ describe('pills update endpoint', () => {
 
 describe('category slug endpoint', () => {
   it('returns 404 for unknown category slug', async () => {
-    const env = envWithDb()
+    const env = await envWithDb()
     const req = new Request('http://localhost/api/categories/unknown/videos', { method: 'GET' })
     const res = await handleCategoryVideosBySlug(req, env, {})
     assert.equal(res.status, 404)
   })
 
   it('returns category videos for known slug', async () => {
-    const env = envWithDb()
+    const env = await envWithDb()
     const req = new Request('http://localhost/api/categories/fitness/videos?page=1&pageSize=10', { method: 'GET' })
     const res = await handleCategoryVideosBySlug(req, env, {})
     const payload = await res.json()
