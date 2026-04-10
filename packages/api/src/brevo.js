@@ -33,6 +33,9 @@ export function isNewsletterSendFinished(row) {
   return !!(row?.sent_at && row.campaign_id != null)
 }
 
+/** Brevo classic campaign statuses that mean delivery has been triggered. */
+const BREVO_CAMPAIGN_SENT_STATUSES = new Set(['sent', 'completed'])
+
 function correlationFromRequest(request) {
   const cf = request.headers?.get?.('CF-Ray')
   const trace = request.headers?.get?.('X-Amzn-Trace-Id')
@@ -215,6 +218,8 @@ export async function removeSubscriberFromNewsletter(db, userId, env) {
   }
 }
 
+const STALE_CLAIM_MINUTES = 10
+
 async function ensureBrevoNewsletterSendsTable(db) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS brevo_newsletter_sends (
@@ -222,11 +227,23 @@ async function ensureBrevoNewsletterSendsTable(db) {
       campaign_id  INTEGER,
       sent_at      TEXT,
       in_flight    INTEGER NOT NULL DEFAULT 0,
+      send_requested INTEGER NOT NULL DEFAULT 0,
+      claim_acquired_at TEXT,
       created_at   TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run()
   try {
     await db.prepare('ALTER TABLE brevo_newsletter_sends ADD COLUMN in_flight INTEGER NOT NULL DEFAULT 0').run()
+  } catch {
+    /* column exists */
+  }
+  try {
+    await db.prepare('ALTER TABLE brevo_newsletter_sends ADD COLUMN send_requested INTEGER NOT NULL DEFAULT 0').run()
+  } catch {
+    /* column exists */
+  }
+  try {
+    await db.prepare('ALTER TABLE brevo_newsletter_sends ADD COLUMN claim_acquired_at TEXT').run()
   } catch {
     /* column exists */
   }
@@ -238,7 +255,7 @@ async function ensureBrevoNewsletterSendsTable(db) {
 async function tryAcquireNewsletterSendClaim(db, dedupeKey) {
   const upd = await db.prepare(`
     UPDATE brevo_newsletter_sends
-    SET in_flight = 1
+    SET in_flight = 1, claim_acquired_at = CURRENT_TIMESTAMP
     WHERE dedupe_key = ?
       AND sent_at IS NULL
       AND in_flight = 0
@@ -249,20 +266,94 @@ async function tryAcquireNewsletterSendClaim(db, dedupeKey) {
 
 async function releaseNewsletterSendClaim(db, dedupeKey) {
   await db.prepare(`
-    UPDATE brevo_newsletter_sends SET in_flight = 0 WHERE dedupe_key = ? AND sent_at IS NULL
+    UPDATE brevo_newsletter_sends
+    SET in_flight = 0, claim_acquired_at = NULL
+    WHERE dedupe_key = ? AND sent_at IS NULL
   `).bind(dedupeKey).run()
 }
 
-/** Recover abandoned locks (worker crash before Brevo create). */
+/**
+ * Recover abandoned locks using claim_acquired_at (not created_at, which does not move on reclaim).
+ * Clears partial state so a new attempt can run send_requested → create → sendNow.
+ */
 async function releaseStaleNewsletterSendClaim(db, dedupeKey) {
+  const mod = `+${STALE_CLAIM_MINUTES} minutes`
   await db.prepare(`
-    UPDATE brevo_newsletter_sends SET in_flight = 0
+    UPDATE brevo_newsletter_sends
+    SET in_flight = 0,
+        claim_acquired_at = NULL,
+        send_requested = 0,
+        campaign_id = NULL
+    WHERE dedupe_key = ?
+      AND sent_at IS NULL
+      AND in_flight = 1
+      AND claim_acquired_at IS NOT NULL
+      AND datetime('now') > datetime(claim_acquired_at, ?)
+  `).bind(dedupeKey, mod).run()
+  await db.prepare(`
+    UPDATE brevo_newsletter_sends
+    SET in_flight = 0,
+        claim_acquired_at = NULL,
+        send_requested = 0,
+        campaign_id = NULL
     WHERE dedupe_key = ?
       AND sent_at IS NULL
       AND in_flight = 1
       AND campaign_id IS NULL
-      AND datetime('now') > datetime(created_at, '+2 minutes')
+      AND (claim_acquired_at IS NULL OR claim_acquired_at = '')
+      AND datetime('now') > datetime(created_at, ?)
+  `).bind(dedupeKey, mod).run()
+}
+
+async function releaseNewsletterSendClaimFullAbort(db, dedupeKey) {
+  await db.prepare(`
+    UPDATE brevo_newsletter_sends
+    SET in_flight = 0,
+        claim_acquired_at = NULL,
+        send_requested = 0,
+        campaign_id = NULL
+    WHERE dedupe_key = ? AND sent_at IS NULL
   `).bind(dedupeKey).run()
+}
+
+async function releaseNewsletterSendClaimAfterSendNowFailure(db, dedupeKey) {
+  await db.prepare(`
+    UPDATE brevo_newsletter_sends
+    SET in_flight = 0, claim_acquired_at = NULL
+    WHERE dedupe_key = ? AND sent_at IS NULL
+  `).bind(dedupeKey).run()
+}
+
+/**
+ * GET /emailCampaigns/:id — returns true if Brevo reports the campaign as sent (read-only, safe to retry).
+ */
+async function brevoCampaignLooksSent(campaignId, env) {
+  const id = Number(campaignId)
+  if (!Number.isFinite(id) || id <= 0) return false
+  const res = await brevoFetch(`/emailCampaigns/${id}`, { method: 'GET' }, env)
+  if (!res.ok) return false
+  const data = await res.json().catch(() => null)
+  const st = typeof data?.status === 'string' ? data.status.toLowerCase() : ''
+  return BREVO_CAMPAIGN_SENT_STATUSES.has(st)
+}
+
+/**
+ * If send was requested and Brevo shows the campaign sent, persist sent_at (recovery path).
+ */
+async function persistSentAtIfBrevoDelivered(db, dedupeKey, row, env) {
+  if (!row?.sent_at && Number(row?.send_requested) === 1) {
+    const cid = row.campaign_id != null ? Number(row.campaign_id) : null
+    if (Number.isFinite(cid) && cid > 0 && (await brevoCampaignLooksSent(cid, env))) {
+      const sentAt = new Date().toISOString()
+      await db.prepare(`
+        UPDATE brevo_newsletter_sends
+        SET sent_at = ?, in_flight = 0, claim_acquired_at = NULL
+        WHERE dedupe_key = ? AND sent_at IS NULL
+      `).bind(sentAt, dedupeKey).run()
+      return true
+    }
+  }
+  return false
 }
 
 function jsonResponse(data, status = 200, corsHeaders = {}) {
@@ -450,9 +541,15 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
   const db = getDb(env)
   await ensureBrevoNewsletterSendsTable(db)
 
-  let row = await db.prepare(
-    'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
-  ).bind(dedupeKey).first()
+  const sendRowSql = `
+    SELECT campaign_id, sent_at, in_flight, send_requested, claim_acquired_at
+    FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1
+  `
+
+  const loadSendRow = () =>
+    db.prepare(sendRowSql).bind(dedupeKey).first()
+
+  let row = await loadSendRow()
 
   if (isNewsletterSendFinished(row)) {
     newsletterLog('send_idempotent_hit', { correlationId, campaignId: Number(row.campaign_id) })
@@ -494,9 +591,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
   }
 
   await db.prepare('INSERT OR IGNORE INTO brevo_newsletter_sends (dedupe_key) VALUES (?)').bind(dedupeKey).run()
-  row = await db.prepare(
-    'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
-  ).bind(dedupeKey).first()
+  row = await loadSendRow()
 
   if (isNewsletterSendFinished(row)) {
     newsletterLog('send_idempotent_race', { correlationId, campaignId: Number(row.campaign_id) })
@@ -508,9 +603,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
   }
 
   await releaseStaleNewsletterSendClaim(db, dedupeKey)
-  row = await db.prepare(
-    'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
-  ).bind(dedupeKey).first()
+  row = await loadSendRow()
 
   if (isNewsletterSendFinished(row)) {
     newsletterLog('send_idempotent_after_stale', { correlationId, campaignId: Number(row.campaign_id) })
@@ -521,25 +614,61 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
     }, 200, corsHeaders)
   }
 
-  let inflight = Number(row?.in_flight) === 1
-  let existingCampaignId = row?.campaign_id != null ? Number(row.campaign_id) : null
-
-  if (inflight && Number.isFinite(existingCampaignId) && existingCampaignId > 0) {
-    newsletterLog('send_idempotent_campaign_held', { correlationId, campaignId: existingCampaignId })
+  if (await persistSentAtIfBrevoDelivered(db, dedupeKey, row, env)) {
+    row = await loadSendRow()
+    newsletterLog('send_idempotent_brevo_status', { correlationId, campaignId: Number(row.campaign_id) })
     return jsonResponse({
       ok: true,
-      campaignId: existingCampaignId,
+      campaignId: Number(row.campaign_id),
       idempotent: true,
     }, 200, corsHeaders)
+  }
+
+  let inflight = Number(row?.in_flight) === 1
+  let existingCampaignId = row?.campaign_id != null ? Number(row.campaign_id) : null
+  const sendReq = Number(row?.send_requested) === 1
+
+  if (inflight && Number.isFinite(existingCampaignId) && existingCampaignId > 0) {
+    if (sendReq && (await brevoCampaignLooksSent(existingCampaignId, env))) {
+      const sentAt = new Date().toISOString()
+      await db.prepare(`
+        UPDATE brevo_newsletter_sends
+        SET sent_at = ?, in_flight = 0, claim_acquired_at = NULL, send_requested = 1
+        WHERE dedupe_key = ? AND sent_at IS NULL
+      `).bind(sentAt, dedupeKey).run()
+      newsletterLog('send_idempotent_campaign_held', { correlationId, campaignId: existingCampaignId })
+      return jsonResponse({
+        ok: true,
+        campaignId: existingCampaignId,
+        idempotent: true,
+      }, 200, corsHeaders)
+    }
+    if (!sendReq && (await brevoCampaignLooksSent(existingCampaignId, env))) {
+      const sentAt = new Date().toISOString()
+      await db.prepare(`
+        UPDATE brevo_newsletter_sends
+        SET sent_at = ?, in_flight = 0, claim_acquired_at = NULL, send_requested = 1
+        WHERE dedupe_key = ? AND sent_at IS NULL
+      `).bind(sentAt, dedupeKey).run()
+      newsletterLog('send_idempotent_legacy_row', { correlationId, campaignId: existingCampaignId })
+      return jsonResponse({
+        ok: true,
+        campaignId: existingCampaignId,
+        idempotent: true,
+      }, 200, corsHeaders)
+    }
+    newsletterLog('send_conflict_inflight', { correlationId, dedupeKeyLen: dedupeKey.length })
+    return jsonResponse({
+      error: 'Another send for this dedupe key is in progress. Retry shortly.',
+      code: 'newsletter_send_in_progress',
+    }, 409, corsHeaders)
   }
 
   let claimHeld = false
   if (!inflight) {
     claimHeld = await tryAcquireNewsletterSendClaim(db, dedupeKey)
     if (!claimHeld) {
-      row = await db.prepare(
-        'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
-      ).bind(dedupeKey).first()
+      row = await loadSendRow()
       if (isNewsletterSendFinished(row)) {
         return jsonResponse({
           ok: true,
@@ -547,14 +676,30 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
           idempotent: true,
         }, 200, corsHeaders)
       }
-      const cid = row?.campaign_id != null ? Number(row.campaign_id) : null
-      if (Number.isFinite(cid) && cid > 0 && !row?.sent_at) {
-        newsletterLog('send_idempotent_campaign_race', { correlationId, campaignId: cid })
+      if (await persistSentAtIfBrevoDelivered(db, dedupeKey, row, env)) {
+        row = await loadSendRow()
         return jsonResponse({
           ok: true,
-          campaignId: cid,
+          campaignId: Number(row.campaign_id),
           idempotent: true,
         }, 200, corsHeaders)
+      }
+      const cid = row?.campaign_id != null ? Number(row.campaign_id) : null
+      if (Number.isFinite(cid) && cid > 0 && Number(row?.send_requested) === 1 && !row?.sent_at) {
+        if (await brevoCampaignLooksSent(cid, env)) {
+          const sentAt = new Date().toISOString()
+          await db.prepare(`
+            UPDATE brevo_newsletter_sends
+            SET sent_at = ?, in_flight = 0, claim_acquired_at = NULL
+            WHERE dedupe_key = ? AND sent_at IS NULL
+          `).bind(sentAt, dedupeKey).run()
+          newsletterLog('send_idempotent_campaign_race', { correlationId, campaignId: cid })
+          return jsonResponse({
+            ok: true,
+            campaignId: cid,
+            idempotent: true,
+          }, 200, corsHeaders)
+        }
       }
       newsletterLog('send_conflict_after_claim', { correlationId, dedupeKeyLen: dedupeKey.length })
       return jsonResponse({
@@ -570,10 +715,18 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
     }, 409, corsHeaders)
   }
 
+  await db.prepare(`
+    UPDATE brevo_newsletter_sends SET send_requested = 1 WHERE dedupe_key = ? AND sent_at IS NULL
+  `).bind(dedupeKey).run()
+
   let campaignId = existingCampaignId != null && Number.isFinite(existingCampaignId) ? existingCampaignId : null
 
   const releaseIfHeld = async () => {
-    if (claimHeld) await releaseNewsletterSendClaim(db, dedupeKey)
+    if (claimHeld) await releaseNewsletterSendClaimFullAbort(db, dedupeKey)
+  }
+
+  const releaseAfterSendNowFail = async () => {
+    if (claimHeld) await releaseNewsletterSendClaimAfterSendNowFailure(db, dedupeKey)
   }
 
   try {
@@ -610,9 +763,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
       `).bind(Number(newId), dedupeKey).run()
       const changed = upd.meta?.changes ?? upd.changes ?? 0
       if (changed === 0) {
-        row = await db.prepare(
-          'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
-        ).bind(dedupeKey).first()
+        row = await loadSendRow()
         if (isNewsletterSendFinished(row)) {
           await releaseIfHeld()
           return jsonResponse({
@@ -627,9 +778,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
       }
     }
 
-    row = await db.prepare(
-      'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
-    ).bind(dedupeKey).first()
+    row = await loadSendRow()
     if (isNewsletterSendFinished(row)) {
       await releaseIfHeld()
       return jsonResponse({
@@ -650,7 +799,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
       })
       const status = sendRes.status === 504 ? 504 : (sendRes.status >= 400 && sendRes.status < 600 ? sendRes.status : 502)
       const msg = typeof err.message === 'string' ? err.message : 'Campaign created but send failed'
-      await releaseIfHeld()
+      await releaseAfterSendNowFail()
       return jsonResponse({
         error: msg,
         code: sendRes.status === 504 ? 'brevo_timeout' : 'brevo_send_failed',
@@ -662,7 +811,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
 
     const sentAt = new Date().toISOString()
     await db.prepare(`
-      UPDATE brevo_newsletter_sends SET sent_at = ?, in_flight = 0 WHERE dedupe_key = ? AND sent_at IS NULL
+      UPDATE brevo_newsletter_sends SET sent_at = ?, in_flight = 0, claim_acquired_at = NULL WHERE dedupe_key = ? AND sent_at IS NULL
     `).bind(sentAt, dedupeKey).run()
 
     newsletterLog('send_complete', { correlationId, campaignId: Number(campaignId) })
