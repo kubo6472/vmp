@@ -57,7 +57,7 @@ const page = ref(1)
 const hasMore = ref(false)
 
 const loadPage = async (nextPage = 1) => {
-  if (nextPage === page.value && !loading.value) loadingMore.value = true
+  if (nextPage !== page.value && !loading.value) loadingMore.value = true
   const slug = encodeURIComponent(String(route.params.slug || ''))
   try {
     const res = await fetch(`${config.public.apiUrl}/api/categories/${slug}/videos?page=${nextPage}&pageSize=24`)

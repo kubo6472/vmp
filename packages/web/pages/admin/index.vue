@@ -868,7 +868,7 @@ const trashing = ref<Record<string, boolean>>({})
 const uploadingFor = ref<string | null>(null)
 const activeVideoTab = ref<'all' | 'locks'>('all')
 const activeAdminTab = ref<'videos' | 'categories' | 'homepage' | 'pills' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system'>('videos')
-const adminTabs = [
+const baseAdminTabs = [
   { id: 'videos' as const, label: 'Videos' },
   { id: 'categories' as const, label: 'Categories' },
   { id: 'homepage' as const, label: 'Homepage' },
@@ -879,6 +879,9 @@ const adminTabs = [
   { id: 'analytics' as const, label: 'Analytics' },
   { id: 'system' as const, label: 'System' },
 ]
+const adminTabs = computed(() =>
+  baseAdminTabs.filter(tab => tab.id !== 'pills' || isAdmin.value)
+)
 const editingTitle = ref<{ id: string; value: string } | null>(null)
 const titleInputEl = ref<HTMLInputElement | null>(null)
 const editingSlug  = ref<{ id: string; value: string } | null>(null)
@@ -1294,66 +1297,108 @@ const createPill = async () => {
     sortOrder: adminPills.value.length,
   }
   if (!payload.label) return
-  const res = await fetch(`${config.public.apiUrl}/api/admin/pills`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) return
-  newPill.value = { label: '', value: 0, color: '#2563eb' }
-  await loadAdminPills()
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/pills`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      await loadAdminPills()
+      throw new Error(`Failed to create pill: HTTP ${res.status}`)
+    }
+    newPill.value = { label: '', value: 0, color: '#2563eb' }
+    await loadAdminPills()
+  } catch (error) {
+    console.error('createPill failed', error)
+  }
 }
 
 const savePill = async (pill: any) => {
-  await fetch(`${config.public.apiUrl}/api/admin/pills`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({
-      id: pill.id,
-      label: pill.label,
-      value: Number(pill.value),
-      color: pill.color,
-      sortOrder: Number(pill.sort_order),
-    }),
-  })
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/pills`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({
+        id: pill.id,
+        label: pill.label,
+        value: Number(pill.value),
+        color: pill.color,
+        sortOrder: Number(pill.sort_order),
+      }),
+    })
+    if (!res.ok) {
+      await loadAdminPills()
+      throw new Error(`Failed to save pill: HTTP ${res.status}`)
+    }
+  } catch (error) {
+    console.error('savePill failed', error)
+  }
 }
 
 const deletePill = async (id: string) => {
-  await fetch(`${config.public.apiUrl}/api/admin/pills`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ id }),
-  })
-  await loadAdminPills()
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/pills`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ id }),
+    })
+    if (!res.ok) {
+      await loadAdminPills()
+      throw new Error(`Failed to delete pill: HTTP ${res.status}`)
+    }
+    await loadAdminPills()
+  } catch (error) {
+    console.error('deletePill failed', error)
+  }
 }
 
 const movePill = async (idx: number, direction: -1 | 1) => {
+  const prev = [...adminPills.value]
   const next = [...adminPills.value]
   const swapIdx = idx + direction
   if (swapIdx < 0 || swapIdx >= next.length) return
   const [moved] = next.splice(idx, 1)
   next.splice(swapIdx, 0, moved)
   adminPills.value = next.map((pill, i) => ({ ...pill, sort_order: i }))
-  await fetch(`${config.public.apiUrl}/api/admin/pills`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({
-      items: adminPills.value.map((pill) => ({ id: pill.id })),
-    }),
-  })
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/pills`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({
+        items: adminPills.value.map((pill) => ({ id: pill.id })),
+      }),
+    })
+    if (!res.ok) {
+      adminPills.value = prev
+      await loadAdminPills()
+      throw new Error(`Failed to reorder pills: HTTP ${res.status}`)
+    }
+  } catch (error) {
+    adminPills.value = prev
+    await loadAdminPills()
+    console.error('movePill failed', error)
+  }
 }
 
 const savePillsApiKey = async () => {
   const key = pillsApiKey.value.trim()
   if (!key) return
-  const res = await fetch(`${config.public.apiUrl}/api/admin/pills/settings`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ apiKey: key }),
-  })
-  if (!res.ok) return
-  pillsApiKey.value = ''
-  await loadAdminPills()
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/pills/settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ apiKey: key }),
+    })
+    if (!res.ok) {
+      await loadAdminPills()
+      throw new Error(`Failed to save pills API key: HTTP ${res.status}`)
+    }
+    pillsApiKey.value = ''
+    await loadAdminPills()
+  } catch (error) {
+    console.error('savePillsApiKey failed', error)
+  }
 }
 
 const saveNewsletterSettings = async () => {

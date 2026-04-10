@@ -116,10 +116,13 @@ async function checkPillsUpdateRateLimit(request, env) {
   if (!kv) return { limited: false, retryAfterSeconds: 0 }
 
   const configured = Number.parseInt(
-    String(await getSetting(env, 'pills_update_rate_limit_per_minute', { defaultValue: '30' }) ?? '30'),
+    String(await getSetting(env, 'pills_update_rate_limit_per_minute') ?? ''),
     10,
   )
-  const perMinuteLimit = Number.isFinite(configured) && configured > 0 ? configured : 30
+  const perMinuteLimit = Number.isFinite(configured) && configured > 0 ? configured : null
+  if (!perMinuteLimit) {
+    return { limited: true, retryAfterSeconds: 60, error: 'pills_update_rate_limit_per_minute is not configured' }
+  }
   const minute = Math.floor(Date.now() / 60000)
   const sourceIp = extractClientIp(request)
   const apiKey = request.headers.get('x-api-key') || 'missing'

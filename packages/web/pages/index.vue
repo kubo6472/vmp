@@ -322,11 +322,12 @@ const categorySections = computed(() =>
     const allVideos = combinedIds.map(id => videoById.value.get(id)).filter(Boolean)
     const variantPool = ['featured_hero', 'two_by_two', 'side_mini', 'three_by_one'] as const
     const variant = variantPool[Math.abs(block.category.slug.split('').reduce((n, ch) => n + ch.charCodeAt(0), 0)) % variantPool.length]
+    const visibleCount = variant === 'two_by_two' || variant === 'side_mini' ? 4 : 3
     return {
       category: block.category,
       allVideos,
-      visible: allVideos.slice(0, 3),
-      overflowCount: Math.max(0, allVideos.length - 3),
+      visible: allVideos.slice(0, visibleCount),
+      overflowCount: Math.max(0, allVideos.length - visibleCount),
       variant,
     }
   }).filter(section => section.allVideos.length > 0)
