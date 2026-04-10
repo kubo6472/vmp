@@ -1007,14 +1007,19 @@ const newsletterPreviewSrcdoc = computed(() => {
   </style></head><body>${bodyHtml}</body></html>`
 })
 
-watch(newsletterTemplateId, (id) => {
-  if (!id) return
-  const t = newsletterTemplates.value.find((x: { id: string }) => x.id === id)
-  if (t) {
-    newsletterSubject.value = String(t.subject || '')
-    newsletterHtml.value = String(t.html_body || '')
-  }
-})
+watch(
+  [newsletterTemplateId, newsletterTemplates],
+  () => {
+    const id = newsletterTemplateId.value
+    if (!id) return
+    const t = newsletterTemplates.value.find((x: { id: string }) => x.id === id)
+    if (t) {
+      newsletterSubject.value = String(t.subject || '')
+      newsletterHtml.value = String(t.html_body || '')
+    }
+  },
+  { deep: true },
+)
 
 const chronologicallySortedUploads = computed(() =>
   [...uploads.value].sort((a, b) => new Date(b.upload_date).getTime() - new Date(a.upload_date).getTime())

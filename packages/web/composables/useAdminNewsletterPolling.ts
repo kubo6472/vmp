@@ -38,15 +38,19 @@ export function useAdminNewsletterPolling(options: {
     if (cancelled || !isActive.value || !isAdmin.value) return
     try {
       await loadCampaigns()
+      if (cancelled || !isActive.value || !isAdmin.value) return
       lastCampaignsError.value = null
       lastCampaignsOkAt.value = new Date().toISOString()
       pollAttempt.value = 0
+      if (cancelled || !isActive.value || !isAdmin.value) return
       schedule(baseMs())
     } catch (e: unknown) {
+      if (cancelled || !isActive.value || !isAdmin.value) return
       const msg = e instanceof Error ? e.message : String(e)
       lastCampaignsError.value = msg
       pollAttempt.value += 1
       const backoff = Math.min(300_000, baseMs() * 2 ** Math.min(pollAttempt.value, 4))
+      if (cancelled || !isActive.value || !isAdmin.value) return
       schedule(backoff)
     }
   }

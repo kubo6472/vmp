@@ -44,6 +44,13 @@ function newsletterLog(event, fields = {}) {
   console.log(JSON.stringify({ source: 'brevo_newsletter', event, ...fields }))
 }
 
+/** One-way id for logs (Workers: Web Crypto; no raw user ids). */
+async function hashUserId(userId) {
+  const enc = new TextEncoder()
+  const buf = await crypto.subtle.digest('SHA-256', enc.encode(`user:${String(userId)}`))
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
 function getDb(env) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('D1 binding not found')
@@ -154,7 +161,8 @@ export async function syncPayingSubscriberToNewsletter(db, userId, env) {
   const res = await brevoFetch('/contacts', { method: 'POST', body: JSON.stringify(body) }, env)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    newsletterLog('sync_contact_failed', { userId, status: res.status, code: err?.code })
+    const userIdHash = await hashUserId(userId)
+    newsletterLog('sync_contact_failed', { userIdHash, status: res.status, code: err?.code })
   }
 }
 
@@ -202,7 +210,8 @@ export async function removeSubscriberFromNewsletter(db, userId, env) {
   )
   if (!res.ok && res.status !== 404) {
     const err = await res.json().catch(() => ({}))
-    newsletterLog('remove_from_list_failed', { userId, status: res.status, code: err?.code })
+    const userIdHash = await hashUserId(userId)
+    newsletterLog('remove_from_list_failed', { userIdHash, status: res.status, code: err?.code })
   }
 }
 
@@ -212,9 +221,48 @@ async function ensureBrevoNewsletterSendsTable(db) {
       dedupe_key   TEXT PRIMARY KEY,
       campaign_id  INTEGER,
       sent_at      TEXT,
+      in_flight    INTEGER NOT NULL DEFAULT 0,
       created_at   TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run()
+  try {
+    await db.prepare('ALTER TABLE brevo_newsletter_sends ADD COLUMN in_flight INTEGER NOT NULL DEFAULT 0').run()
+  } catch {
+    /* column exists */
+  }
+}
+
+/**
+ * Try to acquire exclusive send lock for dedupe_key. Returns false if another request holds it or row is done.
+ */
+async function tryAcquireNewsletterSendClaim(db, dedupeKey) {
+  const upd = await db.prepare(`
+    UPDATE brevo_newsletter_sends
+    SET in_flight = 1
+    WHERE dedupe_key = ?
+      AND sent_at IS NULL
+      AND in_flight = 0
+  `).bind(dedupeKey).run()
+  const n = upd.meta?.changes ?? upd.changes ?? 0
+  return n > 0
+}
+
+async function releaseNewsletterSendClaim(db, dedupeKey) {
+  await db.prepare(`
+    UPDATE brevo_newsletter_sends SET in_flight = 0 WHERE dedupe_key = ? AND sent_at IS NULL
+  `).bind(dedupeKey).run()
+}
+
+/** Recover abandoned locks (worker crash before Brevo create). */
+async function releaseStaleNewsletterSendClaim(db, dedupeKey) {
+  await db.prepare(`
+    UPDATE brevo_newsletter_sends SET in_flight = 0
+    WHERE dedupe_key = ?
+      AND sent_at IS NULL
+      AND in_flight = 1
+      AND campaign_id IS NULL
+      AND datetime('now') > datetime(created_at, '+2 minutes')
+  `).bind(dedupeKey).run()
 }
 
 function jsonResponse(data, status = 200, corsHeaders = {}) {
@@ -403,7 +451,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
   await ensureBrevoNewsletterSendsTable(db)
 
   let row = await db.prepare(
-    'SELECT campaign_id, sent_at FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
+    'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
   ).bind(dedupeKey).first()
 
   if (isNewsletterSendFinished(row)) {
@@ -445,57 +493,38 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
     recipients: { listIds: [listId] },
   }
 
-  let campaignId = row?.campaign_id != null ? Number(row.campaign_id) : null
+  await db.prepare('INSERT OR IGNORE INTO brevo_newsletter_sends (dedupe_key) VALUES (?)').bind(dedupeKey).run()
+  row = await db.prepare(
+    'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
+  ).bind(dedupeKey).first()
 
-  if (campaignId == null || !Number.isFinite(campaignId)) {
-    await db.prepare('INSERT OR IGNORE INTO brevo_newsletter_sends (dedupe_key) VALUES (?)').bind(dedupeKey).run()
-    row = await db.prepare(
-      'SELECT campaign_id, sent_at FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
-    ).bind(dedupeKey).first()
-    if (isNewsletterSendFinished(row)) {
-      newsletterLog('send_idempotent_race', { correlationId, campaignId: Number(row.campaign_id) })
-      return jsonResponse({
-        ok: true,
-        campaignId: Number(row.campaign_id),
-        idempotent: true,
-      }, 200, corsHeaders)
-    }
-    campaignId = row?.campaign_id != null ? Number(row.campaign_id) : null
+  if (isNewsletterSendFinished(row)) {
+    newsletterLog('send_idempotent_race', { correlationId, campaignId: Number(row.campaign_id) })
+    return jsonResponse({
+      ok: true,
+      campaignId: Number(row.campaign_id),
+      idempotent: true,
+    }, 200, corsHeaders)
   }
 
-  if (campaignId == null || !Number.isFinite(campaignId)) {
-    const createRes = await brevoFetch('/emailCampaigns', { method: 'POST', body: JSON.stringify(campaignPayload) }, env)
-    if (!createRes.ok) {
-      const err = await createRes.json().catch(() => ({}))
-      newsletterLog('send_create_failed', {
-        correlationId,
-        httpStatus: createRes.status,
-        brevoCode: typeof err.code === 'string' ? err.code : undefined,
-      })
-      const status = createRes.status === 504 ? 504 : (createRes.status >= 400 && createRes.status < 600 ? createRes.status : 502)
-      const msg = typeof err.message === 'string' ? err.message : 'Failed to create email campaign'
-      return jsonResponse({
-        error: msg,
-        code: createRes.status === 504 ? 'brevo_timeout' : 'brevo_campaign_error',
-        brevoStatus: createRes.status,
-        brevoCode: typeof err.code === 'string' ? err.code : undefined,
-      }, status, corsHeaders)
-    }
+  const inflight = Number(row?.in_flight) === 1
+  const existingCampaignId = row?.campaign_id != null ? Number(row.campaign_id) : null
 
-    const created = await createRes.json().catch(() => null)
-    const newId = created?.id
-    if (newId == null || !Number.isFinite(Number(newId))) {
-      newsletterLog('send_create_unexpected_body', { correlationId })
-      return jsonResponse({ error: 'Unexpected response creating campaign', code: 'brevo_campaign_error' }, 502, corsHeaders)
-    }
+  if (inflight && (!Number.isFinite(existingCampaignId) || existingCampaignId <= 0)) {
+    newsletterLog('send_conflict_inflight', { correlationId, dedupeKeyLen: dedupeKey.length })
+    return jsonResponse({
+      error: 'Another send for this dedupe key is in progress. Retry shortly.',
+      code: 'newsletter_send_in_progress',
+    }, 409, corsHeaders)
+  }
 
-    const upd = await db.prepare(`
-      UPDATE brevo_newsletter_sends SET campaign_id = ? WHERE dedupe_key = ? AND campaign_id IS NULL
-    `).bind(Number(newId), dedupeKey).run()
-    const changed = upd.meta?.changes ?? upd.changes ?? 0
-    if (changed === 0) {
+  let claimHeld = false
+  if (!inflight) {
+    await releaseStaleNewsletterSendClaim(db, dedupeKey)
+    claimHeld = await tryAcquireNewsletterSendClaim(db, dedupeKey)
+    if (!claimHeld) {
       row = await db.prepare(
-        'SELECT campaign_id, sent_at FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
+        'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
       ).bind(dedupeKey).first()
       if (isNewsletterSendFinished(row)) {
         return jsonResponse({
@@ -504,50 +533,111 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
           idempotent: true,
         }, 200, corsHeaders)
       }
-      campaignId = row?.campaign_id != null ? Number(row.campaign_id) : Number(newId)
-    } else {
-      campaignId = Number(newId)
+      newsletterLog('send_conflict_after_claim', { correlationId, dedupeKeyLen: dedupeKey.length })
+      return jsonResponse({
+        error: 'Another send for this dedupe key is in progress. Retry shortly.',
+        code: 'newsletter_send_in_progress',
+      }, 409, corsHeaders)
     }
   }
 
-  row = await db.prepare(
-    'SELECT campaign_id, sent_at FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
-  ).bind(dedupeKey).first()
-  if (isNewsletterSendFinished(row)) {
-    return jsonResponse({
-      ok: true,
-      campaignId: Number(row.campaign_id),
-      idempotent: true,
-    }, 200, corsHeaders)
+  let campaignId = existingCampaignId != null && Number.isFinite(existingCampaignId) ? existingCampaignId : null
+
+  try {
+    if (campaignId == null || !Number.isFinite(campaignId)) {
+      const createRes = await brevoFetch('/emailCampaigns', { method: 'POST', body: JSON.stringify(campaignPayload) }, env)
+      if (!createRes.ok) {
+        const err = await createRes.json().catch(() => ({}))
+        newsletterLog('send_create_failed', {
+          correlationId,
+          httpStatus: createRes.status,
+          brevoCode: typeof err.code === 'string' ? err.code : undefined,
+        })
+        const status = createRes.status === 504 ? 504 : (createRes.status >= 400 && createRes.status < 600 ? createRes.status : 502)
+        const msg = typeof err.message === 'string' ? err.message : 'Failed to create email campaign'
+        await releaseNewsletterSendClaim(db, dedupeKey)
+        return jsonResponse({
+          error: msg,
+          code: createRes.status === 504 ? 'brevo_timeout' : 'brevo_campaign_error',
+          brevoStatus: createRes.status,
+          brevoCode: typeof err.code === 'string' ? err.code : undefined,
+        }, status, corsHeaders)
+      }
+
+      const created = await createRes.json().catch(() => null)
+      const newId = created?.id
+      if (newId == null || !Number.isFinite(Number(newId))) {
+        newsletterLog('send_create_unexpected_body', { correlationId })
+        await releaseNewsletterSendClaim(db, dedupeKey)
+        return jsonResponse({ error: 'Unexpected response creating campaign', code: 'brevo_campaign_error' }, 502, corsHeaders)
+      }
+
+      const upd = await db.prepare(`
+        UPDATE brevo_newsletter_sends SET campaign_id = ? WHERE dedupe_key = ? AND campaign_id IS NULL
+      `).bind(Number(newId), dedupeKey).run()
+      const changed = upd.meta?.changes ?? upd.changes ?? 0
+      if (changed === 0) {
+        row = await db.prepare(
+          'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
+        ).bind(dedupeKey).first()
+        if (isNewsletterSendFinished(row)) {
+          await releaseNewsletterSendClaim(db, dedupeKey)
+          return jsonResponse({
+            ok: true,
+            campaignId: Number(row.campaign_id),
+            idempotent: true,
+          }, 200, corsHeaders)
+        }
+        campaignId = row?.campaign_id != null ? Number(row.campaign_id) : Number(newId)
+      } else {
+        campaignId = Number(newId)
+      }
+    }
+
+    row = await db.prepare(
+      'SELECT campaign_id, sent_at, in_flight FROM brevo_newsletter_sends WHERE dedupe_key = ? LIMIT 1',
+    ).bind(dedupeKey).first()
+    if (isNewsletterSendFinished(row)) {
+      await releaseNewsletterSendClaim(db, dedupeKey)
+      return jsonResponse({
+        ok: true,
+        campaignId: Number(row.campaign_id),
+        idempotent: true,
+      }, 200, corsHeaders)
+    }
+
+    const sendRes = await brevoFetch(`/emailCampaigns/${campaignId}/sendNow`, { method: 'POST' }, env)
+    if (!sendRes.ok && sendRes.status !== 204) {
+      const err = await sendRes.json().catch(() => ({}))
+      newsletterLog('send_now_failed', {
+        correlationId,
+        campaignId,
+        httpStatus: sendRes.status,
+        brevoCode: typeof err.code === 'string' ? err.code : undefined,
+      })
+      const status = sendRes.status === 504 ? 504 : (sendRes.status >= 400 && sendRes.status < 600 ? sendRes.status : 502)
+      const msg = typeof err.message === 'string' ? err.message : 'Campaign created but send failed'
+      await releaseNewsletterSendClaim(db, dedupeKey)
+      return jsonResponse({
+        error: msg,
+        code: sendRes.status === 504 ? 'brevo_timeout' : 'brevo_send_failed',
+        campaignId,
+        brevoStatus: sendRes.status,
+        brevoCode: typeof err.code === 'string' ? err.code : undefined,
+      }, status, corsHeaders)
+    }
+
+    const sentAt = new Date().toISOString()
+    await db.prepare(`
+      UPDATE brevo_newsletter_sends SET sent_at = ?, in_flight = 0 WHERE dedupe_key = ? AND sent_at IS NULL
+    `).bind(sentAt, dedupeKey).run()
+
+    newsletterLog('send_complete', { correlationId, campaignId: Number(campaignId) })
+    return jsonResponse({ ok: true, campaignId: Number(campaignId) }, 200, corsHeaders)
+  } catch (e) {
+    await releaseNewsletterSendClaim(db, dedupeKey)
+    throw e
   }
-
-  const sendRes = await brevoFetch(`/emailCampaigns/${campaignId}/sendNow`, { method: 'POST' }, env)
-  if (!sendRes.ok && sendRes.status !== 204) {
-    const err = await sendRes.json().catch(() => ({}))
-    newsletterLog('send_now_failed', {
-      correlationId,
-      campaignId,
-      httpStatus: sendRes.status,
-      brevoCode: typeof err.code === 'string' ? err.code : undefined,
-    })
-    const status = sendRes.status === 504 ? 504 : (sendRes.status >= 400 && sendRes.status < 600 ? sendRes.status : 502)
-    const msg = typeof err.message === 'string' ? err.message : 'Campaign created but send failed'
-    return jsonResponse({
-      error: msg,
-      code: sendRes.status === 504 ? 'brevo_timeout' : 'brevo_send_failed',
-      campaignId,
-      brevoStatus: sendRes.status,
-      brevoCode: typeof err.code === 'string' ? err.code : undefined,
-    }, status, corsHeaders)
-  }
-
-  const sentAt = new Date().toISOString()
-  await db.prepare(`
-    UPDATE brevo_newsletter_sends SET sent_at = ? WHERE dedupe_key = ? AND sent_at IS NULL
-  `).bind(sentAt, dedupeKey).run()
-
-  newsletterLog('send_complete', { correlationId, campaignId: Number(campaignId) })
-  return jsonResponse({ ok: true, campaignId: Number(campaignId) }, 200, corsHeaders)
 }
 
 /**
