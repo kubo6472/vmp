@@ -145,6 +145,43 @@ describe('pills update endpoint', () => {
     assert.equal(payload.pills.length, 1)
     assert.equal(payload.pills[0].label, 'Subscribers')
   })
+
+  it('supports env-managed API key path with rate limiting', async () => {
+    const env = await envWithDb()
+    env.PILLS_API_KEY = 'env-secret-key'
+    env.DB.settings.delete('pills_api_key')
+    const req = () => new Request('http://localhost/api/pills/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'env-secret-key', 'x-forwarded-for': '9.9.9.9' },
+      body: JSON.stringify({
+        pills: [{ id: 'env-1', label: 'Env path', value: 1, color: '#2563eb', sortOrder: 0 }],
+      }),
+    })
+    const r1 = await handlePillsUpdate(req(), env, {})
+    const r2 = await handlePillsUpdate(req(), env, {})
+    const r3 = await handlePillsUpdate(req(), env, {})
+    assert.equal(r1.status, 200)
+    assert.equal(r2.status, 200)
+    assert.equal(r3.status, 429)
+  })
+
+  it('returns config error when pills_update_rate_limit_per_minute is invalid', async () => {
+    const env = await envWithDb()
+    env.PILLS_API_KEY = 'env-secret-key'
+    env.DB.settings.delete('pills_api_key')
+    env.DB.settings.set('pills_update_rate_limit_per_minute', '')
+    const req = new Request('http://localhost/api/pills/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'env-secret-key', 'x-forwarded-for': '8.8.8.8' },
+      body: JSON.stringify({
+        pills: [{ id: 'badcfg', label: 'Bad cfg', value: 1, color: '#2563eb', sortOrder: 0 }],
+      }),
+    })
+    const res = await handlePillsUpdate(req, env, {})
+    const payload = await res.json()
+    assert.equal(res.status, 500)
+    assert.equal(payload.code, 'invalid_config')
+  })
 })
 
 describe('category slug endpoint', () => {

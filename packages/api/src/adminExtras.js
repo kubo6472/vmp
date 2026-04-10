@@ -1,7 +1,8 @@
 import { requireAuth, requireRole } from './auth.js'
 import { getSetting, setSetting, setSettings } from './settingsStore.js'
 
-const PILLS_KEY_HASH_PREFIX = 'pbkdf2-sha256'
+const PILLS_KEY_HASH_PREFIX = 'sha256'
+const PILLS_KEY_HASH_LEGACY_PREFIX = 'pbkdf2-sha256'
 const PILLS_KEY_HASH_ITERATIONS = 120000
 
 function getDb(env) {
@@ -60,6 +61,9 @@ export async function handlePillsUpdate(request, env, corsHeaders) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const db = getDb(env)
   const preAuthRateLimit = await checkPillsUpdateRateLimit(request, env, { phase: 'ip' })
+  if (preAuthRateLimit.error) {
+    return jsonResponse({ error: preAuthRateLimit.error, code: 'invalid_config' }, 500, corsHeaders)
+  }
   if (preAuthRateLimit.limited) {
     return new Response(JSON.stringify({
       error: 'Too many pills update requests',
@@ -84,6 +88,9 @@ export async function handlePillsUpdate(request, env, corsHeaders) {
   }
   const keyFingerprint = getPillsKeyFingerprint(expectedHash)
   const postAuthRateLimit = await checkPillsUpdateRateLimit(request, env, { phase: 'key', keyFingerprint })
+  if (postAuthRateLimit.error) {
+    return jsonResponse({ error: postAuthRateLimit.error, code: 'invalid_config' }, 500, corsHeaders)
+  }
   if (postAuthRateLimit.limited) {
     return new Response(JSON.stringify({
       error: 'Too many pills update requests',
@@ -293,7 +300,12 @@ export async function handleCategoryVideosBySlug(request, env, corsHeaders) {
   if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const db = getDb(env)
   const url = new URL(request.url)
-  const slug = decodeURIComponent(url.pathname.split('/').filter(Boolean).at(-2) || '')
+  let slug = ''
+  try {
+    slug = decodeURIComponent(url.pathname.split('/').filter(Boolean).at(-2) || '')
+  } catch {
+    return jsonResponse({ error: 'Invalid slug encoding', code: 'INVALID_SLUG' }, 400, corsHeaders)
+  }
   const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1)
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(url.searchParams.get('pageSize') || '50', 10) || 50))
   const offset = (page - 1) * pageSize
@@ -369,15 +381,18 @@ async function normalizeStoredPillsApiKeyHash(env) {
 }
 
 function isHashedPillsApiKey(value) {
-  return typeof value === 'string' && value.startsWith(`${PILLS_KEY_HASH_PREFIX}$`)
+  return typeof value === 'string'
+    && (
+      value.startsWith(`${PILLS_KEY_HASH_PREFIX}$`)
+      || value.startsWith(`${PILLS_KEY_HASH_LEGACY_PREFIX}$`)
+    )
 }
 
 async function hashPillsApiKey(rawKey) {
   const normalized = typeof rawKey === 'string' ? rawKey.trim() : ''
   if (!normalized) return ''
-  const saltBytes = crypto.getRandomValues(new Uint8Array(16))
-  const derived = await derivePbkdf2Sha256(normalized, saltBytes, PILLS_KEY_HASH_ITERATIONS)
-  return `${PILLS_KEY_HASH_PREFIX}$${PILLS_KEY_HASH_ITERATIONS}$${bytesToHex(saltBytes)}$${bytesToHex(new Uint8Array(derived))}`
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized))
+  return `${PILLS_KEY_HASH_PREFIX}$${bytesToHex(new Uint8Array(digest))}`
 }
 
 export async function hashPillsApiKeyValue(rawKey) {
@@ -387,7 +402,11 @@ export async function hashPillsApiKeyValue(rawKey) {
 async function verifyPillsApiKeyValue(rawCandidate, storedHash) {
   const candidate = typeof rawCandidate === 'string' ? rawCandidate.trim() : ''
   if (!candidate || !storedHash) return false
-  if (!isHashedPillsApiKey(storedHash)) return false
+  if (storedHash.startsWith(`${PILLS_KEY_HASH_PREFIX}$`)) {
+    const expected = await hashPillsApiKey(candidate)
+    return timingSafeEqual(new TextEncoder().encode(expected), new TextEncoder().encode(storedHash))
+  }
+  if (!storedHash.startsWith(`${PILLS_KEY_HASH_LEGACY_PREFIX}$`)) return false
   const parts = storedHash.split('$')
   if (parts.length !== 4) return false
   const iterations = Number.parseInt(parts[1], 10)
