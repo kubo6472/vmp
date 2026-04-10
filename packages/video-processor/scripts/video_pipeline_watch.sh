@@ -211,9 +211,9 @@ process_video() {
             [v2]scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2[v2out]; \
             [v3]scale=854:480:force_original_aspect_ratio=decrease:force_divisible_by=2[v3out]" \
             \
-            -map "[v1out]" -map 0:a? -c:v:0 libx264 -b:v:0 5M -preset fast -c:a:0 aac -b:a:0 128k "$TMP_DIR/1080p.mp4.tmp.$$" \
-            -map "[v2out]" -map 0:a? -c:v:1 libx264 -b:v:1 3M -preset fast -c:a:1 aac -b:a:1 128k "$TMP_DIR/720p.mp4.tmp.$$" \
-            -map "[v3out]" -map 0:a? -c:v:2 libx264 -b:v:2 1.5M -preset fast -c:a:2 aac -b:a:2 96k "$TMP_DIR/480p.mp4.tmp.$$"
+            -map "[v1out]" -map 0:a? -c:v:0 libx264 -b:v:0 5M -preset fast -c:a:0 aac -b:a:0 128k -f mp4 "$TMP_DIR/1080p.mp4.tmp.$$" \
+            -map "[v2out]" -map 0:a? -c:v:1 libx264 -b:v:1 3M -preset fast -c:a:1 aac -b:a:1 128k -f mp4 "$TMP_DIR/720p.mp4.tmp.$$" \
+            -map "[v3out]" -map 0:a? -c:v:2 libx264 -b:v:2 1.5M -preset fast -c:a:2 aac -b:a:2 96k -f mp4 "$TMP_DIR/480p.mp4.tmp.$$"
 
             # Move temp files to final location only after successful encoding
             mv "$TMP_DIR/1080p.mp4.tmp.$$" "$TMP_DIR/1080p.mp4"
