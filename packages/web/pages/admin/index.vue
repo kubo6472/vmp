@@ -528,6 +528,17 @@
                   placeholder="e.g. Your Channel"
                   class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"
                 />
+                <label class="block text-sm font-medium text-gray-900 dark:text-white mt-3" for="newsletter-poll-ms">Campaign list refresh interval (ms)</label>
+                <input
+                  id="newsletter-poll-ms"
+                  v-model.number="newsletterPollIntervalMs"
+                  type="number"
+                  min="60000"
+                  max="86400000"
+                  step="60000"
+                  class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"
+                />
+                <p class="text-xs text-gray-500 dark:text-gray-400">How often to refresh the recent campaigns list while this tab is open (60s–24h). Save settings to apply.</p>
               </div>
             </div>
 
@@ -548,6 +559,51 @@
               >
                 {{ newsletterSyncing ? 'Syncing…' : 'Sync recipients' }}
               </button>
+            </div>
+
+            <div class="border-t border-gray-200 dark:border-gray-700 pt-6 space-y-3">
+              <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Saved templates</h3>
+              <p class="text-sm text-gray-600 dark:text-gray-400">Create and edit reusable HTML templates stored in the database. Sending still uses Brevo’s campaign API.</p>
+              <div class="grid gap-3 md:grid-cols-2">
+                <div class="space-y-2">
+                  <label class="block text-sm font-medium text-gray-900 dark:text-white" for="tpl-name">Name</label>
+                  <input id="tpl-name" v-model="newsletterTemplateForm.name" type="text" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+                  <label class="block text-sm font-medium text-gray-900 dark:text-white" for="tpl-subject">Subject</label>
+                  <input id="tpl-subject" v-model="newsletterTemplateForm.subject" type="text" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+                </div>
+                <div class="space-y-2">
+                  <label class="block text-sm font-medium text-gray-900 dark:text-white" for="tpl-html">HTML body</label>
+                  <textarea id="tpl-html" v-model="newsletterTemplateForm.htmlBody" rows="6" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-sm" />
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm disabled:opacity-50"
+                      :disabled="newsletterTemplateSaving"
+                      @click="saveNewsletterTemplate"
+                    >
+                      {{ newsletterEditingTemplateId ? 'Update template' : 'Create template' }}
+                    </button>
+                    <button
+                      v-if="newsletterEditingTemplateId"
+                      type="button"
+                      class="px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-sm"
+                      @click="resetNewsletterTemplateForm"
+                    >
+                      Cancel edit
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <ul class="divide-y divide-gray-200 dark:divide-gray-700 rounded-lg border border-gray-200 dark:border-gray-700 max-h-48 overflow-auto">
+                <li v-for="tpl in newsletterTemplates" :key="tpl.id" class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+                  <span class="font-medium text-gray-900 dark:text-white">{{ tpl.name }}</span>
+                  <span class="flex gap-2">
+                    <button type="button" class="text-blue-600 dark:text-blue-400 hover:underline" @click="startEditNewsletterTemplate(tpl)">Edit</button>
+                    <button type="button" class="text-red-600 dark:text-red-400 hover:underline" @click="deleteNewsletterTemplate(tpl.id, tpl.name)">Delete</button>
+                  </span>
+                </li>
+                <li v-if="!newsletterTemplates.length" class="px-3 py-4 text-gray-500 dark:text-gray-400 text-sm">No templates yet.</li>
+              </ul>
             </div>
 
             <div class="border-t border-gray-200 dark:border-gray-700 pt-6 space-y-3">
@@ -612,7 +668,11 @@
             </div>
 
             <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
-              <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Recent campaigns (auto-polled on reload)</h3>
+              <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Recent campaigns</h3>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                <span v-if="lastCampaignsOkAt">Last refreshed: {{ new Date(lastCampaignsOkAt).toLocaleString() }}</span>
+                <span v-if="lastCampaignsError" class="text-red-600 dark:text-red-400"> · Poll error: {{ lastCampaignsError }}</span>
+              </p>
               <div class="space-y-2 max-h-56 overflow-auto">
                 <div v-for="campaign in newsletterCampaigns" :key="campaign.id" class="rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2">
                   <p class="text-sm font-medium text-gray-900 dark:text-white">{{ campaign.subject || campaign.name }}</p>
@@ -807,6 +867,7 @@
 <script setup lang="ts">
 import { resolvePlaylistDuration } from '~/composables/useHlsDuration'
 import { sizeUrl } from '~/composables/useThumbnail'
+import { useAdminNewsletterPolling } from '~/composables/useAdminNewsletterPolling'
 
 // ── Route guard ───────────────────────────────────────────────────────────────
 // This single line is the only meaningful addition to this file.
@@ -903,6 +964,8 @@ const layoutBlocks = ref<LayoutBlock[]>([])
 const newsletterListId = ref('')
 const newsletterSenderEmail = ref('')
 const newsletterSenderName = ref('')
+/** Poll interval for campaign list refresh (ms); from API, default 10 min */
+const newsletterPollIntervalMs = ref(600_000)
 const newsletterSubject = ref('')
 const newsletterHtml = ref('')
 const newsletterTemplateId = ref('')
@@ -915,6 +978,9 @@ const categoryForm = ref({ name: '', slug: '', sortOrder: 0, direction: 'desc' a
 const newsletterSyncing = ref(false)
 const newsletterTemplates = ref<any[]>([])
 const newsletterCampaigns = ref<any[]>([])
+const newsletterTemplateForm = ref({ name: '', subject: '', htmlBody: '' })
+const newsletterEditingTemplateId = ref<string | null>(null)
+const newsletterTemplateSaving = ref(false)
 const homepageHeroTitle = ref('')
 const homepageHeroSubtitle = ref('')
 const users = ref<any[]>([])
@@ -940,6 +1006,20 @@ const newsletterPreviewSrcdoc = computed(() => {
     @media (prefers-color-scheme: dark){ body{color:#e5e5e5;background:#0a0a0a} }
   </style></head><body>${bodyHtml}</body></html>`
 })
+
+watch(
+  [newsletterTemplateId, newsletterTemplates],
+  () => {
+    const id = newsletterTemplateId.value
+    if (!id) return
+    const t = newsletterTemplates.value.find((x: { id: string }) => x.id === id)
+    if (t) {
+      newsletterSubject.value = String(t.subject || '')
+      newsletterHtml.value = String(t.html_body || '')
+    }
+  },
+  { deep: true },
+)
 
 const chronologicallySortedUploads = computed(() =>
   [...uploads.value].sort((a, b) => new Date(b.upload_date).getTime() - new Date(a.upload_date).getTime())
@@ -1177,6 +1257,8 @@ const loadNewsletterSettings = async () => {
     newsletterListId.value = data.brevoSubscriberListId != null ? String(data.brevoSubscriberListId) : ''
     newsletterSenderEmail.value = data.brevoCampaignSenderEmail ?? ''
     newsletterSenderName.value = data.brevoCampaignSenderName ?? ''
+    const poll = Number(data.brevoNewsletterPollIntervalMs)
+    newsletterPollIntervalMs.value = Number.isFinite(poll) && poll >= 60_000 ? poll : 600_000
   } catch (e: any) {
     newsletterMessage.value = `Could not load newsletter settings: ${e.message}`
     newsletterMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
@@ -1194,10 +1276,24 @@ const loadNewsletterTemplates = async () => {
 const loadNewsletterCampaigns = async () => {
   if (!isAdmin.value) return
   const res = await fetch(`${config.public.apiUrl}/api/admin/newsletter/campaigns`, { headers: authHeader() })
-  if (!res.ok) return
-  const data = await res.json()
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`
+    const code = typeof data.code === 'string' ? data.code : ''
+    const brevo = data.brevoStatus != null ? ` · Brevo HTTP ${data.brevoStatus}` : ''
+    throw new Error(code ? `${msg} (${code})${brevo}` : `${msg}${brevo}`)
+  }
   newsletterCampaigns.value = data.campaigns || []
 }
+
+const isNewsletterTabActive = computed(() => activeAdminTab.value === 'newsletter')
+
+const { lastCampaignsOkAt, lastCampaignsError } = useAdminNewsletterPolling({
+  pollIntervalMs: newsletterPollIntervalMs,
+  isActive: isNewsletterTabActive,
+  isAdmin,
+  loadCampaigns: loadNewsletterCampaigns,
+})
 
 const syncNewsletterRecipients = async () => {
   newsletterSyncing.value = true
@@ -1215,6 +1311,80 @@ const syncNewsletterRecipients = async () => {
     newsletterMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
   } finally {
     newsletterSyncing.value = false
+  }
+}
+
+const resetNewsletterTemplateForm = () => {
+  newsletterEditingTemplateId.value = null
+  newsletterTemplateForm.value = { name: '', subject: '', htmlBody: '' }
+}
+
+const startEditNewsletterTemplate = (tpl: { id: string; name: string; subject: string; html_body: string }) => {
+  newsletterEditingTemplateId.value = tpl.id
+  newsletterTemplateForm.value = {
+    name: tpl.name,
+    subject: tpl.subject,
+    htmlBody: tpl.html_body,
+  }
+}
+
+const saveNewsletterTemplate = async () => {
+  if (!isAdmin.value) return
+  const { name, subject, htmlBody } = newsletterTemplateForm.value
+  if (!name.trim() || !subject.trim() || !htmlBody.trim()) {
+    newsletterMessage.value = 'Template name, subject, and HTML body are required.'
+    newsletterMessageClass.value = 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950 dark:border-amber-700 dark:text-amber-100'
+    return
+  }
+  newsletterTemplateSaving.value = true
+  newsletterMessage.value = ''
+  try {
+    const editing = newsletterEditingTemplateId.value
+    const url = editing
+      ? `${config.public.apiUrl}/api/admin/newsletter/templates/${encodeURIComponent(editing)}`
+      : `${config.public.apiUrl}/api/admin/newsletter/templates`
+    const res = await fetch(url, {
+      method: editing ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify(
+        editing
+          ? { name: name.trim(), subject: subject.trim(), htmlBody }
+          : { name: name.trim(), subject: subject.trim(), htmlBody },
+      ),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`)
+    await loadNewsletterTemplates()
+    resetNewsletterTemplateForm()
+    newsletterMessage.value = editing ? 'Template updated.' : 'Template created.'
+    newsletterMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+  } catch (e: any) {
+    newsletterMessage.value = e.message || 'Could not save template'
+    newsletterMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    newsletterTemplateSaving.value = false
+  }
+}
+
+const deleteNewsletterTemplate = async (id: string, name: string) => {
+  if (!isAdmin.value) return
+  const ok = window.confirm(`Delete template "${name}"? This cannot be undone.`)
+  if (!ok) return
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/newsletter/templates/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: authHeader(),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`)
+    if (newsletterTemplateId.value === id) newsletterTemplateId.value = ''
+    if (newsletterEditingTemplateId.value === id) resetNewsletterTemplateForm()
+    await loadNewsletterTemplates()
+    newsletterMessage.value = 'Template deleted.'
+    newsletterMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+  } catch (e: any) {
+    newsletterMessage.value = e.message || 'Delete failed'
+    newsletterMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
   }
 }
 
@@ -1425,6 +1595,7 @@ const saveNewsletterSettings = async () => {
         brevoSubscriberListId,
         brevoCampaignSenderEmail: newsletterSenderEmail.value.trim(),
         brevoCampaignSenderName: newsletterSenderName.value.trim(),
+        brevoNewsletterPollIntervalMs: newsletterPollIntervalMs.value,
       }),
     })
     if (!res.ok) {
@@ -1461,7 +1632,12 @@ const sendNewsletterCampaign = async () => {
       }),
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    if (!res.ok) {
+      const base = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`
+      const code = typeof data.code === 'string' ? ` (${data.code})` : ''
+      const brevo = data.brevoStatus != null ? ` · Brevo ${data.brevoStatus}` : ''
+      throw new Error(`${base}${code}${brevo}`)
+    }
     newsletterSendDedupeKey.value = null
     newsletterMessage.value = data.idempotent
       ? `Already sent (Brevo campaign id ${data.campaignId}).`
@@ -1517,7 +1693,6 @@ const reloadAll = async () => {
     await loadConfig()
     await loadNewsletterSettings()
     await loadNewsletterTemplates()
-    await loadNewsletterCampaigns()
     await loadHomepageContent()
     await loadUsers()
     await loadAnalytics()
