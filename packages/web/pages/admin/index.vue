@@ -431,6 +431,46 @@
           </template>
         </div>
 
+        <div v-if="activeAdminTab === 'pills'" id="pills-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-5">
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white">Pills management</h2>
+
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+            <h3 class="font-semibold text-gray-900 dark:text-white">External API key</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400">
+              Current key: <span class="font-mono">{{ pillsApiKeyMeta.maskedKey || 'not set' }}</span>
+              <span v-if="pillsApiKeyMeta.managedByEnv" class="ml-2 text-amber-600 dark:text-amber-400">(managed by environment secret)</span>
+            </p>
+            <div v-if="!pillsApiKeyMeta.managedByEnv" class="flex flex-wrap gap-2">
+              <input v-model="pillsApiKey" type="text" placeholder="Enter new API key" class="min-w-[18rem] px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+              <button class="px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold" @click="savePillsApiKey">Save API key</button>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+            <h3 class="font-semibold text-gray-900 dark:text-white">Create pill</h3>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
+              <input v-model="newPill.label" type="text" placeholder="Label" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+              <input v-model.number="newPill.value" type="number" placeholder="Value" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+              <input v-model="newPill.color" type="text" placeholder="#2563eb" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+              <button class="px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold" @click="createPill">Create</button>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <div v-for="(pill, idx) in adminPills" :key="pill.id" class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 md:grid-cols-[1fr_140px_140px_auto_auto_auto] gap-2 items-center">
+              <input v-model="pill.label" type="text" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+              <input v-model.number="pill.value" type="number" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+              <input v-model="pill.color" type="text" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+              <button class="px-2 py-1 rounded border text-xs" :disabled="idx===0" @click="movePill(idx, -1)">↑</button>
+              <button class="px-2 py-1 rounded border text-xs" :disabled="idx===adminPills.length-1" @click="movePill(idx, 1)">↓</button>
+              <div class="flex gap-2">
+                <button class="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs" @click="savePill(pill)">Save</button>
+                <button class="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs" @click="deletePill(pill.id)">Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div v-if="activeAdminTab === 'notifications'" id="notifications-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-3">
           <h2 class="text-xl font-bold text-gray-900 dark:text-white">Notifications</h2>
           <p class="text-sm text-gray-600 dark:text-gray-400">Published videos without a push are listed below.</p>
@@ -827,11 +867,12 @@ const notifying = ref<Record<string, boolean>>({})
 const trashing = ref<Record<string, boolean>>({})
 const uploadingFor = ref<string | null>(null)
 const activeVideoTab = ref<'all' | 'locks'>('all')
-const activeAdminTab = ref<'videos' | 'categories' | 'homepage' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system'>('videos')
+const activeAdminTab = ref<'videos' | 'categories' | 'homepage' | 'pills' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system'>('videos')
 const adminTabs = [
   { id: 'videos' as const, label: 'Videos' },
   { id: 'categories' as const, label: 'Categories' },
   { id: 'homepage' as const, label: 'Homepage' },
+  { id: 'pills' as const, label: 'Pills' },
   { id: 'notifications' as const, label: 'Notifications' },
   { id: 'newsletter' as const, label: 'Newsletter' },
   { id: 'users' as const, label: 'Users & roles' },
@@ -874,6 +915,10 @@ const newsletterCampaigns = ref<any[]>([])
 const homepageHeroTitle = ref('')
 const homepageHeroSubtitle = ref('')
 const users = ref<any[]>([])
+const adminPills = ref<Array<{ id: string; label: string; value: number; color: string; sort_order: number }>>([])
+const newPill = ref({ label: '', value: 0, color: '#2563eb' })
+const pillsApiKey = ref('')
+const pillsApiKeyMeta = ref<{ hasKey: boolean; managedByEnv: boolean; maskedKey: string }>({ hasKey: false, managedByEnv: false, maskedKey: '' })
 const analytics = ref<{ totalViews: number; trafficSources: any[]; retention: any[]; subscriptions: any[] }>({
   totalViews: 0,
   trafficSources: [],
@@ -1226,6 +1271,91 @@ const loadAnalytics = async () => {
   analytics.value = await res.json()
 }
 
+const loadAdminPills = async () => {
+  if (!isAdmin.value) return
+  const [pillsRes, keyRes] = await Promise.all([
+    fetch(`${config.public.apiUrl}/api/admin/pills`, { headers: authHeader() }),
+    fetch(`${config.public.apiUrl}/api/admin/pills/settings`, { headers: authHeader() }),
+  ])
+  if (pillsRes.ok) {
+    const data = await pillsRes.json()
+    adminPills.value = Array.isArray(data?.pills) ? data.pills : []
+  }
+  if (keyRes.ok) {
+    pillsApiKeyMeta.value = await keyRes.json()
+  }
+}
+
+const createPill = async () => {
+  const payload = {
+    label: newPill.value.label.trim(),
+    value: Number(newPill.value.value),
+    color: newPill.value.color || '#2563eb',
+    sortOrder: adminPills.value.length,
+  }
+  if (!payload.label) return
+  const res = await fetch(`${config.public.apiUrl}/api/admin/pills`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) return
+  newPill.value = { label: '', value: 0, color: '#2563eb' }
+  await loadAdminPills()
+}
+
+const savePill = async (pill: any) => {
+  await fetch(`${config.public.apiUrl}/api/admin/pills`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify({
+      id: pill.id,
+      label: pill.label,
+      value: Number(pill.value),
+      color: pill.color,
+      sortOrder: Number(pill.sort_order),
+    }),
+  })
+}
+
+const deletePill = async (id: string) => {
+  await fetch(`${config.public.apiUrl}/api/admin/pills`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify({ id }),
+  })
+  await loadAdminPills()
+}
+
+const movePill = async (idx: number, direction: -1 | 1) => {
+  const next = [...adminPills.value]
+  const swapIdx = idx + direction
+  if (swapIdx < 0 || swapIdx >= next.length) return
+  const [moved] = next.splice(idx, 1)
+  next.splice(swapIdx, 0, moved)
+  adminPills.value = next.map((pill, i) => ({ ...pill, sort_order: i }))
+  await fetch(`${config.public.apiUrl}/api/admin/pills`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify({
+      items: adminPills.value.map((pill) => ({ id: pill.id })),
+    }),
+  })
+}
+
+const savePillsApiKey = async () => {
+  const key = pillsApiKey.value.trim()
+  if (!key) return
+  const res = await fetch(`${config.public.apiUrl}/api/admin/pills/settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify({ apiKey: key }),
+  })
+  if (!res.ok) return
+  pillsApiKey.value = ''
+  await loadAdminPills()
+}
+
 const saveNewsletterSettings = async () => {
   if (!isAdmin.value) return
   newsletterSaving.value = true
@@ -1346,6 +1476,7 @@ const reloadAll = async () => {
     await loadHomepageContent()
     await loadUsers()
     await loadAnalytics()
+    await loadAdminPills()
   }
   finally { loading.value = false }
 }
@@ -1636,7 +1767,7 @@ const confirmDialogRef = ref<HTMLElement | null>(null)
 const swapDialogRef    = ref<HTMLElement | null>(null)
 const lastFocusedEl    = ref<HTMLElement | null>(null)
 
-function setAdminTab(tab: 'videos' | 'categories' | 'homepage' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system') {
+function setAdminTab(tab: 'videos' | 'categories' | 'homepage' | 'pills' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system') {
   router.replace({ query: { ...route.query, tab } })
 }
 
@@ -1666,7 +1797,7 @@ function onConfirmModalKeydown(e: KeyboardEvent) {
 
 watch(() => route.query, (query) => {
   const tab = query.tab
-  if (tab && ['videos', 'categories', 'homepage', 'notifications', 'newsletter', 'users', 'analytics', 'system'].includes(String(tab))) {
+  if (tab && ['videos', 'categories', 'homepage', 'pills', 'notifications', 'newsletter', 'users', 'analytics', 'system'].includes(String(tab))) {
     activeAdminTab.value = tab as any
   }
 }, { immediate: true })

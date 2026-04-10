@@ -47,6 +47,17 @@
         <p class="text-lg text-gray-600 dark:text-gray-400">
           {{ heroBlock?.body || 'Watch free previews or unlock full access with a premium subscription' }}
         </p>
+        <div v-if="pills.length" class="mt-5 flex flex-wrap gap-2">
+          <div
+            v-for="pill in pills"
+            :key="pill.id"
+            class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold text-white"
+            :style="{ backgroundColor: pill.color || '#2563eb' }"
+          >
+            <span>{{ pill.label }}</span>
+            <span class="rounded-full bg-black/20 px-2 py-0.5">{{ pill.value }}</span>
+          </div>
+        </div>
       </div>
 
       <!-- Loading State -->
@@ -100,12 +111,39 @@
                   More -&gt;
                 </NuxtLink>
               </div>
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                <VideoCard
-                  v-for="video in section.visible"
-                  :key="`category-${section.category.id}-${video.id}`"
-                  :video="video"
-                />
+
+              <div v-if="section.variant === 'featured_hero'" class="grid gap-4 lg:grid-cols-[2fr_1fr]">
+                <VideoCard v-if="section.allVideos[0]" :video="section.allVideos[0]" :key="`featured-${section.category.id}-${section.allVideos[0].id}`" />
+                <div class="grid gap-4">
+                  <VideoCard
+                    v-for="video in section.allVideos.slice(1, 3)"
+                    :key="`featured-side-${section.category.id}-${video.id}`"
+                    :video="video"
+                  />
+                </div>
+              </div>
+
+              <div v-else-if="section.variant === 'two_by_two'" class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <VideoCard v-for="video in section.allVideos.slice(0, 4)" :key="`two-by-two-${section.category.id}-${video.id}`" :video="video" />
+              </div>
+
+              <div v-else-if="section.variant === 'side_mini'" class="grid gap-4 lg:grid-cols-[2fr_1fr]">
+                <VideoCard v-if="section.allVideos[0]" :video="section.allVideos[0]" :key="`side-main-${section.category.id}-${section.allVideos[0].id}`" />
+                <div class="space-y-3">
+                  <div
+                    v-for="video in section.allVideos.slice(1, 4)"
+                    :key="`side-mini-${section.category.id}-${video.id}`"
+                    class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-3"
+                  >
+                    <NuxtLink :to="`/watch/${video.slug || video.id}`" class="text-sm font-semibold text-gray-900 dark:text-white hover:text-blue-600">
+                      {{ video.title }}
+                    </NuxtLink>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                <VideoCard v-for="video in section.allVideos.slice(0, 3)" :key="`three-row-${section.category.id}-${video.id}`" :video="video" />
               </div>
               <p v-if="section.overflowCount > 0" class="text-xs text-gray-500 dark:text-gray-400">
                 +{{ section.overflowCount }} more in this category
@@ -219,6 +257,7 @@ const featuredVideoIds   = ref<string[]>([])
 const featuredMode = ref<'latest' | 'specific'>('latest')
 const featuredVideoId = ref<string | null>(null)
 const categories = ref<VideoCategory[]>([])
+const pills = ref<Array<{ id: string; label: string; value: number; color: string }>>([])
 
 const blockLabelMap: Record<LayoutBlock['type'], string> = {
   hero:         'Hero',
@@ -279,14 +318,18 @@ const recentTwoByTwoVideos = computed(() => {
 
 const categorySections = computed(() =>
   (placement.value?.categoryBlocks ?? []).map((block) => {
-    const visible = block.visible.map(v => videoById.value.get(v.id)).filter(Boolean)
-    const overflowCount = block.overflow.length
+    const combinedIds = [...block.visible, ...block.overflow].map(v => v.id)
+    const allVideos = combinedIds.map(id => videoById.value.get(id)).filter(Boolean)
+    const variantPool = ['featured_hero', 'two_by_two', 'side_mini', 'three_by_one'] as const
+    const variant = variantPool[Math.abs(block.category.slug.split('').reduce((n, ch) => n + ch.charCodeAt(0), 0)) % variantPool.length]
     return {
       category: block.category,
-      visible,
-      overflowCount,
+      allVideos,
+      visible: allVideos.slice(0, 3),
+      overflowCount: Math.max(0, allVideos.length - 3),
+      variant,
     }
-  }).filter(section => section.visible.length > 0)
+  }).filter(section => section.allVideos.length > 0)
 )
 
 const loadAdminConfig = async () => {
@@ -316,6 +359,13 @@ const loadPlacement = async () => {
   placement.value = await res.json()
 }
 
+const loadPills = async () => {
+  const res = await fetch(`${config.public.apiUrl}/api/pills`)
+  if (!res.ok) return
+  const data = await res.json()
+  pills.value = Array.isArray(data?.pills) ? data.pills : []
+}
+
 onMounted(async () => {
   try {
     const [videosRes] = await Promise.all([
@@ -323,6 +373,7 @@ onMounted(async () => {
       loadAdminConfig(),
       loadCategories(),
       loadPlacement(),
+      loadPills(),
     ])
     if (!videosRes.ok) throw new Error('Failed to load videos')
     const data = await videosRes.json()

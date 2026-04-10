@@ -39,6 +39,9 @@ import {
   handleHomepageContent,
   handlePillsPublic,
   handlePillsUpdate,
+  handleAdminPills,
+  handleAdminPillsSettings,
+  handleCategoryVideosBySlug,
   handleAdminUsers,
   handleAdminAnalytics,
   ensurePillsApiKeySetting,
@@ -233,6 +236,15 @@ export default {
     }
     if (url.pathname === '/api/pills/update' && request.method === 'POST') {
       return handlePillsUpdate(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/pills' && ['GET', 'POST', 'PATCH', 'DELETE'].includes(request.method)) {
+      return handleAdminPills(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/pills/settings' && ['GET', 'PATCH'].includes(request.method)) {
+      return handleAdminPillsSettings(request, env, corsHeaders)
+    }
+    if (url.pathname.match(/^\/api\/categories\/[^/]+\/videos$/) && request.method === 'GET') {
+      return handleCategoryVideosBySlug(request, env, corsHeaders)
     }
     if (url.pathname === '/api/account/pricing' && request.method === 'GET') {
       return handleGetPricing(request, env, corsHeaders)
