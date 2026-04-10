@@ -21,7 +21,9 @@ export const DEFAULT_NEWSLETTER_POLL_INTERVAL_MS = 600_000
  * @returns {number}
  */
 export function clampNewsletterPollIntervalMs(raw) {
-  const n = raw != null && String(raw).trim() !== '' ? Number.parseInt(String(raw).trim(), 10) : NaN
+  const s = raw != null && String(raw).trim() !== '' ? String(raw).trim() : ''
+  if (!/^\d+$/.test(s)) return DEFAULT_NEWSLETTER_POLL_INTERVAL_MS
+  const n = Number.parseInt(s, 10)
   if (!Number.isFinite(n) || n < 60_000 || n > 86_400_000) return DEFAULT_NEWSLETTER_POLL_INTERVAL_MS
   return n
 }
@@ -222,32 +224,29 @@ export async function removeSubscriberFromNewsletter(db, userId, env) {
 
 const STALE_CLAIM_MINUTES = 2
 
+async function brevoNewsletterSendsHasColumn(db, columnName) {
+  const res = await db.prepare('PRAGMA table_info(brevo_newsletter_sends)').all()
+  const rows = res?.results ?? []
+  return rows.some(r => r.name === columnName)
+}
+
 async function ensureBrevoNewsletterSendsTable(db) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS brevo_newsletter_sends (
       dedupe_key   TEXT PRIMARY KEY,
       campaign_id  INTEGER,
       sent_at      TEXT,
-      in_flight    INTEGER NOT NULL DEFAULT 0,
-      send_requested INTEGER NOT NULL DEFAULT 0,
-      claim_acquired_at TEXT,
       created_at   TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run()
-  try {
+  if (!(await brevoNewsletterSendsHasColumn(db, 'in_flight'))) {
     await db.prepare('ALTER TABLE brevo_newsletter_sends ADD COLUMN in_flight INTEGER NOT NULL DEFAULT 0').run()
-  } catch {
-    /* column exists */
   }
-  try {
+  if (!(await brevoNewsletterSendsHasColumn(db, 'send_requested'))) {
     await db.prepare('ALTER TABLE brevo_newsletter_sends ADD COLUMN send_requested INTEGER NOT NULL DEFAULT 0').run()
-  } catch {
-    /* column exists */
   }
-  try {
+  if (!(await brevoNewsletterSendsHasColumn(db, 'claim_acquired_at'))) {
     await db.prepare('ALTER TABLE brevo_newsletter_sends ADD COLUMN claim_acquired_at TEXT').run()
-  } catch {
-    /* column exists */
   }
 }
 
@@ -665,6 +664,43 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
     }, 409, corsHeaders)
   }
 
+  let listId
+  let campaignPayload
+  try {
+    const listIdRaw = await getAdminSetting(db, 'brevo_subscriber_list_id')
+    listId = listIdRaw != null && String(listIdRaw).trim() !== '' ? Number.parseInt(String(listIdRaw).trim(), 10) : NaN
+    if (!Number.isFinite(listId) || listId <= 0) {
+      return jsonResponse({
+        error: 'Configure brevoSubscriberListId in newsletter settings first',
+        code: 'list_not_configured',
+      }, 422, corsHeaders)
+    }
+
+    const senderEmailRaw = await getAdminSetting(db, 'brevo_campaign_sender_email')
+    const senderEmail = senderEmailRaw ? String(senderEmailRaw).trim().toLowerCase() : ''
+    if (!senderEmail || !EMAIL_RE.test(senderEmail)) {
+      return jsonResponse({
+        error: 'Configure a verified brevoCampaignSenderEmail in newsletter settings',
+        code: 'sender_not_configured',
+      }, 422, corsHeaders)
+    }
+
+    const senderNameRaw = await getAdminSetting(db, 'brevo_campaign_sender_name')
+    const senderName = senderNameRaw ? String(senderNameRaw).trim() : ''
+
+    campaignPayload = {
+      name: `VMP Newsletter ${new Date().toISOString()}`,
+      subject,
+      type: 'classic',
+      sender: senderName ? { email: senderEmail, name: senderName } : { email: senderEmail },
+      htmlContent: htmlBody,
+      recipients: { listIds: [listId] },
+    }
+  } catch (configErr) {
+    newsletterLog('send_config_error', { correlationId, message: String(configErr?.message ?? configErr) })
+    return jsonResponse({ error: 'Failed to load newsletter configuration', code: 'config_error' }, 500, corsHeaders)
+  }
+
   let claimHeld = false
   if (!inflight) {
     claimHeld = await tryAcquireNewsletterSendClaim(db, dedupeKey)
@@ -714,36 +750,6 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
       error: 'Another send for this dedupe key is in progress. Retry shortly.',
       code: 'newsletter_send_in_progress',
     }, 409, corsHeaders)
-  }
-
-  const listIdRaw = await getAdminSetting(db, 'brevo_subscriber_list_id')
-  const listId = listIdRaw != null && String(listIdRaw).trim() !== '' ? Number.parseInt(String(listIdRaw).trim(), 10) : NaN
-  if (!Number.isFinite(listId) || listId <= 0) {
-    return jsonResponse({
-      error: 'Configure brevoSubscriberListId in newsletter settings first',
-      code: 'list_not_configured',
-    }, 422, corsHeaders)
-  }
-
-  const senderEmailRaw = await getAdminSetting(db, 'brevo_campaign_sender_email')
-  const senderEmail = senderEmailRaw ? String(senderEmailRaw).trim().toLowerCase() : ''
-  if (!senderEmail || !EMAIL_RE.test(senderEmail)) {
-    return jsonResponse({
-      error: 'Configure a verified brevoCampaignSenderEmail in newsletter settings',
-      code: 'sender_not_configured',
-    }, 422, corsHeaders)
-  }
-
-  const senderNameRaw = await getAdminSetting(db, 'brevo_campaign_sender_name')
-  const senderName = senderNameRaw ? String(senderNameRaw).trim() : ''
-
-  const campaignPayload = {
-    name: `VMP Newsletter ${new Date().toISOString()}`,
-    subject,
-    type: 'classic',
-    sender: senderName ? { email: senderEmail, name: senderName } : { email: senderEmail },
-    htmlContent: htmlBody,
-    recipients: { listIds: [listId] },
   }
 
   await db.prepare(`

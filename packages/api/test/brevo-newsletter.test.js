@@ -26,6 +26,11 @@ describe('clampNewsletterPollIntervalMs', () => {
     assert.equal(clampNewsletterPollIntervalMs(120_000), 120_000)
     assert.equal(clampNewsletterPollIntervalMs('900000'), 900_000)
   })
+
+  it('rejects non-digit-only strings', () => {
+    assert.equal(clampNewsletterPollIntervalMs('900000ms'), DEFAULT_NEWSLETTER_POLL_INTERVAL_MS)
+    assert.equal(clampNewsletterPollIntervalMs('1e6'), DEFAULT_NEWSLETTER_POLL_INTERVAL_MS)
+  })
 })
 
 describe('isNewsletterSendFinished', () => {
