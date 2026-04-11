@@ -1019,6 +1019,17 @@ interface Category {
   video_count?: number
 }
 
+/** Row shape from GET /api/admin/users */
+interface AdminUserRow {
+  id: string
+  email: string
+  role: string
+  subscription_status?: string | null
+  created_at?: string
+  plan_type?: string | null
+  current_period_end?: string | null
+}
+
 type BlockType = 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
 interface LayoutBlock {
   id: string
@@ -1103,7 +1114,8 @@ const newsletterEditingTemplateId = ref<string | null>(null)
 const newsletterTemplateSaving = ref(false)
 const homepageHeroTitle = ref('')
 const homepageHeroSubtitle = ref('')
-const users = ref<any[]>([])
+let usersLoadRequestId = 0
+const users = ref<AdminUserRow[]>([])
 const usersLoading = ref(false)
 const usersPage = ref(1)
 const usersPageSize = ref(25)
@@ -1558,6 +1570,7 @@ const saveHomepageContent = async () => {
 
 const loadUsers = async () => {
   if (!isAdmin.value) return
+  const reqId = ++usersLoadRequestId
   usersLoading.value = true
   try {
     const params = new URLSearchParams({
@@ -1568,14 +1581,16 @@ const loadUsers = async () => {
       subscription: usersSubscriptionFilter.value,
     })
     const res = await fetch(`${config.public.apiUrl}/api/admin/users?${params.toString()}`, { headers: authHeader() })
+    if (reqId !== usersLoadRequestId) return
     if (!res.ok) return
     const data = await res.json()
-    users.value = data.users || []
+    if (reqId !== usersLoadRequestId) return
+    users.value = (data.users || []) as AdminUserRow[]
     usersTotal.value = Number(data.total) || 0
     usersTotalPages.value = Math.max(1, Number(data.totalPages) || 1)
   }
   finally {
-    usersLoading.value = false
+    if (reqId === usersLoadRequestId) usersLoading.value = false
   }
 }
 
@@ -1608,7 +1623,7 @@ const updateUser = async (userId: string, patch: Record<string, string>) => {
   }
 }
 
-function onUserRoleSelect(u: { id: string; email: string; role: string }, newRole: string) {
+function onUserRoleSelect(u: AdminUserRow, newRole: string) {
   if (newRole === u.role) return
   if (isSensitiveRoleChange(u.role, newRole)) {
     openConfirmModal({
@@ -1626,7 +1641,7 @@ function onUserRoleSelect(u: { id: string; email: string; role: string }, newRol
   void updateUser(u.id, { role: newRole })
 }
 
-function onUserSubscriptionSelect(u: { id: string; email: string; role: string; subscription_status?: string | null }, next: string) {
+function onUserSubscriptionSelect(u: AdminUserRow, next: string) {
   const prev = u.subscription_status || 'none'
   if (next === prev) return
   openConfirmModal({

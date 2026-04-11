@@ -504,9 +504,13 @@ function usersListWhereClause({ search, role, subscription }) {
   const clauses = ['1=1']
   const binds = []
   if (search) {
-    const like = `%${search.replace(/%/g, '').replace(/_/g, '')}%`
-    clauses.push('(u.email LIKE ? ESCAPE \'\\\' OR u.id LIKE ? ESCAPE \'\\\')')
-    binds.push(like, like)
+    const sanitized = search.replace(/%/g, '').replace(/_/g, '').trim()
+    if (sanitized) {
+      const emailPrefix = `${sanitized}%`
+      const idPrefix = `${sanitized}%`
+      clauses.push('(u.email LIKE ? OR u.id LIKE ?)')
+      binds.push(emailPrefix, idPrefix)
+    }
   }
   if (role && role !== 'all') {
     clauses.push('u.role = ?')
@@ -577,7 +581,10 @@ export async function handleAdminUsers(request, env, corsHeaders) {
   if (!userId) return jsonResponse({ error: 'userId is required' }, 400, corsHeaders)
   const target = await db.prepare('SELECT id, email, role FROM users WHERE id = ?').bind(userId).first()
   if (!target) return jsonResponse({ error: 'User not found', code: 'not_found' }, 404, corsHeaders)
-  const actorUserId = typeof actor.sub === 'string' ? actor.sub : ''
+  if (typeof actor.sub !== 'string' || !actor.sub) {
+    return jsonResponse({ error: 'Invalid session', code: 'invalid_token' }, 401, corsHeaders)
+  }
+  const actorUserId = actor.sub
   const actorRole = typeof actor.role === 'string' ? actor.role : 'viewer'
 
   if (typeof body?.role === 'string') {
