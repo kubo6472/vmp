@@ -1,6 +1,12 @@
 import { requireAuth, requireRole } from './auth.js'
 import { ensureAdminSettingsTable } from './adminSettingsTable.js'
 import { getSetting, setSetting, setSettings } from './settingsStore.js'
+import {
+  evaluateRoleChange,
+  evaluateSelfRoleChange,
+  evaluateSubscriptionStatusChange,
+  isValidRoleName,
+} from './adminUserPolicy.js'
 
 const PILLS_KEY_HASH_PREFIX = 'sha256'
 const PILLS_KEY_HASH_LEGACY_PREFIX = 'pbkdf2-sha256'
@@ -10,6 +16,19 @@ function getDb(env) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('D1 binding not found')
   return db
+}
+
+async function writeAdminAuditLog(db, { actorUserId, actionType, targetUserId, detail }) {
+  await db.prepare(`
+    INSERT INTO admin_audit_logs (id, actor_user_id, action_type, target_user_id, detail_json, created_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `).bind(
+    crypto.randomUUID(),
+    actorUserId,
+    actionType,
+    targetUserId,
+    JSON.stringify(detail ?? {}),
+  ).run()
 }
 
 function jsonResponse(data, status = 200, corsHeaders = {}) {
@@ -471,6 +490,39 @@ function buildMaskedKey(keyValue) {
   return `••••••••${suffix}`
 }
 
+function parseUsersListQuery(url) {
+  const q = url.searchParams
+  const page = Math.min(500, Math.max(1, Number.parseInt(q.get('page') || '1', 10) || 1))
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(q.get('pageSize') || '25', 10) || 25))
+  const search = typeof q.get('search') === 'string' ? q.get('search').trim().slice(0, 200) : ''
+  const role = typeof q.get('role') === 'string' ? q.get('role').trim() : ''
+  const subscription = typeof q.get('subscription') === 'string' ? q.get('subscription').trim().toLowerCase() : 'all'
+  return { page, pageSize, search, role, subscription }
+}
+
+function usersListWhereClause({ search, role, subscription }) {
+  const clauses = ['1=1']
+  const binds = []
+  if (search) {
+    const like = `%${search.replace(/%/g, '').replace(/_/g, '')}%`
+    clauses.push('(u.email LIKE ? ESCAPE \'\\\' OR u.id LIKE ? ESCAPE \'\\\')')
+    binds.push(like, like)
+  }
+  if (role && role !== 'all') {
+    clauses.push('u.role = ?')
+    binds.push(role)
+  }
+  if (subscription && subscription !== 'all') {
+    if (subscription === 'none') {
+      clauses.push('s.id IS NULL')
+    } else {
+      clauses.push('s.status = ?')
+      binds.push(subscription)
+    }
+  }
+  return { sql: clauses.join(' AND '), binds }
+}
+
 export async function handleAdminUsers(request, env, corsHeaders) {
   try {
     await requireRole(request, env, 'admin', 'super_admin')
@@ -479,56 +531,125 @@ export async function handleAdminUsers(request, env, corsHeaders) {
   }
   const db = getDb(env)
   if (request.method === 'GET') {
-    const rows = await db.prepare(`
+    const url = new URL(request.url)
+    const { page, pageSize, search, role, subscription } = parseUsersListQuery(url)
+    const { sql: whereSql, binds: whereBinds } = usersListWhereClause({ search, role, subscription })
+    const offset = (page - 1) * pageSize
+    const fromSql = `
+      FROM users u
+      LEFT JOIN subscriptions s ON s.id = (
+        SELECT id FROM subscriptions
+        WHERE user_id = u.id
+        ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, datetime(created_at) DESC
+        LIMIT 1
+      )
+      WHERE ${whereSql}
+    `
+    const countStmt = db.prepare(`SELECT COUNT(*) AS n ${fromSql}`)
+    const listStmt = db.prepare(`
       SELECT
         u.id, u.email, u.role, u.created_at,
         s.plan_type, s.status AS subscription_status, s.current_period_end
-      FROM users u
-      LEFT JOIN (
-        SELECT user_id, plan_type, status, current_period_end
-        FROM subscriptions
-        ORDER BY datetime(updated_at) DESC
-      ) s ON s.user_id = u.id
-      GROUP BY u.id
+      ${fromSql}
       ORDER BY datetime(u.created_at) DESC
-    `).all()
-    return jsonResponse({ users: rows?.results ?? [] }, 200, corsHeaders)
+      LIMIT ? OFFSET ?
+    `)
+    const countRow = await countStmt.bind(...whereBinds).first()
+    const total = Number(countRow?.n || 0)
+    const rows = await listStmt.bind(...whereBinds, pageSize, offset).all()
+    return jsonResponse({
+      users: rows?.results ?? [],
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    }, 200, corsHeaders)
   }
   if (request.method !== 'PATCH') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
-  const currentUser = await requireAuth(request, env).catch(() => null)
+  let actor
+  try {
+    actor = await requireAuth(request, env)
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
   const body = await request.json().catch(() => null)
   const userId = typeof body?.userId === 'string' ? body.userId : ''
   if (!userId) return jsonResponse({ error: 'userId is required' }, 400, corsHeaders)
+  const target = await db.prepare('SELECT id, email, role FROM users WHERE id = ?').bind(userId).first()
+  if (!target) return jsonResponse({ error: 'User not found', code: 'not_found' }, 404, corsHeaders)
+  const actorUserId = typeof actor.sub === 'string' ? actor.sub : ''
+  const actorRole = typeof actor.role === 'string' ? actor.role : 'viewer'
+
   if (typeof body?.role === 'string') {
-    if (body.role === 'super_admin' && currentUser?.role !== 'super_admin') {
-      return jsonResponse({ error: 'Only super_admin can assign super_admin role' }, 403, corsHeaders)
+    const newRole = body.role
+    const matrix = evaluateRoleChange({
+      actorRole,
+      targetCurrentRole: target.role,
+      newRole,
+    })
+    if (!matrix.ok) {
+      return jsonResponse({ error: matrix.error, code: matrix.code }, 403, corsHeaders)
     }
-    await db.prepare('UPDATE users SET role = ? WHERE id = ?').bind(body.role, userId).run()
+    const selfCheck = evaluateSelfRoleChange({
+      actorUserId,
+      targetUserId: userId,
+      actorRole,
+      newRole,
+    })
+    if (!selfCheck.ok) {
+      return jsonResponse({ error: selfCheck.error, code: selfCheck.code }, 403, corsHeaders)
+    }
+    if (!isValidRoleName(newRole)) {
+      return jsonResponse({ error: 'Invalid role', code: 'invalid_role' }, 400, corsHeaders)
+    }
+    if (newRole !== target.role) {
+      await db.prepare('UPDATE users SET role = ? WHERE id = ?').bind(newRole, userId).run()
+      await writeAdminAuditLog(db, {
+        actorUserId,
+        actionType: 'user_role_change',
+        targetUserId: userId,
+        detail: { from: target.role, to: newRole },
+      })
+    }
   }
   if (typeof body?.subscriptionStatus === 'string') {
-    const nextStatus = body.subscriptionStatus === 'none' ? null : body.subscriptionStatus
-    if (nextStatus === null) {
+    const latest = await db.prepare(`
+      SELECT id, status FROM subscriptions
+      WHERE user_id = ?
+      ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, datetime(created_at) DESC
+      LIMIT 1
+    `).bind(userId).first()
+    const prevStatus = latest?.status ?? null
+    const transition = evaluateSubscriptionStatusChange(prevStatus, body.subscriptionStatus)
+    if (!transition.ok) {
+      return jsonResponse({ error: transition.error, code: transition.code }, 400, corsHeaders)
+    }
+    if (transition.next === 'none') {
+      if (!latest?.id) {
+        return jsonResponse({ error: 'User has no subscription to cancel', code: 'no_subscription' }, 400, corsHeaders)
+      }
       await db.prepare(`
-        UPDATE subscriptions
-        SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
-        WHERE id = (
-          SELECT id FROM subscriptions
-          WHERE user_id = ?
-          ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
-          LIMIT 1
-        )
-      `).bind(userId).run()
+        UPDATE subscriptions SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).bind(latest.id).run()
+      await writeAdminAuditLog(db, {
+        actorUserId,
+        actionType: 'subscription_status_change',
+        targetUserId: userId,
+        detail: { from: prevStatus ?? 'none', to: 'cancelled' },
+      })
     } else {
+      if (!latest?.id) {
+        return jsonResponse({ error: 'User has no subscription row to update', code: 'no_subscription' }, 400, corsHeaders)
+      }
       await db.prepare(`
-        UPDATE subscriptions
-        SET status = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = (
-          SELECT id FROM subscriptions
-          WHERE user_id = ?
-          ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
-          LIMIT 1
-        )
-      `).bind(nextStatus, userId).run()
+        UPDATE subscriptions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).bind(transition.next, latest.id).run()
+      await writeAdminAuditLog(db, {
+        actorUserId,
+        actionType: 'subscription_status_change',
+        targetUserId: userId,
+        detail: { from: prevStatus ?? 'none', to: transition.next },
+      })
     }
   }
   return jsonResponse({ ok: true }, 200, corsHeaders)
