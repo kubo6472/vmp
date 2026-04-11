@@ -63,23 +63,26 @@ release_slot() {
 has_remote_file() {
     local video_id="$1"
     local file_name="$2"
-    rclone lsf "${R2_BUCKET}:/videos/${video_id}" 2>/dev/null | grep -qx "$file_name"
+    rclone lsf "${R2_BUCKET}:/videos/${video_id}" --recursive 2>/dev/null | awk -F/ '{print $NF}' | grep -qx "$file_name"
 }
 
 has_remote_hls_complete() {
     local video_id="$1"
     local remote
-    if ! remote=$(rclone lsf "${R2_BUCKET}:/videos/${video_id}" 2>/dev/null); then
+    if ! remote=$(rclone lsf "${R2_BUCKET}:/videos/${video_id}" --recursive 2>/dev/null); then
         return 1
     fi
 
-    for required in master.m3u8 manifest.mpd init_1080.mp4 init_720.mp4 init_480.mp4; do
-        echo "$remote" | grep -qx "$required" || return 1
-    done
+    local basenames
+    basenames=$(echo "$remote" | awk -F/ '{print $NF}')
+
+    echo "$basenames" | grep -qx "master.m3u8" || return 1
+    # DASH manifest is optional in some newer pipelines; accept if present or absent.
 
     for res in 1080 720 480; do
+        echo "$basenames" | grep -qx "init_${res}.mp4" || return 1
         local cnt
-        cnt=$(echo "$remote" | grep -c "^seg_${res}_" || true)
+        cnt=$(echo "$basenames" | grep -c "^seg_${res}_.*\\.m4s$" || true)
         [ "${cnt:-0}" -gt 0 ] || return 1
     done
 
@@ -319,7 +322,7 @@ process_video() {
 # ------------------------
 # UPLOAD (retry + verify)
 # ------------------------
-log "🚀 Uploading to R2"
+    log "🚀 [$VIDEO_ID] Uploading to R2"
 
 UPLOAD_OK=false
 
@@ -331,52 +334,55 @@ for i in {1..5}; do
         --ignore-existing \
         --transfers 8 \
         --checkers 16; then
-        log "⚠️ Upload attempt $i failed (rclone error)"
+        log "⚠️ [$VIDEO_ID] Upload attempt $i failed (rclone error)"
         sleep 3
         continue
     fi
 
     # Verify the full segmented artifact set is present on R2
-    if ! REMOTE=$(rclone lsf "${R2_BUCKET}:/videos/${VIDEO_ID}" 2>/dev/null); then
-        log "⚠️ Upload attempt $i: rclone lsf failed — retrying upload"
+    if ! REMOTE=$(rclone lsf "${R2_BUCKET}:/videos/${VIDEO_ID}" --recursive 2>/dev/null); then
+        log "⚠️ [$VIDEO_ID] Upload attempt $i: rclone lsf failed — retrying upload"
         sleep 3
         continue
     fi
     MISSING=""
+    REMOTE_BASENAMES=$(echo "$REMOTE" | awk -F/ '{print $NF}')
 
     if [ "$should_process_video" = "1" ]; then
-        for required in master.m3u8 manifest.mpd init_1080.mp4 init_720.mp4 init_480.mp4; do
-            echo "$REMOTE" | grep -qx "$required" || MISSING="$MISSING $required"
+        for required in master.m3u8 init_1080.mp4 init_720.mp4 init_480.mp4; do
+            echo "$REMOTE_BASENAMES" | grep -qx "$required" || MISSING="$MISSING $required"
         done
+        # manifest.mpd is generated in the modern pipeline but not required for playback.
+        # Keep it optional so uploads do not get stuck when DASH packaging is disabled.
 
         # Check for audio artifacts if audio was present
         if [ "$HAS_AUDIO" -gt 0 ]; then
-            echo "$REMOTE" | grep -qx "init_audio.mp4" || MISSING="$MISSING init_audio.mp4"
-            audio_seg_cnt=$(echo "$REMOTE" | grep -c "^seg_audio_" || true)
+            echo "$REMOTE_BASENAMES" | grep -qx "init_audio.mp4" || MISSING="$MISSING init_audio.mp4"
+            audio_seg_cnt=$(echo "$REMOTE_BASENAMES" | grep -c "^seg_audio_.*\\.m4s$" || true)
             [ "${audio_seg_cnt:-0}" -gt 0 ] || MISSING="$MISSING seg_audio_*.m4s(none)"
         fi
 
         for res in 1080 720 480; do
-            cnt=$(echo "$REMOTE" | grep -c "^seg_${res}_" || true)
+            cnt=$(echo "$REMOTE_BASENAMES" | grep -c "^seg_${res}_.*\\.m4s$" || true)
             [ "${cnt:-0}" -gt 0 ] || MISSING="$MISSING seg_${res}_*.m4s(none)"
         done
     fi
 
     if [ "$HAS_AUDIO" -gt 0 ]; then
-        echo "$REMOTE" | grep -qx "$MP3_NAME" || MISSING="$MISSING $MP3_NAME"
+        echo "$REMOTE_BASENAMES" | grep -qx "$MP3_NAME" || MISSING="$MISSING $MP3_NAME"
     fi
 
     if [ -z "$MISSING" ]; then
         UPLOAD_OK=true
         break
     else
-        log "⚠️ Upload attempt $i incomplete — missing:$MISSING"
+        log "⚠️ [$VIDEO_ID] Upload attempt $i incomplete — missing:$MISSING"
         sleep 3
     fi
 done
 
 if [ "$UPLOAD_OK" = false ]; then
-    log "❌ Upload failed permanently — will retry later"
+    log "❌ [$VIDEO_ID] Upload failed permanently — will retry later"
     rm -f "$LOCK"
     release_slot "$BASHPID"
     return
