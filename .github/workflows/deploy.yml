@@ -30,7 +30,7 @@ jobs:
           
       - run: npm ci
       - name: Type check (fail fast)
-        run: npm run typecheck:deploy
+        run: npm run typecheck
       
       - run: npm run build --workspace=@vmp/web
         env:
@@ -73,7 +73,7 @@ jobs:
           
       - run: npm ci
       - name: Type check (fail fast)
-        run: npm run typecheck:deploy
+        run: npm run typecheck
       
       - run: npm run build --workspace=@vmp/web
         env:
