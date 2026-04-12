@@ -658,6 +658,11 @@ export async function handleAdminUsers(request, env, corsHeaders) {
     if (!transition.ok) {
       return jsonResponse({ error: transition.error, code: transition.code }, 400, corsHeaders)
     }
+    const prevNormalized = prevStatus == null || prevStatus === '' ? 'none' : prevStatus
+    const nextPersisted = transition.next === 'none' ? 'cancelled' : transition.next
+    if (nextPersisted === prevNormalized) {
+      return jsonResponse({ ok: true }, 200, corsHeaders)
+    }
     if (transition.next === 'none') {
       if (!latest?.id) {
         return jsonResponse({ error: 'User has no subscription to cancel', code: 'no_subscription' }, 400, corsHeaders)

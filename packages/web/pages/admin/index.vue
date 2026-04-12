@@ -1627,12 +1627,12 @@ function hasAdminUserSubscriptionRow(u: AdminUserRow): boolean {
 }
 
 function adminUserSubscriptionSelectDisabled(u: AdminUserRow): boolean {
-  if (user?.role !== 'super_admin' && u.role === 'super_admin') return true
+  if (user.value?.role !== 'super_admin' && u.role === 'super_admin') return true
   return !hasAdminUserSubscriptionRow(u)
 }
 
 function adminUserSubscriptionSelectTitle(u: AdminUserRow): string {
-  if (user?.role !== 'super_admin' && u.role === 'super_admin') {
+  if (user.value?.role !== 'super_admin' && u.role === 'super_admin') {
     return 'Only a super admin may change this account'
   }
   if (!hasAdminUserSubscriptionRow(u)) {
