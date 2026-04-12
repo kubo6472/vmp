@@ -15,36 +15,36 @@ export async function onRequest(context: RequestContext) {
   const { request, env } = context
 
   if (request.method === 'OPTIONS') {
-    return tusResponse(null, 204, {}, request, TUS_UPLOAD_ALLOW_METHODS)
+    return tusResponse(null, 204, {}, request, TUS_UPLOAD_ALLOW_METHODS, env)
   }
 
   if (!env.VIDEO_BUCKET) {
-    return json({ error: 'VIDEO_BUCKET binding is required' }, 500, request, TUS_UPLOAD_ALLOW_METHODS)
+    return json({ error: 'VIDEO_BUCKET binding is required' }, 500, request, TUS_UPLOAD_ALLOW_METHODS, env)
   }
 
   if (request.method !== 'POST') {
-    return tusResponse(null, 405, { Allow: 'POST,OPTIONS' }, request, TUS_UPLOAD_ALLOW_METHODS)
+    return tusResponse(null, 405, { Allow: 'POST,OPTIONS' }, request, TUS_UPLOAD_ALLOW_METHODS, env)
   }
 
   const tusVersion = request.headers.get('Tus-Resumable')
   if (tusVersion !== TUS_VERSION) {
-    return tusResponse(jsonString({ error: 'Missing or invalid Tus-Resumable header' }), 412, {}, request, TUS_UPLOAD_ALLOW_METHODS)
+    return tusResponse(jsonString({ error: 'Missing or invalid Tus-Resumable header' }), 412, {}, request, TUS_UPLOAD_ALLOW_METHODS, env)
   }
 
   const uploadLengthRaw = request.headers.get('Upload-Length')
   if (!uploadLengthRaw || !/^\d+$/.test(uploadLengthRaw)) {
-    return tusResponse(jsonString({ error: 'Upload-Length header is required and must be > 0' }), 400, {}, request, TUS_UPLOAD_ALLOW_METHODS)
+    return tusResponse(jsonString({ error: 'Upload-Length header is required and must be > 0' }), 400, {}, request, TUS_UPLOAD_ALLOW_METHODS, env)
   }
   const uploadLength = Number(uploadLengthRaw)
   if (!Number.isSafeInteger(uploadLength) || uploadLength <= 0) {
-    return tusResponse(jsonString({ error: 'Upload-Length header is required and must be > 0' }), 400, {}, request, TUS_UPLOAD_ALLOW_METHODS)
+    return tusResponse(jsonString({ error: 'Upload-Length header is required and must be > 0' }), 400, {}, request, TUS_UPLOAD_ALLOW_METHODS, env)
   }
 
   const metadata = parseUploadMetadata(request.headers.get('Upload-Metadata'))
   const fileName = sanitizeFileName(metadata.filename || 'upload.bin')
   const contentType = (metadata.filetype || 'application/octet-stream').toLowerCase()
   if (!contentType.startsWith('video/')) {
-    return tusResponse(jsonString({ error: 'Only video uploads are allowed' }), 400, {}, request, TUS_UPLOAD_ALLOW_METHODS)
+    return tusResponse(jsonString({ error: 'Only video uploads are allowed' }), 400, {}, request, TUS_UPLOAD_ALLOW_METHODS, env)
   }
 
   const visibility = sanitizeVisibility(metadata.visibility)
@@ -83,5 +83,5 @@ export async function onRequest(context: RequestContext) {
     Location: `/api/uploads/${videoId}`,
     'Upload-Offset': '0',
     'Upload-Length': String(uploadLength),
-  }, request, TUS_UPLOAD_ALLOW_METHODS)
+  }, request, TUS_UPLOAD_ALLOW_METHODS, env)
 }

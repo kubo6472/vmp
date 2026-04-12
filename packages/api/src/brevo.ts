@@ -203,13 +203,17 @@ async function syncAllEligibleSubscribers(db: any, env: any) {
 
   const eligibleEmails = new Set<string>()
   if (userIds.length) {
-    const placeholders = userIds.map(() => '?').join(',')
-    const eligibleRows = await db.prepare(
-      `SELECT email FROM users WHERE id IN (${placeholders})`,
-    ).bind(...userIds).all()
-    for (const row of eligibleRows?.results ?? []) {
-      const email = typeof row?.email === 'string' ? row.email.trim().toLowerCase() : ''
-      if (email) eligibleEmails.add(email)
+    const BATCH_SIZE = 500
+    for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
+      const chunk = userIds.slice(i, i + BATCH_SIZE)
+      const placeholders = chunk.map(() => '?').join(',')
+      const eligibleRows = await db.prepare(
+        `SELECT email FROM users WHERE id IN (${placeholders})`,
+      ).bind(...chunk).all()
+      for (const row of eligibleRows?.results ?? []) {
+        const email = typeof row?.email === 'string' ? row.email.trim().toLowerCase() : ''
+        if (email) eligibleEmails.add(email)
+      }
     }
   }
 
@@ -229,6 +233,7 @@ async function syncAllEligibleSubscribers(db: any, env: any) {
     offset += contacts.length
   }
 
+  const staleEmails = []
   for (const email of remoteEmails) {
     if (eligibleEmails.has(email)) continue
     const row = await db.prepare('SELECT id FROM users WHERE lower(email) = ? LIMIT 1').bind(email).first()
@@ -236,9 +241,15 @@ async function syncAllEligibleSubscribers(db: any, env: any) {
       await removeSubscriberFromNewsletter(db, row.id, env)
       continue
     }
+    staleEmails.push(email)
+  }
+
+  const BREVO_BATCH_SIZE = 100
+  for (let i = 0; i < staleEmails.length; i += BREVO_BATCH_SIZE) {
+    const chunk = staleEmails.slice(i, i + BREVO_BATCH_SIZE)
     const res = await brevoFetch(
       `/contacts/lists/${listId}/contacts/remove`,
-      { method: 'POST', body: JSON.stringify({ emails: [email] }) },
+      { method: 'POST', body: JSON.stringify({ emails: chunk }) },
       env,
     )
     if (!res.ok && res.status !== 404) {

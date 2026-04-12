@@ -17,19 +17,19 @@
 
 // ─── Encoding helpers ─────────────────────────────────────────────────────────
 
-function b64urlToUint8(b64url: any) {
+function b64urlToUint8(b64url: string): Uint8Array {
   const padded = b64url.replace(/-/g, '+').replace(/_/g, '/')
     + '=='.slice(0, (4 - (b64url.length % 4)) % 4)
   const binary = atob(padded)
   return Uint8Array.from(binary, c => c.charCodeAt(0))
 }
 
-function uint8ToB64url(bytes: any) {
+function uint8ToB64url(bytes: Uint8Array): string {
   const binary = String.fromCharCode(...bytes)
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-function concatBuffers(...bufs: any[]) {
+function concatBuffers(...bufs: (Uint8Array | ArrayBuffer)[]): Uint8Array {
   const total = bufs.reduce((n, b) => n + b.byteLength, 0)
   const out = new Uint8Array(total)
   let offset = 0
@@ -45,9 +45,16 @@ function isError(value: unknown): value is Error {
   return value instanceof Error
 }
 
+/** Ensure Uint8Array has ArrayBuffer (not SharedArrayBuffer) for SubtleCrypto compatibility */
+function toArrayBuffer(data: Uint8Array | ArrayBuffer): ArrayBuffer {
+  if (data instanceof ArrayBuffer) return data
+  // Create a new Uint8Array backed by ArrayBuffer
+  return new Uint8Array(data).buffer
+}
+
 // ─── VAPID JWT (ES256) ────────────────────────────────────────────────────────
 
-async function importVapidPrivateKey(b64urlPrivate: any, b64urlPublic: any) {
+async function importVapidPrivateKey(b64urlPrivate: string, b64urlPublic: string): Promise<CryptoKey> {
   // VAPID keys are provided as raw base64url values:
   // - private key: 32-byte scalar (d)
   // - public key: uncompressed 65-byte point (0x04 || X || Y)
@@ -84,7 +91,7 @@ async function importVapidPrivateKey(b64urlPrivate: any, b64urlPublic: any) {
   )
 }
 
-async function signVapidJwt(audience: any, subject: any, vapidPrivateKeyB64: any, vapidPublicKeyB64: any, expiresIn = 43200) {
+async function signVapidJwt(audience: string, subject: string, vapidPrivateKeyB64: string, vapidPublicKeyB64: string, expiresIn = 43200): Promise<string> {
   const now = Math.floor(Date.now() / 1000)
   const header = { typ: 'JWT', alg: 'ES256' }
   const payload = { aud: audience, exp: now + expiresIn, sub: subject }
@@ -106,9 +113,10 @@ async function signVapidJwt(audience: any, subject: any, vapidPrivateKeyB64: any
   return `${signingInput}.${uint8ToB64url(sig)}`
 }
 
-function parseDerLength(bytes: any, offset: any) {
+function parseDerLength(bytes: Uint8Array, offset: number): { length: number; nextOffset: number } {
   if (offset >= bytes.length) throw new Error('Invalid DER length')
   const first = bytes[offset]
+  if (first === undefined) throw new Error('Invalid DER length')
   if (first < 0x80) return { length: first, nextOffset: offset + 1 }
   const octets = first & 0x7f
   if (octets < 1 || octets > 2 || offset + 1 + octets > bytes.length) {
@@ -116,12 +124,14 @@ function parseDerLength(bytes: any, offset: any) {
   }
   let length = 0
   for (let i = 0; i < octets; i++) {
-    length = (length << 8) | bytes[offset + 1 + i]
+    const byte = bytes[offset + 1 + i]
+    if (byte === undefined) throw new Error('Invalid DER length')
+    length = (length << 8) | byte
   }
   return { length, nextOffset: offset + 1 + octets }
 }
 
-function parseDerInteger(bytes: any, offset: any) {
+function parseDerInteger(bytes: Uint8Array, offset: number): { value: Uint8Array; nextOffset: number } {
   if (bytes[offset] !== 0x02) throw new Error('Invalid DER integer tag')
   const { length, nextOffset } = parseDerLength(bytes, offset + 1)
   const end = nextOffset + length
@@ -130,7 +140,7 @@ function parseDerInteger(bytes: any, offset: any) {
 }
 
 /** Convert ECDSA signature to JOSE raw r||s (64 bytes). */
-function ecdsaSignatureToJose(signature: any) {
+function ecdsaSignatureToJose(signature: Uint8Array): Uint8Array {
   // Some runtimes already return IEEE-P1363 raw signatures.
   if (signature.length === 64) return signature
 
@@ -182,12 +192,12 @@ function ecdsaSignatureToJose(signature: any) {
  * Returns the ciphertext bytes and the ephemeral sender public key (uncompressed)
  * plus the salt, all of which go into the Content-Encoding: aes128gcm header.
  */
-async function encryptPayload(plaintext: any, p256dhB64: any, authB64: any) {
+async function encryptPayload(plaintext: string, p256dhB64: string, authB64: string): Promise<Uint8Array> {
   // 1. Import the subscriber's public key (P-256, uncompressed 65-byte)
   const subscriberPublicKeyBytes = b64urlToUint8(p256dhB64)
   const subscriberPublicKey = await crypto.subtle.importKey(
     'raw',
-    subscriberPublicKeyBytes,
+    toArrayBuffer(subscriberPublicKeyBytes),
     { name: 'ECDH', namedCurve: 'P-256' },
     true,
     [],
@@ -253,9 +263,9 @@ async function encryptPayload(plaintext: any, p256dhB64: any, authB64: any) {
   const plaintextBytes = enc.encode(plaintext)
   const paddedPlaintext = concatBuffers(plaintextBytes, new Uint8Array([0x02]))
 
-  const cekKey = await crypto.subtle.importKey('raw', cek, { name: 'AES-GCM' }, false, ['encrypt'])
+  const cekKey = await crypto.subtle.importKey('raw', toArrayBuffer(cek), { name: 'AES-GCM' }, false, ['encrypt'])
   const ciphertext = new Uint8Array(
-    await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, cekKey, paddedPlaintext),
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv: toArrayBuffer(nonce) }, cekKey, toArrayBuffer(paddedPlaintext)),
   )
 
   // 9. Build Content-Encoding: aes128gcm record
@@ -279,36 +289,53 @@ async function encryptPayload(plaintext: any, p256dhB64: any, authB64: any) {
  * HKDF-Extract(salt, ikm) per RFC 5869 — returns a 32-byte PRK.
  * Implemented as HMAC-SHA-256(key=salt, data=ikm).
  */
-async function hkdfExtract(salt: any, ikm: any) {
+async function hkdfExtract(salt: Uint8Array | ArrayBuffer, ikm: Uint8Array | ArrayBuffer): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey(
-    'raw', salt, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+    'raw', toArrayBuffer(salt), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   )
-  return new Uint8Array(await crypto.subtle.sign('HMAC', key, ikm))
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, toArrayBuffer(ikm)))
 }
 
 /**
  * HKDF-Expand(prk, info, length) per RFC 5869 — length must be ≤ 32 for SHA-256.
  * T(1) = HMAC-SHA-256(key=prk, data=info || 0x01), output first `length` bytes.
  */
-async function hkdfExpand(prk: any, info: any, length: any) {
+async function hkdfExpand(prk: Uint8Array, info: Uint8Array, length: number): Promise<Uint8Array> {
   if (length > 32) throw new RangeError('hkdfExpand: length must be ≤ 32 (single SHA-256 round)')
   const key = await crypto.subtle.importKey(
-    'raw', prk, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+    'raw', toArrayBuffer(prk), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   )
   const t1 = new Uint8Array(
-    await crypto.subtle.sign('HMAC', key, concatBuffers(info, new Uint8Array([0x01]))),
+    await crypto.subtle.sign('HMAC', key, toArrayBuffer(concatBuffers(info, new Uint8Array([0x01])))),
   )
   return t1.slice(0, length)
 }
 
 // ─── Send a single Web Push notification ─────────────────────────────────────
 
+interface PushSubscription {
+  endpoint: string
+  p256dh: string
+  auth: string
+}
+
+interface PushPayload {
+  title: string
+  body: string
+  url?: string
+}
+
+interface PushEnv {
+  VAPID_PRIVATE_KEY: string
+  VAPID_PUBLIC_KEY: string
+  SENDER_EMAIL?: string
+  FRONTEND_URL?: string
+}
+
 /**
- * @param {{ endpoint: string, p256dh: string, auth: string }} subscription
- * @param {{ title: string, body: string, url?: string }} payload
- * @param {object} env - Worker env bindings
+ * Send a single Web Push notification.
  */
-export async function sendPushNotification(subscription: any, payload: any, env: any) {
+export async function sendPushNotification(subscription: PushSubscription, payload: PushPayload, env: PushEnv) {
   const { endpoint, p256dh, auth } = subscription
 
   if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY) {
@@ -331,7 +358,7 @@ export async function sendPushNotification(subscription: any, payload: any, env:
   // 10-second timeout — prevents a slow/unresponsive endpoint from blocking
   // the entire batch inside Promise.allSettled().
   let response
-  const send = (authorizationValue: any) => {
+  const send = (authorizationValue: string) => {
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), 10_000)
     return fetch(endpoint, {
@@ -345,7 +372,7 @@ export async function sendPushNotification(subscription: any, payload: any, env:
         'Crypto-Key': `p256ecdsa=${env.VAPID_PUBLIC_KEY}`,
         'TTL': '86400',
       },
-      body: encrypted,
+      body: toArrayBuffer(encrypted),
       signal: abort.signal,
     }).finally(() => clearTimeout(timer))
   }
@@ -414,16 +441,18 @@ export async function sendPushNotification(subscription: any, payload: any, env:
   return { ok: true, status: response.status, statusClass: `${Math.floor(response.status / 100)}xx`, endpointHost }
 }
 
+interface D1Database {
+  prepare(query: string): {
+    all(): Promise<{ results?: any[] }>
+    bind(...values: any[]): { run(): Promise<any> }
+  }
+}
+
 /**
  * Send a "new video published" push to every subscribed user.
  * Called with ctx.waitUntil() so it doesn't block the HTTP response.
- *
- * @param {string} videoTitle
- * @param {string} videoId
- * @param {object} env
- * @param {object} db - D1 database binding
  */
-export async function sendPushToAllSubscribers(videoTitle: any, videoId: any, env: any, db: any) {
+export async function sendPushToAllSubscribers(videoTitle: string, videoId: string, env: PushEnv, db: D1Database) {
   if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY) {
     throw Object.assign(new Error('VAPID keys not configured'), { code: 'vapid_not_configured' })
   }

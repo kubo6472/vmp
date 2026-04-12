@@ -1,11 +1,20 @@
 export const TUS_VERSION = '1.0.0'
 export const TUS_UPLOAD_ALLOW_METHODS = 'POST,OPTIONS'
 export const TUS_CHUNK_ALLOW_METHODS = 'HEAD,PATCH,OPTIONS'
-const ALLOWED_ORIGINS = new Set<string>([
+
+const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'https://vmp-web.pages.dev',
-])
+]
+
+function parseAllowedOrigins(raw: string | undefined): string[] {
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean)
+}
 
 export interface UploadSessionPart {
   partNumber: number
@@ -56,10 +65,16 @@ export function sanitizeVisibility(value: string | undefined): 'public' | 'unlis
   return value === 'public' || value === 'unlisted' ? value : 'private'
 }
 
-export function withCors(response: Response, request: Request, allowMethods: string): Response {
+export interface UploadEnv {
+  ALLOWED_ORIGINS?: string
+}
+
+export function withCors(response: Response, request: Request, allowMethods: string, env?: UploadEnv): Response {
   const headers = new Headers(response.headers)
   const origin = request.headers.get('Origin')
-  const isAllowedOrigin = Boolean(origin && ALLOWED_ORIGINS.has(origin))
+  const allowedOrigins = parseAllowedOrigins(env?.ALLOWED_ORIGINS)
+  const allowSet = new Set<string>(allowedOrigins.length ? allowedOrigins : DEFAULT_ALLOWED_ORIGINS)
+  const isAllowedOrigin = Boolean(origin && allowSet.has(origin))
   if (isAllowedOrigin && origin) {
     headers.set('Access-Control-Allow-Origin', origin)
     headers.set('Access-Control-Allow-Credentials', 'true')
@@ -87,6 +102,7 @@ export function tusResponse(
   extraHeaders: Record<string, string> = {},
   request: Request,
   allowMethods: string,
+  env?: UploadEnv,
 ): Response {
   return withCors(new Response(body, {
     status,
@@ -94,14 +110,14 @@ export function tusResponse(
       'Tus-Resumable': TUS_VERSION,
       ...extraHeaders,
     },
-  }), request, allowMethods)
+  }), request, allowMethods, env)
 }
 
-export function json(data: unknown, status = 200, request: Request, allowMethods: string): Response {
+export function json(data: unknown, status = 200, request: Request, allowMethods: string, env?: UploadEnv): Response {
   return withCors(new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json' },
-  }), request, allowMethods)
+  }), request, allowMethods, env)
 }
 
 export function jsonString(data: unknown): string {

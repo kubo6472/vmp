@@ -7,6 +7,7 @@ interface ProcessEnv {
   VIDEO_SUBSCRIPTION_DB?: D1Database
   DB?: D1Database
   PROCESS_API_TOKEN?: string
+  ALLOWED_ORIGINS?: string
 }
 
 type Visibility = 'private' | 'unlisted' | 'public'
@@ -18,7 +19,7 @@ export async function onRequest(context: RequestContext<ProcessEnv>) {
   const { request, env } = context
 
   if (request.method === 'OPTIONS') {
-    return withCors(new Response(null, { status: 204 }), request)
+    return withCors(new Response(null, { status: 204 }), request, env)
   }
 
   // Gate writes behind a static bearer token configured per deployment.
@@ -27,22 +28,22 @@ export async function onRequest(context: RequestContext<ProcessEnv>) {
     const authHeader = request.headers.get('Authorization') || ''
     const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : ''
     if (!bearer || bearer !== expectedToken) {
-      return withCors(json({ error: 'Unauthorized' }, 401), request)
+      return withCors(json({ error: 'Unauthorized' }, 401), request, env)
     }
   }
 
   if (request.method !== 'POST') {
-    return withCors(json({ error: 'Method not allowed' }, 405), request)
+    return withCors(json({ error: 'Method not allowed' }, 405), request, env)
   }
 
   if (!env.VIDEO_BUCKET) {
-    return withCors(json({ error: 'VIDEO_BUCKET binding is required' }, 500), request)
+    return withCors(json({ error: 'VIDEO_BUCKET binding is required' }, 500), request, env)
   }
 
   try {
     const body = await request.json().catch(() => null);
     if (!body?.videoId) {
-      return withCors(json({ error: 'videoId is required' }, 400), request)
+      return withCors(json({ error: 'videoId is required' }, 400), request, env)
     }
 
     const videoId = body.videoId
@@ -70,7 +71,7 @@ export async function onRequest(context: RequestContext<ProcessEnv>) {
       if (obj) { hlsMasterKey = candidate; hlsMaster = obj; break; }
     }
     if (!hlsMaster) {
-      return withCors(json({ error: `Missing required HLS master playlist. Tried: ${hlsMasterCandidates.join(', ')}` }, 404), request)
+      return withCors(json({ error: `Missing required HLS master playlist. Tried: ${hlsMasterCandidates.join(', ')}` }, 404), request, env)
     }
 
     const hlsMasterContent = await hlsMaster.text();
@@ -109,7 +110,7 @@ export async function onRequest(context: RequestContext<ProcessEnv>) {
     }
     const dashManifest = dashManifestKey ? true : null;
     if (validateDash && !dashManifest) {
-      return withCors(json({ error: `DASH validation requested but manifest not found. Tried: ${dashManifestCandidates.join(', ')}` }, 404), request)
+      return withCors(json({ error: `DASH validation requested but manifest not found. Tried: ${dashManifestCandidates.join(', ')}` }, 404), request, env)
     }
 
     const resolvedDashManifestKey = dashManifestKey ?? null;
@@ -159,10 +160,10 @@ export async function onRequest(context: RequestContext<ProcessEnv>) {
       status: metadata.status,
       durationSeconds,
       durationSync
-    }), request)
+    }), request, env)
   } catch (error) {
     console.error('Failed to process video metadata registration', error)
-    return withCors(json({ error: 'Failed to process video' }, 500), request)
+    return withCors(json({ error: 'Failed to process video' }, 500), request, env)
   }
 }
 
@@ -290,16 +291,26 @@ function getVideoDatabaseBinding(env: ProcessEnv): D1Database | null {
   return env.video_subscription_db || env.VIDEO_SUBSCRIPTION_DB || env.DB || null
 }
 
-const PROCESS_ALLOWED_ORIGINS = new Set<string>([
+const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'https://vmp-web.pages.dev',
-])
+]
 
-function withCors(response: Response, request: Request): Response {
+function parseAllowedOrigins(raw: string | undefined): string[] {
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean)
+}
+
+function withCors(response: Response, request: Request, env: ProcessEnv): Response {
   const headers = new Headers(response.headers)
   const origin = request.headers.get('Origin')
-  const isAllowed = Boolean(origin && PROCESS_ALLOWED_ORIGINS.has(origin))
+  const allowedOrigins = parseAllowedOrigins(env.ALLOWED_ORIGINS)
+  const allowSet = new Set<string>(allowedOrigins.length ? allowedOrigins : DEFAULT_ALLOWED_ORIGINS)
+  const isAllowed = Boolean(origin && allowSet.has(origin))
   if (isAllowed && origin) {
     headers.set('Access-Control-Allow-Origin', origin)
     headers.set('Access-Control-Allow-Credentials', 'true')

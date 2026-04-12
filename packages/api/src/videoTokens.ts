@@ -45,7 +45,7 @@ export async function signVideoToken(
 ) {
   const ttlSeconds = Number.isFinite(opts.ttlSeconds) ? Math.max(60, Math.floor(opts.ttlSeconds as number)) : 7200
   const expires = Math.floor(Date.now() / 1000) + ttlSeconds
-  const previewUntilStr = previewUntil !== null ? String(previewUntil) : ''
+  const previewUntilStr = (previewUntil !== null && Number.isFinite(previewUntil)) ? String(previewUntil) : ''
   const payload = b64urlEncode(`${userId}:${videoId}:${expires}:${previewUntilStr}`)
   const key = await importVideoHmacKey(secret)
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))
@@ -91,10 +91,10 @@ export async function verifyVideoToken(token: string, secret: string) {
   if (!userId || !videoId || !expiresRaw) throw new Error('Malformed video token payload')
   const expires = parseInt(expiresRaw, 10)
   if (!Number.isFinite(expires)) throw new Error('Malformed video token payload')
-  const previewUntil = parts[3] ? (parts[3] !== '' ? parseFloat(parts[3]) : null) : null
+  const previewUntilRaw = parts[3] ? (parts[3] !== '' ? parseFloat(parts[3]) : null) : null
+  const previewUntil = previewUntilRaw !== null && Number.isFinite(previewUntilRaw) ? previewUntilRaw : null
 
   if (Math.floor(Date.now() / 1000) > expires) throw new Error('Video token expired')
 
   return { userId, videoId, expires, previewUntil }
 }
-

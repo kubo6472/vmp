@@ -143,8 +143,7 @@ async function recordFeedPoll(db: any, {
     `).bind(endpoint, userId ?? 'public').run()
   } catch (e) {
     // Best-effort: analytics must never break feed delivery.
-    // @ts-expect-error TS(2571): Object is of type 'unknown'.
-    console.warn('[rss] recordFeedPoll failed', e?.message ?? e)
+    console.warn('[rss] recordFeedPoll failed', getErrorMessage(e))
   }
 }
 
@@ -390,4 +389,3 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
     )
   }
 }
-

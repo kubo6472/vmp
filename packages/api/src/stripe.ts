@@ -70,7 +70,9 @@ async function stripePost(path: any, body: any, env: any) {
     return res.json()
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'AbortError') {
-      return { error: { message: 'Stripe request timed out', code: 'stripe_timeout', status: 504 } }
+      const err = new Error('Stripe request timed out')
+      Object.assign(err, { status: 504, code: 'stripe_timeout' })
+      throw err
     }
     throw error
   } finally {
@@ -89,7 +91,9 @@ async function stripeGet(path: any, env: any) {
     return res.json()
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'AbortError') {
-      return { error: { message: 'Stripe request timed out', code: 'stripe_timeout', status: 504 } }
+      const err = new Error('Stripe request timed out')
+      Object.assign(err, { status: 504, code: 'stripe_timeout' })
+      throw err
     }
     throw error
   } finally {
@@ -241,9 +245,11 @@ export async function handleGetPricing(request: any, env: any, corsHeaders: any)
     ])
     if (monthly == null || yearly == null || club == null) {
       return jsonResponse({
-        error: 'Pricing is not configured in admin_settings.',
-        code: 'pricing_not_configured',
-      }, 500, corsHeaders)
+        monthly: null,
+        yearly: null,
+        club: null,
+        pricing_not_configured: true,
+      }, 200, corsHeaders)
     }
     return jsonResponse({
       monthly: Number(monthly),
