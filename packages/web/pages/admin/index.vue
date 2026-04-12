@@ -776,7 +776,7 @@
                   <option value="analyst">analyst</option>
                   <option value="editor">editor</option>
                   <option value="admin">admin</option>
-                  <option v-if="user?.role === 'super_admin'" value="super_admin">super_admin</option>
+                  <option value="super_admin" :disabled="user?.role !== 'super_admin'">super_admin</option>
                 </select>
               </div>
               <div>
@@ -784,17 +784,20 @@
                 <select
                   :id="`sub-${u.id}`"
                   :value="adminUserSubscriptionSelectValue(u)"
-                  :disabled="user?.role !== 'super_admin' && u.role === 'super_admin'"
+                  :disabled="adminUserSubscriptionSelectDisabled(u)"
+                  :title="adminUserSubscriptionSelectTitle(u)"
                   class="w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white disabled:opacity-50"
                   @change="(e) => onUserSubscriptionSelect(u, (e.target as HTMLSelectElement).value)"
                 >
                   <option value="none">none</option>
-                  <option value="active">active</option>
-                  <option value="trialing">trialing</option>
-                  <option value="past_due">past_due</option>
-                  <option value="cancelled">cancelled</option>
-                  <option value="unpaid">unpaid</option>
-                  <option value="incomplete">incomplete</option>
+                  <template v-if="hasAdminUserSubscriptionRow(u)">
+                    <option value="active">active</option>
+                    <option value="trialing">trialing</option>
+                    <option value="past_due">past_due</option>
+                    <option value="cancelled">cancelled</option>
+                    <option value="unpaid">unpaid</option>
+                    <option value="incomplete">incomplete</option>
+                  </template>
                 </select>
               </div>
             </div>
@@ -1619,6 +1622,25 @@ function adminUserSubscriptionSelectValue(u: AdminUserRow): string {
   return u.uiSubscription ?? (u.subscription_status || 'none')
 }
 
+function hasAdminUserSubscriptionRow(u: AdminUserRow): boolean {
+  return u.subscription_status != null && u.subscription_status !== ''
+}
+
+function adminUserSubscriptionSelectDisabled(u: AdminUserRow): boolean {
+  if (user?.role !== 'super_admin' && u.role === 'super_admin') return true
+  return !hasAdminUserSubscriptionRow(u)
+}
+
+function adminUserSubscriptionSelectTitle(u: AdminUserRow): string {
+  if (user?.role !== 'super_admin' && u.role === 'super_admin') {
+    return 'Only a super admin may change this account'
+  }
+  if (!hasAdminUserSubscriptionRow(u)) {
+    return 'No subscription row — status cannot be edited'
+  }
+  return ''
+}
+
 function patchUserRowById(userId: string, patch: Partial<AdminUserRow>) {
   const i = users.value.findIndex((x) => x.id === userId)
   if (i === -1) return
@@ -1636,7 +1658,19 @@ const updateUser = async (userId: string, patch: Record<string, string>) => {
       const err = await res.json().catch(() => ({}))
       throw new Error(err.error || `HTTP ${res.status}`)
     }
-    await loadUsers()
+    if (typeof patch.role === 'string') {
+      patchUserRowById(userId, { role: patch.role, uiRole: undefined })
+    }
+    if (typeof patch.subscriptionStatus === 'string') {
+      const s = patch.subscriptionStatus
+      const nextSub = s === 'none' ? 'cancelled' : s
+      patchUserRowById(userId, { subscription_status: nextSub, uiSubscription: undefined })
+    }
+    try {
+      await loadUsers()
+    } catch (e) {
+      console.error('loadUsers after user patch:', e)
+    }
     showToast('success', 'User updated.')
     return true
   } catch (error: any) {
@@ -1671,6 +1705,7 @@ function onUserRoleSelect(u: AdminUserRow, newRole: string) {
 }
 
 function onUserSubscriptionSelect(u: AdminUserRow, next: string) {
+  if (!hasAdminUserSubscriptionRow(u)) return
   const prev = u.subscription_status || 'none'
   if (next === prev) return
   patchUserRowById(u.id, { uiSubscription: next })

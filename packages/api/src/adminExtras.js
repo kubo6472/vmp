@@ -613,7 +613,8 @@ export async function handleAdminUsers(request, env, corsHeaders) {
       newRole,
     })
     if (!matrix.ok) {
-      return jsonResponse({ error: matrix.error, code: matrix.code }, 403, corsHeaders)
+      const status = matrix.code === 'invalid_role' ? 400 : 403
+      return jsonResponse({ error: matrix.error, code: matrix.code }, status, corsHeaders)
     }
     const selfCheck = evaluateSelfRoleChange({
       actorUserId,
@@ -649,6 +650,9 @@ export async function handleAdminUsers(request, env, corsHeaders) {
   }
 
   if (wantsSubscription) {
+    if (actorRole === 'admin' && target.role === 'super_admin') {
+      return jsonResponse({ error: 'Only super_admin may edit super_admin accounts', code: 'forbidden_target' }, 403, corsHeaders)
+    }
     const prevStatus = latest?.status ?? null
     const transition = evaluateSubscriptionStatusChange(prevStatus, body.subscriptionStatus)
     if (!transition.ok) {
