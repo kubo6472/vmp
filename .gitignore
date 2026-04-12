@@ -9,7 +9,6 @@ dist/
 build/
 .wrangler/
 packages/web/public/sw-push.js
-packages/web/public/sw-push.js
 
 # Environment variables
 .env
