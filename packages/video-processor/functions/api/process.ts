@@ -10,6 +10,9 @@ interface ProcessEnv {
 }
 
 type Visibility = 'private' | 'unlisted' | 'public'
+interface ExistingMetadata {
+  durationSeconds?: unknown
+}
 
 export async function onRequest(context: RequestContext<ProcessEnv>) {
   const { request, env } = context
@@ -51,7 +54,7 @@ export async function onRequest(context: RequestContext<ProcessEnv>) {
 
     const existingMetadataObject = await env.VIDEO_BUCKET.get(metadataKey);
     const existingMetadata = existingMetadataObject
-      ? await existingMetadataObject.json().catch(() => null)
+      ? await existingMetadataObject.json<ExistingMetadata>().catch(() => null)
       : null;
     let durationSeconds = toNumberOrNull(existingMetadata?.durationSeconds);
 
@@ -215,6 +218,7 @@ function parseHlsMasterPlaylist(content: string): { variants: Variant[]; audioGr
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]
+    if (!line) continue
 
     if (line.startsWith('#EXT-X-MEDIA:')) {
       const attributes = parseAttributeList(line.slice('#EXT-X-MEDIA:'.length))

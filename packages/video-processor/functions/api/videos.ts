@@ -123,7 +123,10 @@ async function listAllVideoObjects(bucket: R2Bucket): Promise<R2Object[]> {
   let cursor: string | undefined
 
   do {
-    const result = await bucket.list({ prefix: 'videos/', limit: 1000, cursor })
+    const listOptions = cursor
+      ? { prefix: 'videos/', limit: 1000, cursor }
+      : { prefix: 'videos/', limit: 1000 }
+    const result = await bucket.list(listOptions)
     objects.push(...result.objects)
     cursor = result.truncated ? result.cursor : undefined
   } while (cursor)
@@ -187,7 +190,7 @@ function hydrateVideoEntry(entry: VideoEntry, object: R2Object): void {
 
 function getVideoIdFromKey(key: string): string | null {
   const match = key.match(/^videos\/([^/]+)\//)
-  return match ? match[1] : null
+  return match?.[1] ?? null
 }
 
 function asIsoDate(input: unknown): string | null {
@@ -304,8 +307,9 @@ async function syncVideosTable(entries: VideoResponseEntry[], env: VideosEnv): P
         const currentManagedIds = new Set(entries.map((entry) => entry.videoId))
         const existingManaged = await db.prepare('SELECT id FROM videos WHERE managed_by_r2 = 1').all<{ id?: unknown }>()
         const staleIds = (existingManaged.results ?? [])
-          .map((row) => (typeof row.id === 'string' ? row.id : null))
-          .filter((id): id is string => Boolean(id) && !currentManagedIds.has(id))
+          .map((row) => row.id)
+          .filter((id): id is string => typeof id === 'string')
+          .filter((id) => !currentManagedIds.has(id))
 
         for (const staleBatch of chunkArray(staleIds, D1_DELETE_BIND_LIMIT)) {
           const placeholders = staleBatch.map(() => '?').join(',')

@@ -73,7 +73,7 @@ export async function onRequest(context: UploadChunkContext) {
 
     if (session.offset === session.uploadLength) {
       await multipart.complete(session.parts.map(({ partNumber, etag }) => ({ partNumber, etag })))
-      await env.VIDEO_BUCKET.delete(sessionKey, { onlyIf: { etagMatches: sessionObject.etag } })
+      await env.VIDEO_BUCKET.delete(sessionKey)
 
       return tusResponse(null, 204, {
         'Upload-Offset': String(session.offset),

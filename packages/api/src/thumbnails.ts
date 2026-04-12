@@ -234,7 +234,7 @@ export async function handleThumbnailUpload(request: Request, env: Env, corsHead
       .bind(thumbUrls.large, videoId)
       .run()
 
-    const rowsChanged = result.meta?.changes ?? result.changes ?? 0
+    const rowsChanged = Number(result.meta?.changes ?? 0)
     if (rowsChanged === 0) {
       await Promise.allSettled(writtenKeys.map(k => env.BUCKET.delete(k)))
       return jsonResponse({ error: 'Video not found or could not be updated.' }, 404, corsHeaders)

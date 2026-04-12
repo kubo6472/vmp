@@ -27,7 +27,7 @@ export interface UploadSession {
   createdAt: string
 }
 
-export function parseUploadMetadata(headerValue: string | undefined): Record<string, string> {
+export function parseUploadMetadata(headerValue: string | null | undefined): Record<string, string> {
   if (!headerValue) return {}
   const result: Record<string, string> = {}
   const entries = headerValue.split(',')
