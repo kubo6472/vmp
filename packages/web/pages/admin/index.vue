@@ -685,28 +685,143 @@
 
         <div v-if="activeAdminTab === 'users'" id="users-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-4">
           <h2 class="text-xl font-bold text-gray-900 dark:text-white">Users and roles</h2>
-          <div class="space-y-2">
-            <div v-for="u in users" :key="u.id" class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
-              <div class="md:col-span-2">
-                <p class="text-sm font-medium text-gray-900 dark:text-white">{{ u.email }}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">{{ u.id }}</p>
-              </div>
-              <select :value="u.role" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" @change="(e) => updateUser(u.id, { role: (e.target as HTMLSelectElement).value })">
+          <p class="text-sm text-gray-600 dark:text-gray-400">
+            Search and filters apply to all accounts. Sensitive changes require confirmation. Subscription edits update the user's latest Stripe-linked row only.
+          </p>
+          <div class="flex flex-col lg:flex-row lg:flex-wrap gap-3 items-stretch lg:items-end">
+            <div class="flex-1 min-w-[12rem]">
+              <label for="users-search" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Search email or id</label>
+              <input
+                id="users-search"
+                v-model="usersSearchInput"
+                type="search"
+                autocomplete="off"
+                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm"
+                placeholder="Filter…"
+              />
+            </div>
+            <div>
+              <label for="users-role-filter" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Role</label>
+              <select
+                id="users-role-filter"
+                v-model="usersRoleFilter"
+                class="w-full lg:w-40 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm"
+                @change="usersPage = 1; loadUsers()"
+              >
+                <option value="all">All roles</option>
                 <option value="viewer">viewer</option>
                 <option value="moderator">moderator</option>
                 <option value="analyst">analyst</option>
                 <option value="editor">editor</option>
                 <option value="admin">admin</option>
-                <option v-if="user?.role === 'super_admin'" value="super_admin">super_admin</option>
+                <option value="super_admin">super_admin</option>
               </select>
-              <select :value="u.subscription_status || 'none'" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" @change="(e) => updateUser(u.id, { subscriptionStatus: (e.target as HTMLSelectElement).value })">
-                <option value="none">none</option>
+            </div>
+            <div>
+              <label for="users-sub-filter" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Subscription</label>
+              <select
+                id="users-sub-filter"
+                v-model="usersSubscriptionFilter"
+                class="w-full lg:w-44 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm"
+                @change="usersPage = 1; loadUsers()"
+              >
+                <option value="all">Any</option>
+                <option value="none">No subscription</option>
                 <option value="active">active</option>
                 <option value="trialing">trialing</option>
                 <option value="past_due">past_due</option>
                 <option value="cancelled">cancelled</option>
+                <option value="unpaid">unpaid</option>
+                <option value="incomplete">incomplete</option>
               </select>
             </div>
+            <div>
+              <span class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Page size</span>
+              <select
+                v-model.number="usersPageSize"
+                class="w-full lg:w-28 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm"
+                @change="usersPage = 1; loadUsers()"
+              >
+                <option :value="10">10</option>
+                <option :value="25">25</option>
+                <option :value="50">50</option>
+              </select>
+            </div>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-500">
+            Showing {{ users.length ? (usersPage - 1) * usersPageSize + 1 : 0 }}–{{ Math.min(usersPage * usersPageSize, usersTotal) }} of {{ usersTotal }} users
+          </p>
+          <div class="space-y-2">
+            <div
+              v-for="u in users"
+              :key="u.id"
+              class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 md:grid-cols-4 gap-2 items-center"
+            >
+              <div class="md:col-span-2">
+                <p class="text-sm font-medium text-gray-900 dark:text-white">{{ u.email }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ u.id }}</p>
+              </div>
+              <div>
+                <label class="sr-only" :for="`role-${u.id}`">Role for {{ u.email }}</label>
+                <select
+                  :id="`role-${u.id}`"
+                  :value="adminUserRoleSelectValue(u)"
+                  :disabled="user?.role !== 'super_admin' && u.role === 'super_admin'"
+                  :title="user?.role !== 'super_admin' && u.role === 'super_admin' ? 'Only a super admin may change this account' : ''"
+                  class="w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white disabled:opacity-50"
+                  @change="(e) => onUserRoleSelect(u, (e.target as HTMLSelectElement).value)"
+                >
+                  <option value="viewer">viewer</option>
+                  <option value="moderator">moderator</option>
+                  <option value="analyst">analyst</option>
+                  <option value="editor">editor</option>
+                  <option value="admin">admin</option>
+                  <option value="super_admin" :disabled="user?.role !== 'super_admin'">super_admin</option>
+                </select>
+              </div>
+              <div>
+                <label class="sr-only" :for="`sub-${u.id}`">Subscription for {{ u.email }}</label>
+                <select
+                  :id="`sub-${u.id}`"
+                  :value="adminUserSubscriptionSelectValue(u)"
+                  :disabled="adminUserSubscriptionSelectDisabled(u)"
+                  :title="adminUserSubscriptionSelectTitle(u)"
+                  class="w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white disabled:opacity-50"
+                  @change="(e) => onUserSubscriptionSelect(u, (e.target as HTMLSelectElement).value)"
+                >
+                  <option value="none">none</option>
+                  <template v-if="hasAdminUserSubscriptionRow(u)">
+                    <option value="active">active</option>
+                    <option value="trialing">trialing</option>
+                    <option value="past_due">past_due</option>
+                    <option value="cancelled">cancelled</option>
+                    <option value="unpaid">unpaid</option>
+                    <option value="incomplete">incomplete</option>
+                  </template>
+                </select>
+              </div>
+            </div>
+            <p v-if="!users.length && !usersLoading" class="text-sm text-gray-500 dark:text-gray-400 py-6 text-center">No users match these filters.</p>
+            <p v-if="usersLoading" class="text-sm text-gray-500 dark:text-gray-400 py-4 text-center">Loading…</p>
+          </div>
+          <div v-if="usersTotalPages > 1" class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+            <button
+              type="button"
+              class="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-600 text-sm disabled:opacity-40"
+              :disabled="usersPage <= 1 || usersLoading"
+              @click="usersPage = Math.max(1, usersPage - 1); loadUsers()"
+            >
+              Previous
+            </button>
+            <span class="text-sm text-gray-600 dark:text-gray-400">Page {{ usersPage }} / {{ usersTotalPages }}</span>
+            <button
+              type="button"
+              class="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-600 text-sm disabled:opacity-40"
+              :disabled="usersPage >= usersTotalPages || usersLoading"
+              @click="usersPage = Math.min(usersTotalPages, usersPage + 1); loadUsers()"
+            >
+              Next
+            </button>
           </div>
         </div>
 
@@ -744,7 +859,7 @@
       <div v-for="toast in toasts" :key="toast.id" role="status" aria-live="polite" aria-atomic="true" class="rounded-lg border px-3 py-2 text-sm shadow" :class="toast.type === 'success' ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200' : 'border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200'">{{ toast.message }}</div>
     </div>
 
-    <div v-if="confirmModal.open" class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" @click.self="confirmModal.open = false">
+    <div v-if="confirmModal.open" class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" @click.self="onConfirmCancel">
       <div
         ref="confirmDialogRef"
         role="dialog"
@@ -754,11 +869,19 @@
         tabindex="-1"
         class="w-full max-w-lg rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-5"
       >
-        <h3 id="confirmModalTitle" class="text-lg font-semibold text-gray-900 dark:text-white mb-2">{{ confirmModal.action === 'trash' ? 'Permanently delete video?' : 'Archive video?' }}</h3>
+        <h3 id="confirmModalTitle" class="text-lg font-semibold text-gray-900 dark:text-white mb-2">{{ confirmModalTitle }}</h3>
         <p id="confirmModalDesc" class="text-sm text-gray-600 dark:text-gray-400 mb-4">{{ confirmModal.impactText }}</p>
         <div class="flex justify-end gap-2">
-          <button type="button" aria-label="Cancel destructive action" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 text-sm" @click="confirmModal.open = false">Cancel</button>
-          <button type="button" aria-label="Confirm destructive action" class="px-3 py-2 rounded text-sm text-white" :class="confirmModal.action === 'trash' ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'" @click="runConfirmedAction">Confirm</button>
+          <button type="button" aria-label="Cancel" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 text-sm" @click="onConfirmCancel">Cancel</button>
+          <button
+            type="button"
+            aria-label="Confirm"
+            class="px-3 py-2 rounded text-sm text-white"
+            :class="confirmModalConfirmClass"
+            @click="runConfirmedAction"
+          >
+            Confirm
+          </button>
         </div>
       </div>
     </div>
@@ -899,6 +1022,20 @@ interface Category {
   video_count?: number
 }
 
+/** Row shape from GET /api/admin/users */
+interface AdminUserRow {
+  id: string
+  email: string
+  role: string
+  subscription_status?: string | null
+  created_at?: string
+  plan_type?: string | null
+  current_period_end?: string | null
+  /** Optimistic / pending select value; cleared after successful reload */
+  uiRole?: string
+  uiSubscription?: string
+}
+
 type BlockType = 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
 interface LayoutBlock {
   id: string
@@ -983,7 +1120,34 @@ const newsletterEditingTemplateId = ref<string | null>(null)
 const newsletterTemplateSaving = ref(false)
 const homepageHeroTitle = ref('')
 const homepageHeroSubtitle = ref('')
-const users = ref<any[]>([])
+let usersLoadRequestId = 0
+const users = ref<AdminUserRow[]>([])
+const usersLoading = ref(false)
+const usersPage = ref(1)
+const usersPageSize = ref(25)
+const usersTotal = ref(0)
+const usersTotalPages = ref(1)
+const usersSearchInput = ref('')
+const usersSearchDebounced = ref('')
+const usersRoleFilter = ref('all')
+const usersSubscriptionFilter = ref('all')
+let usersSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+const ROLE_ORDER = ['viewer', 'moderator', 'analyst', 'editor', 'admin', 'super_admin'] as const
+function roleRank(role: string): number {
+  const i = ROLE_ORDER.indexOf(role as (typeof ROLE_ORDER)[number])
+  return i === -1 ? 0 : i
+}
+function isRoleDemotion(from: string, to: string): boolean {
+  return roleRank(to) < roleRank(from)
+}
+function isSensitiveRoleChange(from: string, to: string): boolean {
+  if (from === to) return false
+  if (isRoleDemotion(from, to)) return true
+  if (to === 'admin' || to === 'super_admin') return true
+  if (from === 'admin' || from === 'super_admin') return true
+  return false
+}
 const adminPills = ref<Array<{ id: string; label: string; value: number; color: string; sort_order: number }>>([])
 const newPill = ref({ label: '', value: 0, color: '#2563eb' })
 const pillsApiKey = ref('')
@@ -1412,10 +1576,75 @@ const saveHomepageContent = async () => {
 
 const loadUsers = async () => {
   if (!isAdmin.value) return
-  const res = await fetch(`${config.public.apiUrl}/api/admin/users`, { headers: authHeader() })
-  if (!res.ok) return
-  const data = await res.json()
-  users.value = data.users || []
+  const reqId = ++usersLoadRequestId
+  usersLoading.value = true
+  try {
+    const params = new URLSearchParams({
+      page: String(usersPage.value),
+      pageSize: String(usersPageSize.value),
+      search: usersSearchDebounced.value.trim(),
+      role: usersRoleFilter.value,
+      subscription: usersSubscriptionFilter.value,
+    })
+    const res = await fetch(`${config.public.apiUrl}/api/admin/users?${params.toString()}`, { headers: authHeader() })
+    if (reqId !== usersLoadRequestId) return
+    if (!res.ok) return
+    const data = await res.json()
+    if (reqId !== usersLoadRequestId) return
+    users.value = ((data.users || []) as AdminUserRow[]).map((row) => ({
+      ...row,
+      uiRole: undefined,
+      uiSubscription: undefined,
+    }))
+    usersTotal.value = Number(data.total) || 0
+    usersTotalPages.value = Math.max(1, Number(data.totalPages) || 1)
+  }
+  finally {
+    if (reqId === usersLoadRequestId) usersLoading.value = false
+  }
+}
+
+watch(usersSearchInput, () => {
+  if (usersSearchDebounceTimer) clearTimeout(usersSearchDebounceTimer)
+  usersSearchDebounceTimer = setTimeout(() => {
+    usersSearchDebounceTimer = null
+    usersSearchDebounced.value = usersSearchInput.value
+    usersPage.value = 1
+    loadUsers()
+  }, 350)
+})
+
+function adminUserRoleSelectValue(u: AdminUserRow): string {
+  return u.uiRole ?? u.role
+}
+
+function adminUserSubscriptionSelectValue(u: AdminUserRow): string {
+  return u.uiSubscription ?? (u.subscription_status || 'none')
+}
+
+function hasAdminUserSubscriptionRow(u: AdminUserRow): boolean {
+  return u.subscription_status != null && u.subscription_status !== ''
+}
+
+function adminUserSubscriptionSelectDisabled(u: AdminUserRow): boolean {
+  if (user.value?.role !== 'super_admin' && u.role === 'super_admin') return true
+  return !hasAdminUserSubscriptionRow(u)
+}
+
+function adminUserSubscriptionSelectTitle(u: AdminUserRow): string {
+  if (user.value?.role !== 'super_admin' && u.role === 'super_admin') {
+    return 'Only a super admin may change this account'
+  }
+  if (!hasAdminUserSubscriptionRow(u)) {
+    return 'No subscription row — status cannot be edited'
+  }
+  return ''
+}
+
+function patchUserRowById(userId: string, patch: Partial<AdminUserRow>) {
+  const i = users.value.findIndex((x) => x.id === userId)
+  if (i === -1) return
+  users.value[i] = { ...users.value[i], ...patch }
 }
 
 const updateUser = async (userId: string, patch: Record<string, string>) => {
@@ -1429,12 +1658,67 @@ const updateUser = async (userId: string, patch: Record<string, string>) => {
       const err = await res.json().catch(() => ({}))
       throw new Error(err.error || `HTTP ${res.status}`)
     }
-    await loadUsers()
+    if (typeof patch.role === 'string') {
+      patchUserRowById(userId, { role: patch.role, uiRole: undefined })
+    }
+    if (typeof patch.subscriptionStatus === 'string') {
+      const s = patch.subscriptionStatus
+      const nextSub = s === 'none' ? 'cancelled' : s
+      patchUserRowById(userId, { subscription_status: nextSub, uiSubscription: undefined })
+    }
+    try {
+      await loadUsers()
+    } catch (e) {
+      console.error('loadUsers after user patch:', e)
+    }
     showToast('success', 'User updated.')
+    return true
   } catch (error: any) {
     console.error('Failed to update user', error)
     showToast('error', `Failed to update user: ${error.message || 'unknown error'}`)
+    return false
   }
+}
+
+function onUserRoleSelect(u: AdminUserRow, newRole: string) {
+  const serverRole = u.role
+  if (newRole === serverRole) return
+  if (isSensitiveRoleChange(serverRole, newRole)) {
+    patchUserRowById(u.id, { uiRole: newRole })
+    openConfirmModal({
+      mode: 'user_role',
+      userId: u.id,
+      email: u.email,
+      prevRole: serverRole,
+      nextRole: newRole,
+      prevSubscription: u.subscription_status || 'none',
+      nextSubscription: u.subscription_status || 'none',
+      impactText: `Change role for ${u.email} from ${serverRole} to ${newRole}? This affects API access immediately.`,
+    })
+    return
+  }
+  patchUserRowById(u.id, { uiRole: newRole })
+  void (async () => {
+    const ok = await updateUser(u.id, { role: newRole })
+    if (!ok) patchUserRowById(u.id, { uiRole: undefined })
+  })()
+}
+
+function onUserSubscriptionSelect(u: AdminUserRow, next: string) {
+  if (!hasAdminUserSubscriptionRow(u)) return
+  const prev = u.subscription_status || 'none'
+  if (next === prev) return
+  patchUserRowById(u.id, { uiSubscription: next })
+  openConfirmModal({
+    mode: 'user_subscription',
+    userId: u.id,
+    email: u.email,
+    prevRole: u.role,
+    nextRole: u.role,
+    prevSubscription: prev,
+    nextSubscription: next,
+    impactText: `Change subscription status for ${u.email} from ${prev} to ${next}? This updates their latest subscription row in the database (not Stripe).`,
+  })
 }
 
 const loadAnalytics = async () => {
@@ -1892,30 +2176,132 @@ function showToast(type: Toast['type'], message: string) {
   toastTimers.set(id, timer)
 }
 
-const confirmModal = ref<{ open: boolean; action: 'trash' | 'archive' | null; video: Video | null; impactText: string }>({
-  open: false,
-  action: null,
-  video: null,
-  impactText: '',
+type ConfirmModalState =
+  | { open: false }
+  | {
+      open: true
+      mode: 'video'
+      action: 'trash' | 'archive'
+      video: Video
+      impactText: string
+    }
+  | {
+      open: true
+      mode: 'user_role' | 'user_subscription'
+      userId: string
+      email: string
+      prevRole: string
+      nextRole: string
+      prevSubscription: string
+      nextSubscription: string
+      impactText: string
+    }
+
+const confirmModal = ref<ConfirmModalState>({ open: false })
+
+const confirmModalTitle = computed(() => {
+  const m = confirmModal.value
+  if (!m.open) return ''
+  if (m.mode === 'video') return m.action === 'trash' ? 'Permanently delete video?' : 'Archive video?'
+  if (m.mode === 'user_role') return 'Confirm role change'
+  return 'Confirm subscription change'
 })
 
-function openConfirmModal(video: Video, action: 'trash' | 'archive') {
+const confirmModalConfirmClass = computed(() => {
+  const m = confirmModal.value
+  if (!m.open || m.mode === 'video') {
+    return m.open && m.mode === 'video' && m.action === 'trash' ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'
+  }
+  return 'bg-purple-600 hover:bg-purple-700'
+})
+
+function closeConfirmModal() {
+  confirmModal.value = { open: false }
+}
+
+/** Cancel user confirm: revert optimistic select; resync list from server. */
+function onConfirmCancel() {
+  const was = confirmModal.value
+  if (was.open && (was.mode === 'user_role' || was.mode === 'user_subscription')) {
+    patchUserRowById(was.userId, { uiRole: undefined, uiSubscription: undefined })
+  }
+  closeConfirmModal()
+  if (was.open && (was.mode === 'user_role' || was.mode === 'user_subscription') && activeAdminTab.value === 'users') {
+    void loadUsers()
+  }
+}
+
+function openConfirmModal(video: Video, action: 'trash' | 'archive'): void
+function openConfirmModal(payload: {
+  mode: 'user_role' | 'user_subscription'
+  userId: string
+  email: string
+  prevRole: string
+  nextRole: string
+  prevSubscription: string
+  nextSubscription: string
+  impactText: string
+}): void
+function openConfirmModal(
+  videoOrPayload: Video | {
+    mode: 'user_role' | 'user_subscription'
+    userId: string
+    email: string
+    prevRole: string
+    nextRole: string
+    prevSubscription: string
+    nextSubscription: string
+    impactText: string
+  },
+  action?: 'trash' | 'archive',
+) {
+  if (videoOrPayload && typeof videoOrPayload === 'object' && 'mode' in videoOrPayload) {
+    const p = videoOrPayload
+    confirmModal.value = {
+      open: true,
+      mode: p.mode,
+      userId: p.userId,
+      email: p.email,
+      prevRole: p.prevRole,
+      nextRole: p.nextRole,
+      prevSubscription: p.prevSubscription,
+      nextSubscription: p.nextSubscription,
+      impactText: p.impactText,
+    }
+    return
+  }
+  const video = videoOrPayload as Video
+  const act = action!
   confirmModal.value = {
     open: true,
-    action,
+    mode: 'video',
+    action: act,
     video,
-    impactText: action === 'trash'
+    impactText: act === 'trash'
       ? `This permanently removes ${video.title} from the database and deletes all files in R2 (videos/${video.id}/). This cannot be undone.`
-      : `This hides ${video.title} from published surfaces. It remains restorable from Drafts.`
+      : `This hides ${video.title} from published surfaces. It remains restorable from Drafts.`,
   }
 }
 
 async function runConfirmedAction() {
   const current = confirmModal.value
-  if (!current.video || !current.action) return
-  confirmModal.value.open = false
-  if (current.action === 'trash') await trashVideo(current.video)
-  else await updateVideoStatus(current.video, 'archived')
+  if (!current.open) return
+  if (current.mode === 'video') {
+    closeConfirmModal()
+    if (current.action === 'trash') await trashVideo(current.video)
+    else await updateVideoStatus(current.video, 'archived')
+    return
+  }
+  const snap = { ...current }
+  closeConfirmModal()
+  const patch = snap.mode === 'user_role'
+    ? { role: snap.nextRole }
+    : { subscriptionStatus: snap.nextSubscription }
+  const ok = await updateUser(snap.userId, patch)
+  if (!ok) {
+    patchUserRowById(snap.userId, { uiRole: undefined, uiSubscription: undefined })
+    if (activeAdminTab.value === 'users') void loadUsers()
+  }
 }
 
 async function startSlugEdit(video: Video) {
@@ -1995,7 +2381,9 @@ function onConfirmModalKeydown(e: KeyboardEvent) {
   if (!confirmModal.value.open) return
   if (e.key === 'Escape') {
     e.preventDefault()
-    confirmModal.value.open = false
+    const m = confirmModal.value
+    if (m.open && (m.mode === 'user_role' || m.mode === 'user_subscription')) onConfirmCancel()
+    else closeConfirmModal()
     return
   }
   if (e.key !== 'Tab' || !confirmDialogRef.value) return
@@ -2076,6 +2464,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onConfirmModalKeydown)
   window.removeEventListener('keydown', onSwapModalKeydown)
+  if (usersSearchDebounceTimer) clearTimeout(usersSearchDebounceTimer)
   for (const timer of toastTimers.values()) clearTimeout(timer)
   toastTimers.clear()
 })
