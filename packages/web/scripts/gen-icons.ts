@@ -1,8 +1,8 @@
 /**
- * gen-icons.mjs
+ * gen-icons.ts
  * Generates PWA icons (play-button triangle on dark background) as PNG files.
  * Pure Node.js — no external dependencies required.
- * Usage: node scripts/gen-icons.mjs   (from packages/web/)
+ * Usage: tsx scripts/gen-icons.ts   (from packages/web/)
  */
 
 import { deflateSync } from 'node:zlib'
@@ -17,7 +17,7 @@ mkdirSync(OUT_DIR, { recursive: true })
 
 // ── PNG encoder ──────────────────────────────────────────────────────────────
 
-function crc32(buf) {
+function crc32(buf: Uint8Array) {
   const table = (() => {
     const t = new Uint32Array(256)
     for (let n = 0; n < 256; n++) {
@@ -32,7 +32,7 @@ function crc32(buf) {
   return (c ^ 0xffffffff) >>> 0
 }
 
-function chunk(type, data) {
+function chunk(type: string, data: Buffer) {
   const typeBytes = Buffer.from(type, 'ascii')
   const lenBuf = Buffer.alloc(4)
   lenBuf.writeUInt32BE(data.length)
@@ -42,7 +42,7 @@ function chunk(type, data) {
   return Buffer.concat([lenBuf, typeBytes, data, crcBuf])
 }
 
-function encodePNG(pixels, width, height) {
+function encodePNG(pixels: Buffer, width: number, height: number) {
   // pixels: Uint8Array of length width*height*3 (RGB rows, top→bottom)
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 
@@ -74,25 +74,25 @@ function encodePNG(pixels, width, height) {
 
 // ── Drawing helpers ──────────────────────────────────────────────────────────
 
-function makeCanvas(size) {
+function makeCanvas(size: number) {
   // RGB pixel buffer, all zeros
   return Buffer.alloc(size * size * 3)
 }
 
-function setPixel(buf, size, x, y, r, g, b) {
+function setPixel(buf: Buffer, size: number, x: number, y: number, r: number, g: number, b: number) {
   if (x < 0 || x >= size || y < 0 || y >= size) return
   const i = (y * size + x) * 3
   buf[i] = r; buf[i + 1] = g; buf[i + 2] = b
 }
 
-function fillRect(buf, size, x0, y0, x1, y1, r, g, b) {
+function fillRect(buf: Buffer, size: number, x0: number, y0: number, x1: number, y1: number, r: number, g: number, b: number) {
   for (let y = y0; y < y1; y++)
     for (let x = x0; x < x1; x++)
       setPixel(buf, size, x, y, r, g, b)
 }
 
 // Anti-aliased circle fill
-function fillCircle(buf, size, cx, cy, radius, r, g, b, bgR, bgG, bgB) {
+function fillCircle(buf: Buffer, size: number, cx: number, cy: number, radius: number, r: number, g: number, b: number, bgR: number, bgG: number, bgB: number) {
   for (let y = Math.floor(cy - radius - 1); y <= Math.ceil(cy + radius + 1); y++) {
     for (let x = Math.floor(cx - radius - 1); x <= Math.ceil(cx + radius + 1); x++) {
       const dx = x - cx, dy = y - cy
@@ -113,13 +113,13 @@ function fillCircle(buf, size, cx, cy, radius, r, g, b, bgR, bgG, bgB) {
 
 // Anti-aliased filled triangle (right-pointing play symbol)
 // p0=top-left, p1=bottom-left, p2=right
-function fillTriangle(buf, size, p0, p1, p2, r, g, b) {
+function fillTriangle(buf: Buffer, size: number, p0: [number, number], p1: [number, number], p2: [number, number], r: number, g: number, b: number) {
   const minX = Math.floor(Math.min(p0[0], p1[0], p2[0])) - 1
   const maxX = Math.ceil(Math.max(p0[0], p1[0], p2[0])) + 1
   const minY = Math.floor(Math.min(p0[1], p1[1], p2[1])) - 1
   const maxY = Math.ceil(Math.max(p0[1], p1[1], p2[1])) + 1
 
-  function edgeFn(ax, ay, bx, by, px, py) {
+  function edgeFn(ax: number, ay: number, bx: number, by: number, px: number, py: number) {
     return (bx - ax) * (py - ay) - (by - ay) * (px - ax)
   }
 
@@ -143,7 +143,7 @@ function fillTriangle(buf, size, p0, p1, p2, r, g, b) {
       const t = coverage / (N * N)
       if (px < 0 || px >= size || py < 0 || py >= size) continue
       const i = (py * size + px) * 3
-      buf[i]     = Math.round(buf[i]     * (1 - t) + r * t)
+      buf[i] = Math.round(buf[i] * (1 - t) + r * t)
       buf[i + 1] = Math.round(buf[i + 1] * (1 - t) + g * t)
       buf[i + 2] = Math.round(buf[i + 2] * (1 - t) + b * t)
     }
@@ -154,10 +154,8 @@ function fillTriangle(buf, size, p0, p1, p2, r, g, b) {
 
 /**
  * Draws the VMP play-button icon.
- * @param {number} size      Canvas size in pixels
- * @param {number} safePad   Fraction of size to leave as padding (0 = full bleed, 0.1 = 10%)
  */
-function drawIcon(size, safePad = 0) {
+function drawIcon(size: number, safePad = 0) {
   const buf = makeCanvas(size)
 
   // Background: #0f172a (slate-950)
@@ -175,16 +173,15 @@ function drawIcon(size, safePad = 0) {
   fillCircle(buf, size, cx, cy, circleR, 59, 130, 246, bgR, bgG, bgB)
 
   // White play triangle, centred inside the circle
-  // Triangle: equilateral-ish pointing right, nudged left slightly to look centred
-  const th = inner * 0.28   // half-height of triangle
-  const tw = inner * 0.30   // full "width" (horizontal span)
-  const nudge = inner * 0.02 // slight rightward nudge for optical centre
+  const th = inner * 0.28
+  const tw = inner * 0.30
+  const nudge = inner * 0.02
   const tlx = cx - tw * 0.38 + nudge
   const trx = cx + tw * 0.62 + nudge
   const tmy = cy
-  const p0 = [tlx, cy - th]  // top-left
-  const p1 = [tlx, cy + th]  // bottom-left
-  const p2 = [trx, tmy]      // right point
+  const p0: [number, number] = [tlx, cy - th]
+  const p1: [number, number] = [tlx, cy + th]
+  const p2: [number, number] = [trx, tmy]
 
   fillTriangle(buf, size, p0, p1, p2, 255, 255, 255)
 
@@ -194,14 +191,14 @@ function drawIcon(size, safePad = 0) {
 // ── Write files ──────────────────────────────────────────────────────────────
 
 const variants = [
-  { name: 'pwa-192.png',          size: 192, safePad: 0    },
-  { name: 'pwa-512.png',          size: 512, safePad: 0    },
-  { name: 'pwa-512-maskable.png', size: 512, safePad: 0.10 },  // 10% safe zone
+  { name: 'pwa-192.png', size: 192, safePad: 0 },
+  { name: 'pwa-512.png', size: 512, safePad: 0 },
+  { name: 'pwa-512-maskable.png', size: 512, safePad: 0.10 },
 ]
 
 for (const { name, size, safePad } of variants) {
   const pixels = drawIcon(size, safePad)
-  const png    = encodePNG(pixels, size, size)
+  const png = encodePNG(pixels, size, size)
   const outPath = join(OUT_DIR, name)
   writeFileSync(outPath, png)
   console.log(`Written ${outPath} (${png.length} bytes)`)

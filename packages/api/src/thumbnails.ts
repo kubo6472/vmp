@@ -35,14 +35,14 @@ const SIZES = [
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function jsonResponse(body, status, corsHeaders) {
+function jsonResponse(body: any, status: any, corsHeaders: any) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   })
 }
 
-function getDb(env) {
+function getDb(env: any) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('Database binding not configured')
   return db
@@ -53,7 +53,7 @@ function getDb(env) {
  * Falls back to '.img' / 'application/octet-stream' for anything unexpected
  * (the MIME validation gate above should prevent this path in practice).
  */
-function extensionForMime(mimeType) {
+function extensionForMime(mimeType: any) {
   if (mimeType === 'image/jpeg') return { ext: 'jpg', contentType: 'image/jpeg' }
   if (mimeType === 'image/png')  return { ext: 'png', contentType: 'image/png' }
   return { ext: 'img', contentType: 'application/octet-stream' }
@@ -73,7 +73,7 @@ function extensionForMime(mimeType) {
  * @param {number}      quality  — integer 0–100; divided by 100 for the Canvas API
  * @returns {Promise<Blob>}
  */
-async function resizeImage(sourceBuffer, sourceMime, targetWidth, targetHeight, quality) {
+async function resizeImage(sourceBuffer: any, sourceMime: any, targetWidth: any, targetHeight: any, quality: any) {
   const blob   = new Blob([sourceBuffer], { type: sourceMime })
   const bitmap = await createImageBitmap(blob, {
     resizeWidth:   targetWidth,
@@ -82,6 +82,7 @@ async function resizeImage(sourceBuffer, sourceMime, targetWidth, targetHeight, 
   })
   const canvas = new OffscreenCanvas(targetWidth, targetHeight)
   const ctx    = canvas.getContext('2d')
+  if (!ctx) throw new Error('2D canvas context is unavailable')
   ctx.drawImage(bitmap, 0, 0, targetWidth, targetHeight)
   // Sized variants are always output as JPEG regardless of the source format.
   return canvas.convertToBlob({ type: 'image/jpeg', quality: quality / 100 })
@@ -98,7 +99,7 @@ async function resizeImage(sourceBuffer, sourceMime, targetWidth, targetHeight, 
  * Returns:
  *   { ok: true, thumbnails: { original, large, medium, small } }
  */
-export async function handleThumbnailUpload(request, env, corsHeaders) {
+export async function handleThumbnailUpload(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'editor', 'admin', 'super_admin')
   } catch {
@@ -108,6 +109,7 @@ export async function handleThumbnailUpload(request, env, corsHeaders) {
   const url   = new URL(request.url)
   const match = url.pathname.match(/^\/api\/admin\/videos\/([^/]+)\/thumbnail$/)
   if (!match) return jsonResponse({ error: 'Not Found' }, 404, corsHeaders)
+  // @ts-expect-error TS(2345): Argument of type 'string | undefined' is not assig... Remove this comment to see the full error message
   const videoId = decodeURIComponent(match[1])
 
   // ── Verify the video exists in D1 before doing any work ──────────────────
@@ -178,6 +180,7 @@ export async function handleThumbnailUpload(request, env, corsHeaders) {
     // Store the original with its actual MIME type / extension.
     await env.BUCKET.put(origKey, sourceBuffer, { httpMetadata: { contentType: origContentType } })
     writtenKeys.push(origKey)
+    // @ts-expect-error TS(2339): Property 'original' does not exist on type '{}'.
     thumbUrls.original = `${r2BaseUrl}/${origKey}?v=${cacheVersion}`
 
     // Resize to each size variant.
@@ -202,6 +205,7 @@ export async function handleThumbnailUpload(request, env, corsHeaders) {
         { httpMetadata: { contentType: blob.type || 'image/jpeg' } },
       )
       writtenKeys.push(variantKey)
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       thumbUrls[key] = `${r2BaseUrl}/${variantKey}?v=${cacheVersion}`
     }
 
@@ -209,6 +213,7 @@ export async function handleThumbnailUpload(request, env, corsHeaders) {
     // Guard against zero affected rows (race: video deleted between SELECT and UPDATE).
     const result = await db
       .prepare('UPDATE videos SET thumbnail_url = ? WHERE id = ?')
+      // @ts-expect-error TS(2339): Property 'large' does not exist on type '{}'.
       .bind(thumbUrls.large, videoId)
       .run()
 
@@ -239,7 +244,7 @@ export async function handleThumbnailUpload(request, env, corsHeaders) {
  *
  * Returns: { ok: true }
  */
-export async function handleThumbnailDelete(request, env, corsHeaders) {
+export async function handleThumbnailDelete(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'editor', 'admin', 'super_admin')
   } catch {
@@ -249,6 +254,7 @@ export async function handleThumbnailDelete(request, env, corsHeaders) {
   const url   = new URL(request.url)
   const match = url.pathname.match(/^\/api\/admin\/videos\/([^/]+)\/thumbnail$/)
   if (!match) return jsonResponse({ error: 'Not Found' }, 404, corsHeaders)
+  // @ts-expect-error TS(2345): Argument of type 'string | undefined' is not assig... Remove this comment to see the full error message
   const videoId = decodeURIComponent(match[1])
 
   const db = getDb(env)

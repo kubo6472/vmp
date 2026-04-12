@@ -13,7 +13,7 @@ const ADMINISTRATIVE_ROLES = new Set([
   'manager',
 ])
 
-export function isAdministrativeRole(role) {
+export function isAdministrativeRole(role: any) {
   if (typeof role !== 'string') return false
   const normalized = role.trim().toLowerCase()
   if (!normalized || normalized === 'viewer') return false

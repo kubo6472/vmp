@@ -6,22 +6,23 @@
  * to brief staleness.
  */
 
-function getDb(env) {
+function getDb(env: any) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('D1 binding not found')
   return db
 }
 
-function getSettingsKv(env) {
+function getSettingsKv(env: any) {
   // Dedicated namespace for settings cache; fallback keeps older environments working.
   return env.SETTINGS_KV || env.RATE_LIMIT_KV || null
 }
 
-function kvKey(key) {
+function kvKey(key: any) {
   return `settings:${key}`
 }
 
-export async function getSetting(env, key, options = {}) {
+export async function getSetting(env: any, key: any, options = {}) {
+  // @ts-expect-error TS(2339): Property 'ttlSeconds' does not exist on type '{}'.
   const { ttlSeconds = 300, defaultValue = null, bypassKv = false } = options
   const db = getDb(env)
   const kv = getSettingsKv(env)
@@ -57,12 +58,13 @@ export async function getSetting(env, key, options = {}) {
   return value
 }
 
-export async function getSettings(env, keys, options = {}) {
-  const entries = await Promise.all(keys.map(async (k) => [k, await getSetting(env, k, options)]))
+export async function getSettings(env: any, keys: any, options = {}) {
+  const entries = await Promise.all(keys.map(async (k: any) => [k, await getSetting(env, k, options)]))
   return Object.fromEntries(entries)
 }
 
-export async function setSetting(env, key, value, options = {}) {
+export async function setSetting(env: any, key: any, value: any, options = {}) {
+  // @ts-expect-error TS(2339): Property 'ttlSeconds' does not exist on type '{}'.
   const { ttlSeconds = 300 } = options
   const db = getDb(env)
   const kv = getSettingsKv(env)
@@ -82,7 +84,8 @@ export async function setSetting(env, key, value, options = {}) {
   }
 }
 
-export async function setSettings(env, entries, options = {}) {
+export async function setSettings(env: any, entries: any, options = {}) {
+  // @ts-expect-error TS(2339): Property 'ttlSeconds' does not exist on type '{}'.
   const { ttlSeconds = 300 } = options
   const db = getDb(env)
   const kv = getSettingsKv(env)

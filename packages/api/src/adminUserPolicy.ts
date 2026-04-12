@@ -17,7 +17,7 @@ const ROLE_RANK = {
   super_admin: 5,
 }
 
-export function isValidRoleName(role) {
+export function isValidRoleName(role: any) {
   return typeof role === 'string' && ASSIGNABLE_ROLES.includes(role)
 }
 
@@ -25,7 +25,7 @@ export function isValidRoleName(role) {
  * Whether `actorRole` may set a user to `newRole` at all (ignores target's current role).
  * super_admin is assignable only by super_admin.
  */
-export function canActorAssignRole(actorRole, newRole) {
+export function canActorAssignRole(actorRole: any, newRole: any) {
   if (!isValidRoleName(newRole)) return false
   if (newRole === 'super_admin') return actorRole === 'super_admin'
   return actorRole === 'admin' || actorRole === 'super_admin'
@@ -39,7 +39,11 @@ export function canActorAssignRole(actorRole, newRole) {
  * @param {string} p.newRole - desired role
  * @returns {{ ok: true } | { ok: false, code: string, error: string }}
  */
-export function evaluateRoleChange({ actorRole, targetCurrentRole, newRole }) {
+export function evaluateRoleChange({
+  actorRole,
+  targetCurrentRole,
+  newRole
+}: any) {
   if (!isValidRoleName(newRole)) {
     return { ok: false, code: 'invalid_role', error: 'Invalid role' }
   }
@@ -60,9 +64,16 @@ export function evaluateRoleChange({ actorRole, targetCurrentRole, newRole }) {
 /**
  * Admin cannot weaken their own role (would lock themselves out).
  */
-export function evaluateSelfRoleChange({ actorUserId, targetUserId, actorRole, newRole }) {
+export function evaluateSelfRoleChange({
+  actorUserId,
+  targetUserId,
+  actorRole,
+  newRole
+}: any) {
   if (actorUserId !== targetUserId) return { ok: true }
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   const before = ROLE_RANK[actorRole]
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   const after = ROLE_RANK[newRole]
   if (typeof before !== 'number' || typeof after !== 'number') return { ok: true }
   if (after < before) {
@@ -74,7 +85,7 @@ export function evaluateSelfRoleChange({ actorUserId, targetUserId, actorRole, n
 /** Stripe-style subscription statuses we persist in D1. */
 export const SUBSCRIPTION_STATUSES = ['active', 'trialing', 'past_due', 'cancelled', 'unpaid', 'incomplete']
 
-export function normalizeSubscriptionStatusForPolicy(raw) {
+export function normalizeSubscriptionStatusForPolicy(raw: any) {
   if (raw === null || raw === undefined || raw === 'none' || raw === '') return 'none'
   return typeof raw === 'string' ? raw : 'none'
 }
@@ -83,7 +94,7 @@ export function normalizeSubscriptionStatusForPolicy(raw) {
  * Manual admin edits: any known Stripe status is allowed; `none` marks the row cancelled (no access).
  * Unknown previous values (legacy rows) may only move to `none` or a known status after reset.
  */
-export function evaluateSubscriptionStatusChange(prevRaw, nextRaw) {
+export function evaluateSubscriptionStatusChange(prevRaw: any, nextRaw: any) {
   const prev = normalizeSubscriptionStatusForPolicy(prevRaw)
   const next = normalizeSubscriptionStatusForPolicy(nextRaw)
   if (next === 'none') {

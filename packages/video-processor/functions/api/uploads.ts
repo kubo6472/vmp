@@ -1,6 +1,6 @@
 const TUS_VERSION = '1.0.0';
 
-export async function onRequest(context) {
+export async function onRequest(context: any) {
   const { request, env } = context;
 
   if (request.method === 'OPTIONS') {
@@ -26,12 +26,15 @@ export async function onRequest(context) {
   }
 
   const metadata = parseUploadMetadata(request.headers.get('Upload-Metadata'));
+  // @ts-expect-error TS(2339): Property 'filename' does not exist on type '{}'.
   const fileName = sanitizeFileName(metadata.filename || 'upload.bin');
+  // @ts-expect-error TS(2339): Property 'filetype' does not exist on type '{}'.
   const contentType = (metadata.filetype || 'application/octet-stream').toLowerCase();
   if (!contentType.startsWith('video/')) {
     return tusResponse(jsonString({ error: 'Only video uploads are allowed' }), 400, {}, request);
   }
 
+  // @ts-expect-error TS(2339): Property 'visibility' does not exist on type '{}'.
   const visibility = sanitizeVisibility(metadata.visibility);
   const videoId = crypto.randomUUID();
   const sourceKey = `videos/${videoId}/source/${fileName}`;
@@ -71,7 +74,7 @@ export async function onRequest(context) {
   }, request);
 }
 
-function parseUploadMetadata(headerValue) {
+function parseUploadMetadata(headerValue: any) {
   if (!headerValue) return {};
   const result = {};
   const entries = headerValue.split(',');
@@ -83,6 +86,7 @@ function parseUploadMetadata(headerValue) {
     if (!rawKey || !rawValue) continue;
 
     try {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       result[rawKey] = atob(rawValue);
     } catch {
       continue;
@@ -92,15 +96,15 @@ function parseUploadMetadata(headerValue) {
   return result;
 }
 
-function sanitizeFileName(name) {
+function sanitizeFileName(name: any) {
   return name.replace(/[^a-zA-Z0-9_.-]/g, '_');
 }
 
-function sanitizeVisibility(value) {
+function sanitizeVisibility(value: any) {
   return value === 'public' || value === 'unlisted' ? value : 'private';
 }
 
-function tusResponse(body, status = 200, extraHeaders = {}, request) {
+function tusResponse(body: any, status = 200, extraHeaders = {}, request: any) {
   return withCors(new Response(body, {
     status,
     headers: {
@@ -110,14 +114,14 @@ function tusResponse(body, status = 200, extraHeaders = {}, request) {
   }), request);
 }
 
-function json(data, status = 200, request) {
+function json(data: any, status = 200, request: any) {
   return withCors(new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json' }
   }), request);
 }
 
-function withCors(response, request) {
+function withCors(response: any, request: any) {
   const headers = new Headers(response.headers);
   const origin = request.headers.get('Origin');
   if (origin) {
@@ -133,6 +137,6 @@ function withCors(response, request) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function jsonString(data) {
+function jsonString(data: any) {
   return JSON.stringify(data);
 }

@@ -39,19 +39,19 @@
  * @param {unknown} config
  * @returns {HomepageConfigInput}
  */
-export function normalizeHomepagePlacementConfig(config) {
+export function normalizeHomepagePlacementConfig(config: any) {
   const c = config && typeof config === 'object' ? /** @type {Record<string, unknown>} */ (config) : {}
   return {
     featuredMode: c.featuredMode === 'specific' ? 'specific' : 'latest',
     featuredVideoId: typeof c.featuredVideoId === 'string' ? c.featuredVideoId : null,
     featuredVideoIds: Array.isArray(c.featuredVideoIds)
-      ? c.featuredVideoIds.filter(id => typeof id === 'string').slice(0, 4)
+      ? c.featuredVideoIds.filter((id: any) => typeof id === 'string').slice(0, 4)
       : [],
-  }
+  };
 }
 
 /** @param {PublishedVideoInput} v */
-export function placementTimestampMs(v) {
+export function placementTimestampMs(v: any) {
   const primary = v.published_at
   const fallback = v.upload_date
   const s = (typeof primary === 'string' && primary.trim()) ? primary.trim()
@@ -66,7 +66,7 @@ export function placementTimestampMs(v) {
  * @param {PublishedVideoInput} a
  * @param {PublishedVideoInput} b
  */
-function compareNewestFirst(a, b) {
+function compareNewestFirst(a: any, b: any) {
   const dt = placementTimestampMs(b) - placementTimestampMs(a)
   if (dt !== 0) return dt
   if (a.id > b.id) return -1
@@ -79,7 +79,7 @@ function compareNewestFirst(a, b) {
  * @param {PublishedVideoInput} b
  * @param {'asc' | 'desc'} direction
  */
-function compareByDirection(a, b, direction) {
+function compareByDirection(a: any, b: any, direction: any) {
   const ta = placementTimestampMs(a)
   const tb = placementTimestampMs(b)
   if (direction === 'asc') {
@@ -97,7 +97,7 @@ function compareByDirection(a, b, direction) {
  * @param {Map<string, PublishedVideoInput>} byId
  * @returns {VideoRef | null}
  */
-function refFor(id, byId) {
+function refFor(id: any, byId: any) {
   const row = byId.get(id)
   return row ? { id: row.id } : null
 }
@@ -105,7 +105,7 @@ function refFor(id, byId) {
 /**
  * @param {{ videos: PublishedVideoInput[], categories: CategoryInput[], homepage: HomepageConfigInput }} input
  */
-export function placeHomepageVideos(input) {
+export function placeHomepageVideos(input: any) {
   const rawVideos = Array.isArray(input.videos) ? input.videos : []
   const categories = Array.isArray(input.categories) ? [...input.categories] : []
   const homepage = input.homepage && typeof input.homepage === 'object' ? input.homepage : {}
@@ -201,7 +201,7 @@ export function placeHomepageVideos(input) {
  * Newest categorized published video, or empty if none.
  * @param {PublishedVideoInput[]} categorizedSorted
  */
-function pickAutomaticFeatured(categorizedSorted) {
+function pickAutomaticFeatured(categorizedSorted: any) {
   if (categorizedSorted.length) {
     const top = categorizedSorted[0]
     return top ? [{ id: top.id }] : []

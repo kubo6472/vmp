@@ -20,7 +20,7 @@ export const DEFAULT_NEWSLETTER_POLL_INTERVAL_MS = 600_000
  * @param {unknown} raw
  * @returns {number}
  */
-export function clampNewsletterPollIntervalMs(raw) {
+export function clampNewsletterPollIntervalMs(raw: any) {
   const s = raw != null && String(raw).trim() !== '' ? String(raw).trim() : ''
   if (!/^\d+$/.test(s)) return DEFAULT_NEWSLETTER_POLL_INTERVAL_MS
   const n = Number.parseInt(s, 10)
@@ -31,14 +31,14 @@ export function clampNewsletterPollIntervalMs(raw) {
 /**
  * @param {{ sent_at?: string | null, campaign_id?: number | null } | null | undefined} row
  */
-export function isNewsletterSendFinished(row) {
+export function isNewsletterSendFinished(row: any) {
   return !!(row?.sent_at && row.campaign_id != null)
 }
 
 /** Brevo classic campaign statuses that mean delivery has been triggered. */
 const BREVO_CAMPAIGN_SENT_STATUSES = new Set(['sent', 'completed'])
 
-function correlationFromRequest(request) {
+function correlationFromRequest(request: any) {
   const clientCid = request.headers?.get?.('x-correlation-id')?.trim()
   if (clientCid) return clientCid
   const cf = request.headers?.get?.('CF-Ray')
@@ -47,36 +47,36 @@ function correlationFromRequest(request) {
   return cf || trace || rid || null
 }
 
-function newsletterLog(event, fields = {}) {
+function newsletterLog(event: any, fields = {}) {
   console.log(JSON.stringify({ source: 'brevo_newsletter', event, ...fields }))
 }
 
 /** One-way id for logs (Workers: Web Crypto; no raw user ids). */
-async function hashUserId(userId) {
+async function hashUserId(userId: any) {
   const enc = new TextEncoder()
   const buf = await crypto.subtle.digest('SHA-256', enc.encode(`user:${String(userId)}`))
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-function getDb(env) {
+function getDb(env: any) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('D1 binding not found')
   return db
 }
 
-async function getAdminSetting(db, key) {
+async function getAdminSetting(db: any, key: any) {
   const row = await db.prepare('SELECT value FROM admin_settings WHERE key = ?').bind(key).first()
   return row?.value ?? null
 }
 
-async function setAdminSetting(db, key, value) {
+async function setAdminSetting(db: any, key: any, value: any) {
   await db.prepare(`
     INSERT INTO admin_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
   `).bind(key, value).run()
 }
 
-function brevoTimeoutMs(env) {
+function brevoTimeoutMs(env: any) {
   const raw = env.BREVO_FETCH_TIMEOUT_MS
   const n = raw != null && String(raw).trim() !== '' ? Number.parseInt(String(raw).trim(), 10) : 5000
   return Number.isFinite(n) && n > 0 ? Math.min(n, 120_000) : 5000
@@ -86,7 +86,7 @@ function brevoTimeoutMs(env) {
  * Fetch against Brevo with a hard timeout; merges AbortSignal with optional caller signal.
  * On timeout or abort, returns a 504 Response (does not throw).
  */
-async function brevoFetch(path, options = {}, env) {
+async function brevoFetch(path: any, options = {}, env: any) {
   const key = env.BREVO_API_KEY
   if (!key) {
     return new Response(JSON.stringify({ message: 'BREVO_API_KEY not configured' }), {
@@ -99,12 +99,14 @@ async function brevoFetch(path, options = {}, env) {
   const ms = brevoTimeoutMs(env)
   const tid = setTimeout(() => controller.abort(), ms)
 
+  // @ts-expect-error TS(2339): Property 'signal' does not exist on type '{}'.
   const userSignal = options.signal
   if (userSignal) {
     if (userSignal.aborted) controller.abort()
     else userSignal.addEventListener('abort', () => controller.abort(), { once: true })
   }
 
+  // @ts-expect-error TS(2339): Property 'signal' does not exist on type '{}'.
   const { signal: _omit, ...rest } = options
 
   try {
@@ -114,6 +116,7 @@ async function brevoFetch(path, options = {}, env) {
       headers: {
         'Content-Type': 'application/json',
         'api-key': key,
+        // @ts-expect-error TS(2339): Property 'headers' does not exist on type '{}'.
         ...rest.headers,
       },
     })
@@ -135,7 +138,7 @@ async function brevoFetch(path, options = {}, env) {
 /**
  * Sync newsletter membership from a Stripe subscription status.
  */
-export async function syncNewsletterForStripeSubscription(db, userId, stripeStatus, env) {
+export async function syncNewsletterForStripeSubscription(db: any, userId: any, stripeStatus: any, env: any) {
   const paying = ['active', 'trialing'].includes(stripeStatus)
   if (paying) {
     await syncPayingSubscriberToNewsletter(db, userId, env)
@@ -148,7 +151,7 @@ export async function syncNewsletterForStripeSubscription(db, userId, stripeStat
  * Add or update a user in the Brevo subscriber list (paying subscribers).
  * No-op if API key or list id is missing.
  */
-export async function syncPayingSubscriberToNewsletter(db, userId, env) {
+export async function syncPayingSubscriberToNewsletter(db: any, userId: any, env: any) {
   if (!env.BREVO_API_KEY) return
 
   const listIdRaw = await getAdminSetting(db, 'brevo_subscriber_list_id')
@@ -173,7 +176,7 @@ export async function syncPayingSubscriberToNewsletter(db, userId, env) {
   }
 }
 
-async function syncAllEligibleSubscribers(db, env) {
+async function syncAllEligibleSubscribers(db: any, env: any) {
   const rows = await db.prepare(`
     SELECT u.id
     FROM users u
@@ -187,7 +190,7 @@ async function syncAllEligibleSubscribers(db, env) {
       OR u.role IN ('super_admin', 'admin', 'editor', 'analyst', 'moderator')
   `).all()
 
-  const userIds = (rows?.results ?? []).map(r => r.id).filter(Boolean)
+  const userIds = (rows?.results ?? []).map((r: any) => r.id).filter(Boolean)
   let synced = 0
   for (const userId of userIds) {
     await syncPayingSubscriberToNewsletter(db, userId, env)
@@ -199,7 +202,7 @@ async function syncAllEligibleSubscribers(db, env) {
 /**
  * Remove a user's email from the subscriber list (e.g. subscription ended).
  */
-export async function removeSubscriberFromNewsletter(db, userId, env) {
+export async function removeSubscriberFromNewsletter(db: any, userId: any, env: any) {
   if (!env.BREVO_API_KEY) return
 
   const listIdRaw = await getAdminSetting(db, 'brevo_subscriber_list_id')
@@ -224,13 +227,13 @@ export async function removeSubscriberFromNewsletter(db, userId, env) {
 
 const STALE_CLAIM_MINUTES = 2
 
-async function brevoNewsletterSendsHasColumn(db, columnName) {
+async function brevoNewsletterSendsHasColumn(db: any, columnName: any) {
   const res = await db.prepare('PRAGMA table_info(brevo_newsletter_sends)').all()
   const rows = res?.results ?? []
-  return rows.some(r => r.name === columnName)
+  return rows.some((r: any) => r.name === columnName);
 }
 
-async function ensureBrevoNewsletterSendsTable(db) {
+async function ensureBrevoNewsletterSendsTable(db: any) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS brevo_newsletter_sends (
       dedupe_key   TEXT PRIMARY KEY,
@@ -253,7 +256,7 @@ async function ensureBrevoNewsletterSendsTable(db) {
 /**
  * Try to acquire exclusive send lock for dedupe_key. Returns false if another request holds it or row is done.
  */
-async function tryAcquireNewsletterSendClaim(db, dedupeKey) {
+async function tryAcquireNewsletterSendClaim(db: any, dedupeKey: any) {
   const upd = await db.prepare(`
     UPDATE brevo_newsletter_sends
     SET in_flight = 1, claim_acquired_at = CURRENT_TIMESTAMP
@@ -269,7 +272,7 @@ async function tryAcquireNewsletterSendClaim(db, dedupeKey) {
  * Recover abandoned locks using claim_acquired_at (not created_at, which does not move on reclaim).
  * Clears partial state so a new attempt can run send_requested → create → sendNow.
  */
-async function releaseStaleNewsletterSendClaim(db, dedupeKey) {
+async function releaseStaleNewsletterSendClaim(db: any, dedupeKey: any) {
   const mod = `+${STALE_CLAIM_MINUTES} minutes`
   await db.prepare(`
     UPDATE brevo_newsletter_sends
@@ -301,7 +304,7 @@ async function releaseStaleNewsletterSendClaim(db, dedupeKey) {
   `).bind(dedupeKey, mod).run()
 }
 
-async function releaseNewsletterSendClaimFullAbort(db, dedupeKey) {
+async function releaseNewsletterSendClaimFullAbort(db: any, dedupeKey: any) {
   await db.prepare(`
     UPDATE brevo_newsletter_sends
     SET in_flight = 0,
@@ -312,7 +315,7 @@ async function releaseNewsletterSendClaimFullAbort(db, dedupeKey) {
   `).bind(dedupeKey).run()
 }
 
-async function releaseNewsletterSendClaimAfterSendNowFailure(db, dedupeKey) {
+async function releaseNewsletterSendClaimAfterSendNowFailure(db: any, dedupeKey: any) {
   await db.prepare(`
     UPDATE brevo_newsletter_sends
     SET in_flight = 0, claim_acquired_at = NULL
@@ -324,7 +327,7 @@ async function releaseNewsletterSendClaimAfterSendNowFailure(db, dedupeKey) {
  * Persist Brevo campaign id before any claim release. Retries on transient races; keeps claim if persist fails.
  * @returns {{ ok: true } | { ok: false, correlationId: string }}
  */
-async function persistCampaignIdForDedupeKey(db, dedupeKey, newId, correlationId) {
+async function persistCampaignIdForDedupeKey(db: any, dedupeKey: any, newId: any, correlationId: any) {
   const id = Number(newId)
   if (!Number.isFinite(id) || id <= 0) return { ok: false, correlationId }
   const maxAttempts = 4
@@ -349,7 +352,7 @@ async function persistCampaignIdForDedupeKey(db, dedupeKey, newId, correlationId
 /**
  * GET /emailCampaigns/:id — returns true if Brevo reports the campaign as sent (read-only, safe to retry).
  */
-async function brevoCampaignLooksSent(campaignId, env) {
+async function brevoCampaignLooksSent(campaignId: any, env: any) {
   const id = Number(campaignId)
   if (!Number.isFinite(id) || id <= 0) return false
   const res = await brevoFetch(`/emailCampaigns/${id}`, { method: 'GET' }, env)
@@ -362,9 +365,10 @@ async function brevoCampaignLooksSent(campaignId, env) {
 /**
  * If Brevo reports the campaign as sent, persist sent_at (recovery; do not clear campaign_id first).
  */
-async function persistSentAtIfBrevoDelivered(db, dedupeKey, row, env) {
+async function persistSentAtIfBrevoDelivered(db: any, dedupeKey: any, row: any, env: any) {
   if (row?.sent_at) return false
   const cid = row?.campaign_id != null ? Number(row.campaign_id) : null
+  // @ts-expect-error TS(2531): Object is possibly 'null'.
   if (!Number.isFinite(cid) || cid <= 0) return false
   if (!(await brevoCampaignLooksSent(cid, env))) return false
   const sentAt = new Date().toISOString()
@@ -376,7 +380,7 @@ async function persistSentAtIfBrevoDelivered(db, dedupeKey, row, env) {
   return true
 }
 
-function jsonResponse(data, status = 200, corsHeaders = {}) {
+function jsonResponse(data: any, status = 200, corsHeaders = {}) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -388,7 +392,7 @@ function jsonResponse(data, status = 200, corsHeaders = {}) {
  * GET returns current Brevo-related settings (no secrets).
  * PATCH body: { brevoSubscriberListId?, brevoCampaignSenderEmail?, brevoCampaignSenderName? }
  */
-export async function handleAdminNewsletterSettings(request, env, corsHeaders) {
+export async function handleAdminNewsletterSettings(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'admin', 'super_admin')
   } catch {
@@ -517,7 +521,7 @@ export async function handleAdminNewsletterSettings(request, env, corsHeaders) {
  * POST /api/admin/newsletter/send — create a classic campaign and send immediately.
  * Body: { subject: string, htmlBody: string, dedupeKey: string }
  */
-export async function handleAdminNewsletterSend(request, env, corsHeaders) {
+export async function handleAdminNewsletterSend(request: any, env: any, corsHeaders: any) {
   let correlationId = correlationFromRequest(request)
   try {
     await requireRole(request, env, 'admin', 'super_admin')
@@ -628,6 +632,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
   let existingCampaignId = row?.campaign_id != null ? Number(row.campaign_id) : null
   const sendReq = Number(row?.send_requested) === 1
 
+  // @ts-expect-error TS(2531): Object is possibly 'null'.
   if (inflight && Number.isFinite(existingCampaignId) && existingCampaignId > 0) {
     if (sendReq && (await brevoCampaignLooksSent(existingCampaignId, env))) {
       const sentAt = new Date().toISOString()
@@ -697,6 +702,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
       recipients: { listIds: [listId] },
     }
   } catch (configErr) {
+    // @ts-expect-error TS(2571): Object is of type 'unknown'.
     newsletterLog('send_config_error', { correlationId, message: String(configErr?.message ?? configErr) })
     return jsonResponse({ error: 'Failed to load newsletter configuration', code: 'config_error' }, 500, corsHeaders)
   }
@@ -722,6 +728,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
         }, 200, corsHeaders)
       }
       const cid = row?.campaign_id != null ? Number(row.campaign_id) : null
+      // @ts-expect-error TS(2531): Object is possibly 'null'.
       if (Number.isFinite(cid) && cid > 0 && Number(row?.send_requested) === 1 && !row?.sent_at) {
         if (await brevoCampaignLooksSent(cid, env)) {
           const sentAt = new Date().toISOString()
@@ -874,7 +881,7 @@ export async function handleAdminNewsletterSend(request, env, corsHeaders) {
 /**
  * Safe retry: read-only Brevo list; 504 gets one backoff retry.
  */
-export async function fetchBrevoEmailCampaignsWithRetry(env) {
+export async function fetchBrevoEmailCampaignsWithRetry(env: any) {
   const limit = 20
   const path = `/emailCampaigns?limit=${limit}&offset=0&sort=desc`
   let res = await brevoFetch(path, { method: 'GET' }, env)
@@ -885,7 +892,7 @@ export async function fetchBrevoEmailCampaignsWithRetry(env) {
   return res
 }
 
-export async function handleAdminNewsletterCampaigns(request, env, corsHeaders) {
+export async function handleAdminNewsletterCampaigns(request: any, env: any, corsHeaders: any) {
   const correlationId = correlationFromRequest(request) || crypto.randomUUID()
   try {
     await requireRole(request, env, 'admin', 'super_admin')
@@ -913,7 +920,7 @@ export async function handleAdminNewsletterCampaigns(request, env, corsHeaders) 
   return jsonResponse({ campaigns: data?.campaigns ?? [] }, 200, corsHeaders)
 }
 
-export async function handleAdminNewsletterTemplates(request, env, corsHeaders) {
+export async function handleAdminNewsletterTemplates(request: any, env: any, corsHeaders: any) {
   const correlationId = correlationFromRequest(request) || crypto.randomUUID()
   try {
     await requireRole(request, env, 'admin', 'super_admin')
@@ -949,7 +956,7 @@ export async function handleAdminNewsletterTemplates(request, env, corsHeaders) 
 /**
  * PATCH / DELETE /api/admin/newsletter/templates/:id
  */
-export async function handleAdminNewsletterTemplateById(request, env, corsHeaders, templateId) {
+export async function handleAdminNewsletterTemplateById(request: any, env: any, corsHeaders: any, templateId: any) {
   const correlationId = correlationFromRequest(request) || crypto.randomUUID()
   try {
     await requireRole(request, env, 'admin', 'super_admin')
@@ -1024,7 +1031,7 @@ export async function handleAdminNewsletterTemplateById(request, env, corsHeader
   return jsonResponse({ ok: true, template: row }, 200, corsHeaders)
 }
 
-export async function handleAdminNewsletterSync(request, env, corsHeaders) {
+export async function handleAdminNewsletterSync(request: any, env: any, corsHeaders: any) {
   const correlationId = correlationFromRequest(request) || crypto.randomUUID()
   try {
     await requireRole(request, env, 'admin', 'super_admin')

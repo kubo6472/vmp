@@ -17,19 +17,19 @@
 
 // ─── Encoding helpers ─────────────────────────────────────────────────────────
 
-function b64urlToUint8(b64url) {
+function b64urlToUint8(b64url: any) {
   const padded = b64url.replace(/-/g, '+').replace(/_/g, '/')
     + '=='.slice(0, (4 - (b64url.length % 4)) % 4)
   const binary = atob(padded)
   return Uint8Array.from(binary, c => c.charCodeAt(0))
 }
 
-function uint8ToB64url(bytes) {
+function uint8ToB64url(bytes: any) {
   const binary = String.fromCharCode(...bytes)
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-function concatBuffers(...bufs) {
+function concatBuffers(...bufs: any[]) {
   const total = bufs.reduce((n, b) => n + b.byteLength, 0)
   const out = new Uint8Array(total)
   let offset = 0
@@ -43,7 +43,7 @@ function concatBuffers(...bufs) {
 
 // ─── VAPID JWT (ES256) ────────────────────────────────────────────────────────
 
-async function importVapidPrivateKey(b64urlPrivate, b64urlPublic) {
+async function importVapidPrivateKey(b64urlPrivate: any, b64urlPublic: any) {
   // VAPID keys are provided as raw base64url values:
   // - private key: 32-byte scalar (d)
   // - public key: uncompressed 65-byte point (0x04 || X || Y)
@@ -80,7 +80,7 @@ async function importVapidPrivateKey(b64urlPrivate, b64urlPublic) {
   )
 }
 
-async function signVapidJwt(audience, subject, vapidPrivateKeyB64, vapidPublicKeyB64, expiresIn = 43200) {
+async function signVapidJwt(audience: any, subject: any, vapidPrivateKeyB64: any, vapidPublicKeyB64: any, expiresIn = 43200) {
   const now = Math.floor(Date.now() / 1000)
   const header = { typ: 'JWT', alg: 'ES256' }
   const payload = { aud: audience, exp: now + expiresIn, sub: subject }
@@ -102,7 +102,7 @@ async function signVapidJwt(audience, subject, vapidPrivateKeyB64, vapidPublicKe
   return `${signingInput}.${uint8ToB64url(sig)}`
 }
 
-function parseDerLength(bytes, offset) {
+function parseDerLength(bytes: any, offset: any) {
   if (offset >= bytes.length) throw new Error('Invalid DER length')
   const first = bytes[offset]
   if (first < 0x80) return { length: first, nextOffset: offset + 1 }
@@ -117,7 +117,7 @@ function parseDerLength(bytes, offset) {
   return { length, nextOffset: offset + 1 + octets }
 }
 
-function parseDerInteger(bytes, offset) {
+function parseDerInteger(bytes: any, offset: any) {
   if (bytes[offset] !== 0x02) throw new Error('Invalid DER integer tag')
   const { length, nextOffset } = parseDerLength(bytes, offset + 1)
   const end = nextOffset + length
@@ -126,7 +126,7 @@ function parseDerInteger(bytes, offset) {
 }
 
 /** Convert ECDSA signature to JOSE raw r||s (64 bytes). */
-function ecdsaSignatureToJose(signature) {
+function ecdsaSignatureToJose(signature: any) {
   // Some runtimes already return IEEE-P1363 raw signatures.
   if (signature.length === 64) return signature
 
@@ -178,7 +178,7 @@ function ecdsaSignatureToJose(signature) {
  * Returns the ciphertext bytes and the ephemeral sender public key (uncompressed)
  * plus the salt, all of which go into the Content-Encoding: aes128gcm header.
  */
-async function encryptPayload(plaintext, p256dhB64, authB64) {
+async function encryptPayload(plaintext: any, p256dhB64: any, authB64: any) {
   // 1. Import the subscriber's public key (P-256, uncompressed 65-byte)
   const subscriberPublicKeyBytes = b64urlToUint8(p256dhB64)
   const subscriberPublicKey = await crypto.subtle.importKey(
@@ -275,7 +275,7 @@ async function encryptPayload(plaintext, p256dhB64, authB64) {
  * HKDF-Extract(salt, ikm) per RFC 5869 — returns a 32-byte PRK.
  * Implemented as HMAC-SHA-256(key=salt, data=ikm).
  */
-async function hkdfExtract(salt, ikm) {
+async function hkdfExtract(salt: any, ikm: any) {
   const key = await crypto.subtle.importKey(
     'raw', salt, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   )
@@ -286,7 +286,7 @@ async function hkdfExtract(salt, ikm) {
  * HKDF-Expand(prk, info, length) per RFC 5869 — length must be ≤ 32 for SHA-256.
  * T(1) = HMAC-SHA-256(key=prk, data=info || 0x01), output first `length` bytes.
  */
-async function hkdfExpand(prk, info, length) {
+async function hkdfExpand(prk: any, info: any, length: any) {
   if (length > 32) throw new RangeError('hkdfExpand: length must be ≤ 32 (single SHA-256 round)')
   const key = await crypto.subtle.importKey(
     'raw', prk, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
@@ -304,7 +304,7 @@ async function hkdfExpand(prk, info, length) {
  * @param {{ title: string, body: string, url?: string }} payload
  * @param {object} env - Worker env bindings
  */
-export async function sendPushNotification(subscription, payload, env) {
+export async function sendPushNotification(subscription: any, payload: any, env: any) {
   const { endpoint, p256dh, auth } = subscription
 
   if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY) {
@@ -327,7 +327,7 @@ export async function sendPushNotification(subscription, payload, env) {
   // 10-second timeout — prevents a slow/unresponsive endpoint from blocking
   // the entire batch inside Promise.allSettled().
   let response
-  const send = (authorizationValue) => {
+  const send = (authorizationValue: any) => {
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), 10_000)
     return fetch(endpoint, {
@@ -372,10 +372,13 @@ export async function sendPushNotification(subscription, payload, env) {
       event: 'webpush_delivery_failed',
       endpointHost,
       statusClass: 'network_error',
+      // @ts-expect-error TS(2571): Object is of type 'unknown'.
       reason: err?.name === 'AbortError' ? 'timeout_or_abort' : 'fetch_error',
+      // @ts-expect-error TS(2571): Object is of type 'unknown'.
       message: err?.message || 'unknown fetch error',
     }))
     throw Object.assign(
+      // @ts-expect-error TS(2571): Object is of type 'unknown'.
       new Error(`Push fetch error: ${err.message}`),
       { code: 'push_failed', statusClass: 'network_error', endpointHost },
     )
@@ -418,7 +421,7 @@ export async function sendPushNotification(subscription, payload, env) {
  * @param {object} env
  * @param {object} db - D1 database binding
  */
-export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
+export async function sendPushToAllSubscribers(videoTitle: any, videoId: any, env: any, db: any) {
   if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY) {
     throw Object.assign(new Error('VAPID keys not configured'), { code: 'vapid_not_configured' })
   }
@@ -438,7 +441,7 @@ export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
     url: `${env.FRONTEND_URL}/watch/${videoId}`,
   }
 
-  const staleEndpoints = []
+  const staleEndpoints: any = []
   const batchSize = 50
   let succeeded = 0
   let failed = 0
@@ -446,10 +449,11 @@ export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
 
   for (let i = 0; i < subscriptions.length; i += batchSize) {
     const results = await Promise.allSettled(
-      subscriptions.slice(i, i + batchSize).map(async (sub) => {
+      subscriptions.slice(i, i + batchSize).map(async (sub: any) => {
         try {
           await sendPushNotification(sub, payload, env)
         } catch (err) {
+          // @ts-expect-error TS(2571): Object is of type 'unknown'.
           if (err.code === 'subscription_gone') {
             staleEndpoints.push(sub.endpoint)
             stale++
@@ -469,7 +473,7 @@ export async function sendPushToAllSubscribers(videoTitle, videoId, env, db) {
   if (staleEndpoints.length > 0) {
     const placeholders = staleEndpoints.map(() => '?').join(',')
     await db.prepare(`DELETE FROM push_subscriptions WHERE endpoint IN (${placeholders})`)
-      .bind(...staleEndpoints).run().catch(e => console.error('Cleanup error:', e))
+      .bind(...staleEndpoints).run().catch((e: any) => console.error('Cleanup error:', e))
   }
 
   return { attempted: subscriptions.length, succeeded, failed, stale }

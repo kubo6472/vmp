@@ -5,13 +5,13 @@
  * KV-tolerant workflows where sequential consistency is sufficient.
  */
 
-export function getDb(env) {
+export function getDb(env: any) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('D1 binding not found')
   return db
 }
 
-export function getReadSession(env, request) {
+export function getReadSession(env: any, request: any) {
   const db = getDb(env)
   // If withSession is unavailable, callers keep working on primary.
   if (typeof db.withSession !== 'function') return { session: db, bookmark: null }
@@ -20,7 +20,7 @@ export function getReadSession(env, request) {
   return { session, bookmark }
 }
 
-export function applySessionBookmark(responseHeaders, session) {
+export function applySessionBookmark(responseHeaders: any, session: any) {
   try {
     const bookmark = typeof session?.getBookmark === 'function' ? session.getBookmark() : null
     if (bookmark) responseHeaders.set('x-d1-bookmark', bookmark)

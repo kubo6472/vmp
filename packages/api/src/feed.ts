@@ -14,17 +14,17 @@ import { computeRssTokenHex } from './rssToken.js'
 import { getSetting } from './settingsStore.js'
 import { getReadSession, applySessionBookmark, getDb } from './d1Session.js'
  
-function xmlEscape(text) {
+function xmlEscape(text: any) {
   if (text == null) return ''
   return String(text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
+    .replace(/'/g, '&apos;');
 }
  
-function toRfc2822Date(isoLike) {
+function toRfc2822Date(isoLike: any) {
   try {
     const d = isoLike ? new Date(isoLike) : new Date()
     // RSS pubDate should be RFC-822/2822. JS Date toUTCString is close enough.
@@ -34,7 +34,7 @@ function toRfc2822Date(isoLike) {
   }
 }
  
-function secondsToItunesDuration(seconds) {
+function secondsToItunesDuration(seconds: any) {
   const s = Number.parseInt(String(seconds ?? 0), 10)
   if (!Number.isFinite(s) || s <= 0) return '0:00'
   const h = Math.floor(s / 3600)
@@ -44,7 +44,10 @@ function secondsToItunesDuration(seconds) {
   return `${m}:${String(sec).padStart(2, '0')}`
 }
  
-function buildRssXml({ channel, items }) {
+function buildRssXml({
+  channel,
+  items
+}: any) {
   const itunesNs = 'http://www.itunes.com/dtds/podcast-1.0.dtd'
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -55,7 +58,7 @@ function buildRssXml({ channel, items }) {
     `<link>${xmlEscape(channel.link)}</link>`,
     `<language>${xmlEscape(channel.language || 'en')}</language>`,
     channel.imageUrl ? `<itunes:image href="${xmlEscape(channel.imageUrl)}" />` : '',
-    ...items.map(item => [
+    ...items.map((item: any) => [
       '<item>',
       `<title>${xmlEscape(item.title)}</title>`,
       `<description><![CDATA[${item.description ?? ''}]]></description>`,
@@ -68,10 +71,10 @@ function buildRssXml({ channel, items }) {
     ].filter(Boolean).join('\n')),
     '</channel>',
     '</rss>',
-  ].filter(Boolean).join('\n')
+  ].filter(Boolean).join('\n');
 }
  
-async function listPublishedVideos(db) {
+async function listPublishedVideos(db: any) {
   // Support both old (visibility-based) and new (publish_status-based) schemas.
   // Some local dev D1 states may not have the newer publish_status column yet.
   try {
@@ -94,7 +97,7 @@ async function listPublishedVideos(db) {
   return rows.results || []
 }
  
-function feedResponse(xml, corsHeaders, cacheControl) {
+function feedResponse(xml: any, corsHeaders: any, cacheControl: any) {
   return new Response(xml, {
     status: 200,
     headers: {
@@ -105,7 +108,7 @@ function feedResponse(xml, corsHeaders, cacheControl) {
   })
 }
  
-function feedCacheKey(request, extraParams = {}) {
+function feedCacheKey(request: any, extraParams = {}) {
   const u = new URL(request.url)
   // Never include raw tokens in cache keys.
   const base = `${u.origin}${u.pathname}`
@@ -118,7 +121,10 @@ function feedCacheKey(request, extraParams = {}) {
   return new Request(suffix ? `${base}?${suffix}` : base, { method: 'GET' })
 }
 
-async function recordFeedPoll(db, { endpoint, userId }) {
+async function recordFeedPoll(db: any, {
+  endpoint,
+  userId
+}: any) {
   try {
     await db.prepare(`
       INSERT INTO rss_feed_polls (endpoint, user_id, poll_count, last_polled_at)
@@ -129,11 +135,12 @@ async function recordFeedPoll(db, { endpoint, userId }) {
     `).bind(endpoint, userId ?? 'public').run()
   } catch (e) {
     // Best-effort: analytics must never break feed delivery.
+    // @ts-expect-error TS(2571): Object is of type 'unknown'.
     console.warn('[rss] recordFeedPoll failed', e?.message ?? e)
   }
 }
 
-function constantTimeEqual(a, b) {
+function constantTimeEqual(a: any, b: any) {
   if (typeof a !== 'string' || typeof b !== 'string') return false
   if (a.length !== b.length) return false
   let diff = 0
@@ -141,11 +148,11 @@ function constantTimeEqual(a, b) {
   return diff === 0
 }
 
-async function getUserById(db, userId) {
+async function getUserById(db: any, userId: any) {
   return db.prepare('SELECT id, email, role FROM users WHERE id = ? LIMIT 1').bind(userId).first()
 }
 
-async function getActiveSubscriptionRow(db, userId) {
+async function getActiveSubscriptionRow(db: any, userId: any) {
   return db.prepare(`
     SELECT *
     FROM subscriptions
@@ -156,7 +163,7 @@ async function getActiveSubscriptionRow(db, userId) {
   `).bind(userId).first()
 }
 
-export async function handlePublicFeed(request, env, corsHeaders) {
+export async function handlePublicFeed(request: any, env: any, corsHeaders: any) {
   try {
     if (request.method !== 'GET') {
       return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -167,6 +174,7 @@ export async function handlePublicFeed(request, env, corsHeaders) {
 
     const { session } = getReadSession(env, request)
     const db = getDb(env)
+    // @ts-expect-error TS(2339): Property 'default' does not exist on type 'CacheSt... Remove this comment to see the full error message
     const cache = caches?.default
     const publicPollMeta = { endpoint: 'feed_public', userId: 'public' }
     if (cache) {
@@ -233,13 +241,14 @@ export async function handlePublicFeed(request, env, corsHeaders) {
     return response
   } catch (err) {
     return new Response(
+      // @ts-expect-error TS(2571): Object is of type 'unknown'.
       JSON.stringify({ error: err?.message || 'Internal error', code: 'internal_error' }),
       { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
     )
   }
 }
  
-export async function handlePersonalFeed(request, env, corsHeaders) {
+export async function handlePersonalFeed(request: any, env: any, corsHeaders: any) {
   try {
     if (request.method !== 'GET') {
       return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -274,6 +283,7 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
       })
     }
 
+    // @ts-expect-error TS(2339): Property 'default' does not exist on type 'CacheSt... Remove this comment to see the full error message
     const cache = caches?.default
     const expectedToken = await computeRssTokenHex(rssSecret, userId)
     if (!constantTimeEqual(expectedToken, token)) {
@@ -364,6 +374,7 @@ export async function handlePersonalFeed(request, env, corsHeaders) {
     return response
   } catch (err) {
     return new Response(
+      // @ts-expect-error TS(2571): Object is of type 'unknown'.
       JSON.stringify({ error: err?.message || 'Internal error', code: 'internal_error' }),
       { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
     )

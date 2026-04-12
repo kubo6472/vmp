@@ -1,9 +1,9 @@
-export async function onRequestOptions(context) {
+export async function onRequestOptions(context: any) {
   const corsHeaders = buildCorsHeaders(context.request);
   return new Response(null, { status: 204, headers: corsHeaders });
 }
 
-export async function onRequestGet(context) {
+export async function onRequestGet(context: any) {
   const { env, request } = context;
   const corsHeaders = buildCorsHeaders(request);
 
@@ -51,11 +51,12 @@ export async function onRequestGet(context) {
 
 // ─── R2 listing ───────────────────────────────────────────────────────────────
 
-async function listAllVideoObjects(bucket) {
+async function listAllVideoObjects(bucket: any) {
   const objects = [];
   let cursor = undefined;
 
   do {
+    // @ts-expect-error TS(7022): 'result' implicitly has type 'any' because it does... Remove this comment to see the full error message
     const result = await bucket.list({ prefix: 'videos/', limit: 1000, cursor });
     objects.push(...result.objects);
     cursor = result.truncated ? result.cursor : undefined;
@@ -64,7 +65,7 @@ async function listAllVideoObjects(bucket) {
   return objects;
 }
 
-function newVideoEntry(videoId) {
+function newVideoEntry(videoId: any) {
   return {
     videoId,
     hasSource: false,
@@ -83,7 +84,7 @@ function newVideoEntry(videoId) {
   };
 }
 
-function hydrateVideoEntry(entry, object) {
+function hydrateVideoEntry(entry: any, object: any) {
   const sourcePrefix = `videos/${entry.videoId}/source/`;
   const processedPrefix = `videos/${entry.videoId}/processed/`;
 
@@ -119,12 +120,12 @@ function hydrateVideoEntry(entry, object) {
   entry.updatedAt = maxDate(entry.updatedAt, object.uploaded);
 }
 
-function getVideoIdFromKey(key) {
+function getVideoIdFromKey(key: any) {
   const match = key.match(/^videos\/([^/]+)\//);
   return match ? match[1] : null;
 }
 
-function maxDate(previousDate, nextDate) {
+function maxDate(previousDate: any, nextDate: any) {
   if (!previousDate) return nextDate;
   if (!nextDate) return previousDate;
   return new Date(nextDate).getTime() > new Date(previousDate).getTime() ? nextDate : previousDate;
@@ -132,7 +133,7 @@ function maxDate(previousDate, nextDate) {
 
 // ─── Metadata hydration ───────────────────────────────────────────────────────
 
-async function hydrateMetadata(byVideoId, env) {
+async function hydrateMetadata(byVideoId: any, env: any) {
   for (const entry of byVideoId.values()) {
     const metadataKey = `videos/${entry.videoId}/metadata.json`;
     const metadataObject = await env.VIDEO_BUCKET.get(metadataKey);
@@ -165,7 +166,7 @@ async function hydrateMetadata(byVideoId, env) {
   }
 }
 
-function finalizePackaging(entry) {
+function finalizePackaging(entry: any) {
   const hasModernPackaging = entry.packaging.hasHlsMaster && entry.packaging.hasVariantMedia;
   const isValid = hasModernPackaging || entry.packaging.hasLegacyPlaylist;
 
@@ -177,7 +178,7 @@ function finalizePackaging(entry) {
   entry.packaging.isValid = isValid;
 }
 
-function getPackagingStateFromMetadata(metadata, videoId) {
+function getPackagingStateFromMetadata(metadata: any, videoId: any) {
   const processedPrefix = `videos/${videoId}/processed/`;
   const hlsMasterKey = `${processedPrefix}hls/master.m3u8`;
   const dashManifestKey = `${processedPrefix}dash/manifest.mpd`;
@@ -185,6 +186,7 @@ function getPackagingStateFromMetadata(metadata, videoId) {
   const variantMediaPattern = new RegExp(`^videos/${escapeRegExp(videoId)}/processed/[^/]+/.+(?:\\.m4s|\\.mp4)$`);
 
   const allStringValues = Array.from(collectStringValues(metadata));
+  // @ts-expect-error TS(2571): Object is of type 'unknown'.
   const allProcessedKeys = allStringValues.filter((v) => v.startsWith(processedPrefix));
   const keys = new Set(allProcessedKeys);
 
@@ -196,13 +198,14 @@ function getPackagingStateFromMetadata(metadata, videoId) {
     hasHlsMaster: keys.has(hlsMasterKey) || allStringValues.includes(flatHlsMasterKey),
     hasDashManifest: keys.has(dashManifestKey) || allStringValues.includes(flatDashManifestKey),
     hasLegacyPlaylist: keys.has(legacyPlaylistKey),
+    // @ts-expect-error TS(2345): Argument of type 'unknown' is not assignable to pa... Remove this comment to see the full error message
     hasVariantMedia: allProcessedKeys.some((key) => variantMediaPattern.test(key))
   };
 }
 
 // ─── D1 sync ──────────────────────────────────────────────────────────────────
 
-async function syncVideosTable(entries, env) {
+async function syncVideosTable(entries: any, env: any) {
   const db = getVideoDatabaseBinding(env);
   if (!db) return;
 
@@ -220,7 +223,7 @@ async function syncVideosTable(entries, env) {
       } else {
         const placeholders = entries.map(() => '?').join(',');
         await db.prepare(`DELETE FROM videos WHERE managed_by_r2 = 1 AND id NOT IN (${placeholders})`)
-          .bind(...entries.map((e) => e.videoId))
+          .bind(...entries.map((e: any) => e.videoId))
           .run();
       }
     }
@@ -229,13 +232,13 @@ async function syncVideosTable(entries, env) {
   }
 }
 
-async function getVideosTableColumnSet(db) {
+async function getVideosTableColumnSet(db: any) {
   const result = await db.prepare('PRAGMA table_info(videos)').all();
   const rows = Array.isArray(result?.results) ? result.results : [];
-  return new Set(rows.map((row) => row?.name).filter(Boolean));
+  return new Set(rows.map((row: any) => row?.name).filter(Boolean));
 }
 
-async function upsertVideoRow(db, entry, columnSet) {
+async function upsertVideoRow(db: any, entry: any, columnSet: any) {
   const sourceName = entry.sourceKey?.split('/').pop() || entry.videoId;
   const inferredTitle = sourceName.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || `Uploaded video ${entry.videoId}`;
   const status = entry.needsProcessing ? 'uploaded' : 'processed';
@@ -290,13 +293,13 @@ async function upsertVideoRow(db, entry, columnSet) {
   await db.prepare(sql).bind(...bindValues).run();
 }
 
-function getVideoDatabaseBinding(env) {
+function getVideoDatabaseBinding(env: any) {
   return env.video_subscription_db || env.VIDEO_SUBSCRIPTION_DB || env.DB || null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildCorsHeaders(request) {
+function buildCorsHeaders(request: any) {
   const origin = request.headers.get('Origin');
   if (origin) {
     return {
@@ -314,7 +317,8 @@ function buildCorsHeaders(request) {
   };
 }
 
-function* collectStringValues(value) {
+// @ts-expect-error TS(7023): 'collectStringValues' implicitly has return type '... Remove this comment to see the full error message
+function* collectStringValues(value: any) {
   if (typeof value === 'string') { yield value; return; }
   if (Array.isArray(value)) {
     for (const item of value) yield* collectStringValues(item);
@@ -325,11 +329,11 @@ function* collectStringValues(value) {
   }
 }
 
-function escapeRegExp(value) {
+function escapeRegExp(value: any) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function json(data, status = 200, extraHeaders = {}) {
+function json(data: any, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json', ...extraHeaders }

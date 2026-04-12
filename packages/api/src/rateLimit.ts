@@ -11,14 +11,14 @@
  * and cached in module scope for 60 seconds to avoid a D1 hit on every request.
  */
 
-let cachedRateLimit = null
+let cachedRateLimit: any = null
 let cacheExpiresAt = 0
 
 /**
  * Read rate_limit_anon from admin_settings, caching for 60 s.
  * Falls back to 5 if the row is missing or invalid.
  */
-async function getRateLimitValue(env) {
+async function getRateLimitValue(env: any) {
   const now = Date.now()
   if (cachedRateLimit !== null && now < cacheExpiresAt) return cachedRateLimit
 
@@ -45,7 +45,7 @@ async function getRateLimitValue(env) {
  *   { limited: false, current, limit } — request is allowed
  *   { limited: true, retryAfter, limit, current } — request is blocked (429)
  */
-export async function checkAnonymousRateLimit(request, env) {
+export async function checkAnonymousRateLimit(request: any, env: any) {
   if (!env.RATE_LIMIT_KV) return null // binding not configured — skip silently
 
   // Use CF-Connecting-IP (set by Cloudflare) as the client identifier.

@@ -1,6 +1,6 @@
 const TUS_VERSION = '1.0.0';
 
-export async function onRequest(context) {
+export async function onRequest(context: any) {
   const { request, env, params } = context;
 
   if (request.method === 'OPTIONS') {
@@ -58,7 +58,10 @@ export async function onRequest(context) {
     session.offset += chunk.byteLength;
 
     if (session.offset === session.uploadLength) {
-      await multipart.complete(session.parts.map(({ partNumber, etag }) => ({ partNumber, etag })));
+      await multipart.complete(session.parts.map(({
+        partNumber,
+        etag
+      }: any) => ({ partNumber, etag })));
       await env.VIDEO_BUCKET.delete(sessionKey);
 
       return tusResponse(null, 204, {
@@ -84,13 +87,13 @@ export async function onRequest(context) {
   return tusResponse(null, 405, { Allow: 'HEAD,PATCH,OPTIONS' }, request);
 }
 
-async function readSession(env, key) {
+async function readSession(env: any, key: any) {
   const obj = await env.VIDEO_BUCKET.get(key);
   if (!obj) return null;
   return obj.json();
 }
 
-function tusResponse(body, status = 200, extraHeaders = {}, request) {
+function tusResponse(body: any, status = 200, extraHeaders = {}, request: any) {
   return withCors(new Response(body, {
     status,
     headers: {
@@ -100,14 +103,14 @@ function tusResponse(body, status = 200, extraHeaders = {}, request) {
   }), request);
 }
 
-function json(data, status = 200, request) {
+function json(data: any, status = 200, request: any) {
   return withCors(new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json' }
   }), request);
 }
 
-function withCors(response, request) {
+function withCors(response: any, request: any) {
   const headers = new Headers(response.headers);
   const origin = request.headers.get('Origin');
   if (origin) {

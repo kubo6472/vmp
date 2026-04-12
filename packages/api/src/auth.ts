@@ -54,17 +54,17 @@ const ROLES_REQUIRING_2FA = ['editor', 'analyst', 'moderator', 'admin', 'super_a
 // JWT requires base64url encoding (RFC 4648 §5): + → -, / → _, no padding.
 // We do this ourselves because atob/btoa use standard base64.
 
-function base64urlEncode(buffer) {
+function base64urlEncode(buffer: any) {
   const bytes = new Uint8Array(buffer)
   let str = ''
   for (const b of bytes) str += String.fromCharCode(b)
   return btoa(str)
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=/g,  '')
+    .replace(/=/g,  '');
 }
 
-function base64urlDecode(str) {
+function base64urlDecode(str: any) {
   // Re-pad and convert back to standard base64 before atob
   const padded = str.replace(/-/g, '+').replace(/_/g, '/') +
     '=='.slice(0, (4 - (str.length % 4)) % 4)
@@ -84,7 +84,7 @@ function base64urlDecode(str) {
 // time and caching across requests isn't safe unless you use a module-level
 // cache tied to the env binding (which changes per deployment anyway).
 
-async function importHmacKey(secret) {
+async function importHmacKey(secret: any) {
   return crypto.subtle.importKey(
     'raw',
     new TextEncoder().encode(secret),
@@ -94,7 +94,7 @@ async function importHmacKey(secret) {
   )
 }
 
-export async function signJwt(payload, secret) {
+export async function signJwt(payload: any, secret: any) {
   const enc = new TextEncoder()
   const headerB64  = base64urlEncode(enc.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })))
   const payloadB64 = base64urlEncode(enc.encode(JSON.stringify(payload)))
@@ -106,7 +106,7 @@ export async function signJwt(payload, secret) {
   return `${signingInput}.${base64urlEncode(sig)}`
 }
 
-export async function verifyJwt(token, secret) {
+export async function verifyJwt(token: any, secret: any) {
   const parts = token.split('.')
   if (parts.length !== 3) throw new Error('Malformed JWT')
 
@@ -128,7 +128,7 @@ export async function verifyJwt(token, secret) {
   return payload
 }
 
-export function createAccessToken(user, secret) {
+export function createAccessToken(user: any, secret: any) {
   const now = Math.floor(Date.now() / 1000)
   return signJwt({
     sub:         user.id,
@@ -153,14 +153,14 @@ export function generateToken() {
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
 }
 
-export async function hashToken(token) {
+export async function hashToken(token: any) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')
 }
 
 // ─── Magic link ───────────────────────────────────────────────────────────────
 
-async function upsertUser(email, db) {
+async function upsertUser(email: any, db: any) {
   const existing = await db
     .prepare('SELECT id, email, role FROM users WHERE email = ?')
     .bind(email)
@@ -177,7 +177,7 @@ async function upsertUser(email, db) {
   return { id, email, role: 'viewer' }
 }
 
-async function createMagicLinkToken(email, db) {
+async function createMagicLinkToken(email: any, db: any) {
   const user = await upsertUser(email, db)
 
   // Cancel any outstanding unused tokens — one active link per user at a time.
@@ -198,7 +198,7 @@ async function createMagicLinkToken(email, db) {
   return { token, user }
 }
 
-async function sendMagicLinkEmail(to, verifyUrl, env) {
+async function sendMagicLinkEmail(to: any, verifyUrl: any, env: any) {
   const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
@@ -237,7 +237,7 @@ async function sendMagicLinkEmail(to, verifyUrl, env) {
 
 // ─── Refresh tokens ───────────────────────────────────────────────────────────
 
-async function issueRefreshToken(userId, db) {
+async function issueRefreshToken(userId: any, db: any) {
   const token     = generateToken()
   const tokenHash = await hashToken(token)
   const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL * 1000).toISOString()
@@ -255,7 +255,7 @@ async function issueRefreshToken(userId, db) {
 // Same-site subdomains can use Lax while still allowing credentialed refresh
 // requests from the web app to the API.
 
-function buildRefreshCookie(token, maxAge) {
+function buildRefreshCookie(token: any, maxAge: any) {
   return [
     `refresh_token=${token}`,
     `Max-Age=${maxAge}`,
@@ -270,7 +270,7 @@ function clearRefreshCookie() {
   return buildRefreshCookie('', 0)
 }
 
-function getRefreshTokenFromCookie(request) {
+function getRefreshTokenFromCookie(request: any) {
   const cookie = request.headers.get('Cookie') || ''
   const match  = cookie.match(/refresh_token=([^;]+)/)
   return match ? match[1].trim() : null
@@ -286,7 +286,7 @@ function getRefreshTokenFromCookie(request) {
  * Always returns 200 — we never confirm whether an email is registered
  * to prevent user enumeration.
  */
-export async function handleRequestMagicLink(request, env, corsHeaders) {
+export async function handleRequestMagicLink(request: any, env: any, corsHeaders: any) {
   const body = await request.json().catch(() => null)
   if (!body?.email || typeof body.email !== 'string') {
     return authJson({ error: 'email is required' }, 400, corsHeaders)
@@ -328,7 +328,7 @@ export async function handleRequestMagicLink(request, env, corsHeaders) {
  *   - accessToken (JWT, 15 min) in the JSON body
  *   - refresh_token in an HttpOnly cookie
  */
-export async function handleVerifyMagicLink(request, env, corsHeaders) {
+export async function handleVerifyMagicLink(request: any, env: any, corsHeaders: any) {
   const url   = new URL(request.url)
   const token = url.searchParams.get('token')
 
@@ -428,7 +428,7 @@ export async function handleVerifyMagicLink(request, env, corsHeaders) {
  * The frontend calls this on app init to silently restore a session after a
  * page reload, and again ~1 minute before the JWT expires.
  */
-export async function handleRefreshToken(request, env, corsHeaders) {
+export async function handleRefreshToken(request: any, env: any, corsHeaders: any) {
   const rawToken = getRefreshTokenFromCookie(request)
   if (!rawToken) return authJson({ error: 'No refresh token' }, 401, corsHeaders)
 
@@ -489,7 +489,7 @@ export async function handleRefreshToken(request, env, corsHeaders) {
  * Deletes the refresh token from D1 and clears the cookie.
  * The frontend should also discard the in-memory JWT.
  */
-export async function handleLogout(request, env, corsHeaders) {
+export async function handleLogout(request: any, env: any, corsHeaders: any) {
   const rawToken = getRefreshTokenFromCookie(request)
 
   if (rawToken) {
@@ -513,7 +513,7 @@ export async function handleLogout(request, env, corsHeaders) {
  * Useful for the frontend to restore user state after a page load once
  * it has exchanged the refresh token cookie for a fresh JWT.
  */
-export async function handleGetMe(request, env, corsHeaders) {
+export async function handleGetMe(request: any, env: any, corsHeaders: any) {
   try {
     const user = await requireAuth(request, env)
     return authJson({ user }, 200, corsHeaders)
@@ -531,7 +531,7 @@ export async function handleGetMe(request, env, corsHeaders) {
 //
 //   const editor = await requireRole(request, env, 'editor', 'admin', 'super_admin')
 
-export async function requireAuth(request, env) {
+export async function requireAuth(request: any, env: any) {
   const header = request.headers.get('Authorization') || ''
   if (!header.startsWith('Bearer ')) throw new Error('Missing Bearer token')
 
@@ -544,7 +544,7 @@ export async function requireAuth(request, env) {
   return payload
 }
 
-export async function requireRole(request, env, ...roles) {
+export async function requireRole(request: any, env: any, ...roles: any[]) {
   const user = await requireAuth(request, env)
   // Server-side 2FA enforcement: if the route requires a privileged role and the
   // user holds that role but hasn't enrolled in 2FA, reject before checking the
@@ -559,7 +559,7 @@ export async function requireRole(request, env, ...roles) {
   return user
 }
 
-function normalizeRedirectPath(value) {
+function normalizeRedirectPath(value: any) {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   if (!trimmed.startsWith('/')) return null
@@ -576,7 +576,7 @@ function normalizeRedirectPath(value) {
 
 const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 
-function base32Encode(bytes) {
+function base32Encode(bytes: any) {
   let bits = 0, value = 0, output = ''
   for (let i = 0; i < bytes.length; i++) {
     value = (value << 8) | bytes[i]
@@ -590,7 +590,7 @@ function base32Encode(bytes) {
   return output
 }
 
-function base32Decode(str) {
+function base32Decode(str: any) {
   const s = str.toUpperCase().replace(/=+$/, '')
   const bytes = []
   let bits = 0, value = 0
@@ -612,7 +612,7 @@ export function generateTotpSecret() {
   return base32Encode(bytes)
 }
 
-async function computeTotp(base32Secret, counter) {
+async function computeTotp(base32Secret: any, counter: any) {
   // Encode counter as 8-byte big-endian
   const counterBytes = new Uint8Array(8)
   let c = counter
@@ -630,16 +630,21 @@ async function computeTotp(base32Secret, counter) {
   const hmac = new Uint8Array(await crypto.subtle.sign('HMAC', cryptoKey, counterBytes))
 
   // Dynamic truncation
+  // @ts-expect-error TS(2532): Object is possibly 'undefined'.
   const offset = hmac[19] & 0x0f
+  // @ts-expect-error TS(2532): Object is possibly 'undefined'.
   const code   = ((hmac[offset] & 0x7f) << 24)
+               // @ts-expect-error TS(2532): Object is possibly 'undefined'.
                | ((hmac[offset + 1] & 0xff) << 16)
+               // @ts-expect-error TS(2532): Object is possibly 'undefined'.
                | ((hmac[offset + 2] & 0xff) << 8)
+               // @ts-expect-error TS(2532): Object is possibly 'undefined'.
                |  (hmac[offset + 3] & 0xff)
 
   return String(code % 1_000_000).padStart(6, '0')
 }
 
-async function verifyTotp(base32Secret, code) {
+async function verifyTotp(base32Secret: any, code: any) {
   // Capture the timestep once so all three window checks use the same snapshot.
   // Calling Date.now() inside computeTotp on each iteration risks crossing a
   // 30-second boundary and skipping the valid window.
@@ -664,12 +669,12 @@ async function verifyTotp(base32Secret, code) {
 //   3. Write the new ciphertext back before deploying the new secret.
 // A future improvement would prepend a key-version tag to the stored value.
 
-async function deriveAesKey(encryptionKey) {
+async function deriveAesKey(encryptionKey: any) {
   const raw = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(encryptionKey))
   return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
 }
 
-async function encryptTotpSecret(plainSecret, encryptionKey) {
+async function encryptTotpSecret(plainSecret: any, encryptionKey: any) {
   const key = await deriveAesKey(encryptionKey)
   const iv  = crypto.getRandomValues(new Uint8Array(12))
   const enc = new TextEncoder()
@@ -680,10 +685,10 @@ async function encryptTotpSecret(plainSecret, encryptionKey) {
   return `${ivHex}:${ctHex}`
 }
 
-async function decryptTotpSecret(stored, encryptionKey) {
+async function decryptTotpSecret(stored: any, encryptionKey: any) {
   const [ivHex, ctHex] = stored.split(':')
-  const iv = new Uint8Array(ivHex.match(/.{2}/g).map(b => parseInt(b, 16)))
-  const ct = new Uint8Array(ctHex.match(/.{2}/g).map(b => parseInt(b, 16)))
+  const iv = new Uint8Array(ivHex.match(/.{2}/g).map((b: any) => parseInt(b, 16)))
+  const ct = new Uint8Array(ctHex.match(/.{2}/g).map((b: any) => parseInt(b, 16)))
 
   const key   = await deriveAesKey(encryptionKey)
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct)
@@ -701,7 +706,7 @@ async function decryptTotpSecret(stored, encryptionKey) {
  * sent back in the /confirm step only after the user proves they can generate
  * the correct code.
  */
-export async function handleTotpSetup(request, env, corsHeaders) {
+export async function handleTotpSetup(request: any, env: any, corsHeaders: any) {
   let user
   try {
     user = await requireAuth(request, env)
@@ -740,7 +745,7 @@ export async function handleTotpSetup(request, env, corsHeaders) {
  * On success, encrypts the secret and saves it to D1, enabling 2FA for
  * this user.  On the next login the user will need to complete a TOTP step.
  */
-export async function handleTotpConfirm(request, env, corsHeaders) {
+export async function handleTotpConfirm(request: any, env: any, corsHeaders: any) {
   let user
   try {
     user = await requireAuth(request, env)
@@ -825,7 +830,7 @@ export async function handleTotpConfirm(request, env, corsHeaders) {
  *     used_at on success to prevent token replay.
  *  2. KV IP throttle: max 10 attempts per IP per minute.
  */
-export async function handleTotpVerify(request, env, corsHeaders) {
+export async function handleTotpVerify(request: any, env: any, corsHeaders: any) {
   // ── Layer 2: IP-based rate limit ─────────────────────────────────────────
   if (env.RATE_LIMIT_KV) {
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown'
@@ -955,35 +960,36 @@ export async function handleTotpVerify(request, env, corsHeaders) {
 // Fail fast if the dedicated TOTP encryption key is not configured.
 // Using JWT_SECRET as a fallback would re-couple TOTP storage to JWT signing,
 // meaning a JWT key rotation could silently break decryption for enrolled users.
-function getTotpEncryptionKey(env) {
+function getTotpEncryptionKey(env: any) {
   if (!env.TOTP_ENCRYPTION_KEY) {
     throw new Error('TOTP_ENCRYPTION_KEY secret is required but not set. Run: wrangler secret put TOTP_ENCRYPTION_KEY')
   }
   return env.TOTP_ENCRYPTION_KEY
 }
 
-function getDb(env) {
+function getDb(env: any) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('D1 binding not found')
   return db
 }
 
-function buildResponseHeaders(corsHeaders) {
+function buildResponseHeaders(corsHeaders: any) {
   const headers = new Headers()
   headers.set('Content-Type', 'application/json')
   headers.set('Cache-Control', 'no-store')   // never cache auth responses (tokens, secrets)
+  // @ts-expect-error TS(2345): Argument of type 'unknown' is not assignable to pa... Remove this comment to see the full error message
   for (const [k, v] of Object.entries(corsHeaders)) headers.set(k, v)
   return headers
 }
 
-function authJson(data, status, corsHeaders) {
+function authJson(data: any, status: any, corsHeaders: any) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...corsHeaders },
   })
 }
 
-function shouldRequireTotpEnrollment(user, env) {
+function shouldRequireTotpEnrollment(user: any, env: any) {
   if (!ROLES_REQUIRING_2FA.includes(user.role)) return false
   const rawCutoff = env.TOTP_ENFORCE_CREATED_AFTER
   if (!rawCutoff) return true   // no cutoff configured → enforce for all eligible roles

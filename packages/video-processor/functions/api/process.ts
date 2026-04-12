@@ -1,4 +1,4 @@
-export async function onRequest(context) {
+export async function onRequest(context: any) {
   const { request, env } = context;
 
   if (request.method === 'OPTIONS') {
@@ -53,16 +53,18 @@ export async function onRequest(context) {
     // Derive duration by summing #EXTINF from the first variant media playlist
     // when metadata.json has no durationSeconds (e.g. shell-script uploads)
     if (durationSeconds === null && variants.length > 0) {
+      // @ts-expect-error TS(2532): Object is possibly 'undefined'.
       const firstUri = variants[0].uri;
       if (firstUri) {
+        // @ts-expect-error TS(2531): Object is possibly 'null'.
         const masterDir = hlsMasterKey.slice(0, hlsMasterKey.lastIndexOf('/') + 1);
         const variantKey = firstUri.startsWith('videos/') ? firstUri : `${masterDir}${firstUri}`;
         const variantObj = await env.VIDEO_BUCKET.get(variantKey);
         if (variantObj) {
           const text = await variantObj.text();
           const total = text.split('\n')
-            .filter(l => l.trim().startsWith('#EXTINF:'))
-            .reduce((s, l) => {
+            .filter((l: any) => l.trim().startsWith('#EXTINF:'))
+            .reduce((s: any, l: any) => {
               const n = Number.parseFloat(l.trim().slice('#EXTINF:'.length));
               return Number.isFinite(n) ? s + n : s;
             }, 0);
@@ -99,7 +101,9 @@ export async function onRequest(context) {
       status: 'processed'
     };
 
+    // @ts-expect-error TS(2339): Property 'durationSeconds' does not exist on type ... Remove this comment to see the full error message
     if (durationSeconds !== null) metadata.durationSeconds = durationSeconds;
+    // @ts-expect-error TS(2339): Property 'audioGroups' does not exist on type '{ v... Remove this comment to see the full error message
     if (audioGroups.length > 0) metadata.audioGroups = audioGroups;
 
     await env.VIDEO_BUCKET.put(metadataKey, JSON.stringify(metadata, null, 2), {
@@ -129,7 +133,11 @@ export async function onRequest(context) {
   }
 }
 
-async function syncVideoDurationToDb({ db, videoId, durationSeconds }) {
+async function syncVideoDurationToDb({
+  db,
+  videoId,
+  durationSeconds
+}: any) {
   if (!db) return { updated: false, reason: 'missing-d1-binding' };
   if (durationSeconds === null) return { updated: false, reason: 'missing-duration-seconds' };
 
@@ -143,8 +151,8 @@ async function syncVideoDurationToDb({ db, videoId, durationSeconds }) {
   };
 }
 
-function parseHlsMasterPlaylist(content) {
-  const lines = content.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+function parseHlsMasterPlaylist(content: any) {
+  const lines = content.split(/\r?\n/).map((line: any) => line.trim()).filter(Boolean);
   const variants = [];
   const audioGroups = [];
 
@@ -153,15 +161,24 @@ function parseHlsMasterPlaylist(content) {
 
     if (line.startsWith('#EXT-X-MEDIA:')) {
       const attributes = parseAttributeList(line.slice('#EXT-X-MEDIA:'.length));
+      // @ts-expect-error TS(2339): Property 'TYPE' does not exist on type '{}'.
       if (attributes.TYPE === 'AUDIO') {
         audioGroups.push({
+          // @ts-expect-error TS(2339): Property 'TYPE' does not exist on type '{}'.
           type: attributes.TYPE,
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           groupId: attributes['GROUP-ID'] ?? null,
+          // @ts-expect-error TS(2339): Property 'NAME' does not exist on type '{}'.
           name: attributes.NAME ?? null,
+          // @ts-expect-error TS(2339): Property 'LANGUAGE' does not exist on type '{}'.
           language: attributes.LANGUAGE ?? null,
+          // @ts-expect-error TS(2339): Property 'DEFAULT' does not exist on type '{}'.
           default: attributes.DEFAULT === 'YES',
+          // @ts-expect-error TS(2339): Property 'AUTOSELECT' does not exist on type '{}'.
           autoselect: attributes.AUTOSELECT === 'YES',
+          // @ts-expect-error TS(2339): Property 'CHANNELS' does not exist on type '{}'.
           channels: attributes.CHANNELS ?? null,
+          // @ts-expect-error TS(2339): Property 'URI' does not exist on type '{}'.
           uri: attributes.URI ?? null
         });
       }
@@ -175,13 +192,21 @@ function parseHlsMasterPlaylist(content) {
 
       variants.push({
         uri,
+        // @ts-expect-error TS(2339): Property 'BANDWIDTH' does not exist on type '{}'.
         bandwidth: toNumberOrNull(attributes.BANDWIDTH),
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         averageBandwidth: toNumberOrNull(attributes['AVERAGE-BANDWIDTH']),
+        // @ts-expect-error TS(2339): Property 'CODECS' does not exist on type '{}'.
         codecs: attributes.CODECS ?? null,
+        // @ts-expect-error TS(2339): Property 'RESOLUTION' does not exist on type '{}'.
         resolution: attributes.RESOLUTION ?? null,
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         frameRate: toNumberOrNull(attributes['FRAME-RATE']),
+        // @ts-expect-error TS(2339): Property 'AUDIO' does not exist on type '{}'.
         audioGroupId: attributes.AUDIO ?? null,
+        // @ts-expect-error TS(2339): Property 'SUBTITLES' does not exist on type '{}'.
         subtitlesGroupId: attributes.SUBTITLES ?? null,
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         closedCaptions: attributes['CLOSED-CAPTIONS'] ?? null
       });
     }
@@ -190,33 +215,34 @@ function parseHlsMasterPlaylist(content) {
   return { variants, audioGroups };
 }
 
-function parseAttributeList(rawAttributes) {
+function parseAttributeList(rawAttributes: any) {
   const attributes = {};
   const regex = /([A-Z0-9-]+)=((?:"[^"]*")|[^,]*)/g;
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   for (const match of rawAttributes.matchAll(regex)) attributes[match[1]] = stripQuotes(match[2]);
   return attributes;
 }
 
-function stripQuotes(value) {
+function stripQuotes(value: any) {
   if (value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1);
   return value;
 }
 
-function toNumberOrNull(value) {
+function toNumberOrNull(value: any) {
   if (value === undefined || value === null || value === '') return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 }
 
-function sanitizeVisibility(value) {
+function sanitizeVisibility(value: any) {
   return value === 'public' || value === 'unlisted' ? value : 'private';
 }
 
-function getVideoDatabaseBinding(env) {
+function getVideoDatabaseBinding(env: any) {
   return env.video_subscription_db || env.VIDEO_SUBSCRIPTION_DB || env.DB || null;
 }
 
-function withCors(response, request) {
+function withCors(response: any, request: any) {
   const headers = new Headers(response.headers);
   const origin = request.headers.get('Origin');
   if (origin) {
@@ -231,6 +257,6 @@ function withCors(response, request) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function json(data, status = 200) {
+function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 }

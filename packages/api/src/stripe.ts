@@ -30,7 +30,8 @@ import {
  * Nested objects become bracket notation: { a: { b: 1 } } → "a[b]=1"
  * Arrays become indexed: { a: [1,2] } → "a[0]=1&a[1]=2"
  */
-function encodeStripeBody(obj, prefix = '') {
+// @ts-expect-error TS(7023): 'encodeStripeBody' implicitly has return type 'any... Remove this comment to see the full error message
+function encodeStripeBody(obj: any, prefix = '') {
   const parts = []
   for (const [key, value] of Object.entries(obj)) {
     if (value === undefined || value === null) continue
@@ -46,13 +47,14 @@ function encodeStripeBody(obj, prefix = '') {
         }
       })
     } else {
+      // @ts-expect-error TS(2345): Argument of type 'unknown' is not assignable to pa... Remove this comment to see the full error message
       parts.push(`${encodeURIComponent(fullKey)}=${encodeURIComponent(value)}`)
     }
   }
   return parts.join('&')
 }
 
-async function stripePost(path, body, env) {
+async function stripePost(path: any, body: any, env: any) {
   const res = await fetch(`https://api.stripe.com/v1${path}`, {
     method: 'POST',
     headers: {
@@ -64,7 +66,7 @@ async function stripePost(path, body, env) {
   return res.json()
 }
 
-async function stripeGet(path, env) {
+async function stripeGet(path: any, env: any) {
   const res = await fetch(`https://api.stripe.com/v1${path}`, {
     headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
   })
@@ -80,7 +82,7 @@ async function stripeGet(path, env) {
  * Signed payload: "<timestamp>.<rawBody>"
  * Algorithm: HMAC-SHA256 keyed with STRIPE_WEBHOOK_SECRET
  */
-async function verifyStripeWebhook(rawBody, sigHeader, secret) {
+async function verifyStripeWebhook(rawBody: any, sigHeader: any, secret: any) {
   if (!sigHeader || !secret) return false
 
   // Parse "t=<timestamp>,v1=<sig1>,v1=<sig2>" — multiple v1= values are valid
@@ -130,7 +132,7 @@ async function verifyStripeWebhook(rawBody, sigHeader, secret) {
 
 // ─── D1 / admin_settings helpers ─────────────────────────────────────────────
 
-function getDb(env) {
+function getDb(env: any) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('D1 binding not found')
   return db
@@ -140,7 +142,7 @@ function getDb(env) {
  * Resolve plan_type ('monthly'|'yearly'|'club') from a Stripe price ID
  * by comparing against the price IDs stored in admin_settings.
  */
-async function resolvePlanType(db, stripePriceId, env) {
+async function resolvePlanType(db: any, stripePriceId: any, env: any) {
   const keys = ['stripe_price_monthly', 'stripe_price_yearly', 'stripe_price_club']
   const planNames = ['monthly', 'yearly', 'club']
   for (let i = 0; i < keys.length; i++) {
@@ -154,7 +156,7 @@ async function resolvePlanType(db, stripePriceId, env) {
  * Upsert a subscription row in D1 from a Stripe subscription object.
  * Uses ON CONFLICT(stripe_subscription_id) so repeated webhook deliveries are idempotent.
  */
-async function upsertSubscription(db, userId, stripeSub, env) {
+async function upsertSubscription(db: any, userId: any, stripeSub: any, env: any) {
   const priceId = stripeSub.items?.data?.[0]?.price?.id ?? null
   const planType = priceId ? await resolvePlanType(db, priceId, env ?? {}) : 'monthly'
   const status = normalizeStripeStatus(stripeSub.status)
@@ -184,7 +186,7 @@ async function upsertSubscription(db, userId, stripeSub, env) {
 }
 
 /** Map Stripe subscription statuses to our internal values. */
-function normalizeStripeStatus(stripeStatus) {
+function normalizeStripeStatus(stripeStatus: any) {
   const map = {
     active: 'active',
     trialing: 'trialing',
@@ -196,6 +198,7 @@ function normalizeStripeStatus(stripeStatus) {
     incomplete_expired: 'cancelled',
     paused: 'cancelled',
   }
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   return map[stripeStatus] ?? 'cancelled'
 }
 
@@ -205,7 +208,7 @@ function normalizeStripeStatus(stripeStatus) {
  * GET /api/account/pricing — PUBLIC
  * Returns the display prices (EUR) from admin_settings.
  */
-export async function handleGetPricing(request, env, corsHeaders) {
+export async function handleGetPricing(request: any, env: any, corsHeaders: any) {
   try {
     const db = getDb(env)
     const [monthly, yearly, club] = await Promise.all([
@@ -229,7 +232,7 @@ export async function handleGetPricing(request, env, corsHeaders) {
  * Body: { planType: 'monthly'|'yearly'|'club' }
  * Creates a Stripe Checkout Session and returns { checkoutUrl }.
  */
-export async function handleCheckout(request, env, corsHeaders) {
+export async function handleCheckout(request: any, env: any, corsHeaders: any) {
   let user
   try {
     user = await requireAuth(request, env)
@@ -294,7 +297,7 @@ export async function handleCheckout(request, env, corsHeaders) {
  * POST /api/payments/webhook — NO auth (Stripe calls this directly)
  * Verifies Stripe signature and handles subscription lifecycle events.
  */
-export async function handleWebhook(request, env, corsHeaders) {
+export async function handleWebhook(request: any, env: any, corsHeaders: any) {
   // Read raw body as text — must be done before any parsing to keep the
   // exact bytes Stripe used when generating the signature.
   const rawBody = await request.text()
@@ -444,7 +447,7 @@ export async function handleWebhook(request, env, corsHeaders) {
  * GET /api/account/subscription — protected
  * Returns the most recent subscription row for the authenticated user.
  */
-export async function handleGetSubscription(request, env, corsHeaders) {
+export async function handleGetSubscription(request: any, env: any, corsHeaders: any) {
   let user
   try {
     user = await requireAuth(request, env)
@@ -504,7 +507,7 @@ export async function handleGetSubscription(request, env, corsHeaders) {
  * Creates a Stripe Customer Portal session so users can manage their subscription.
  * Returns { portalUrl }.
  */
-export async function handlePortal(request, env, corsHeaders) {
+export async function handlePortal(request: any, env: any, corsHeaders: any) {
   let user
   try {
     user = await requireAuth(request, env)
@@ -544,7 +547,7 @@ export async function handlePortal(request, env, corsHeaders) {
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-function jsonResponse(data, status = 200, corsHeaders = {}) {
+function jsonResponse(data: any, status = 200, corsHeaders = {}) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders },

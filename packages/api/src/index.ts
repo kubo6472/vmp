@@ -62,12 +62,14 @@ import { ensureAdminSettingsTable } from './adminSettingsTable.js'
 // Used conditionally: only active when env.SEGMENT_RATE_LIMITER is present.
 
 export class SegmentRateLimiterDO {
-  constructor(state, env) {
+  env: any;
+  state: any;
+  constructor(state: any, env: any) {
     this.state = state
     this.env = env
   }
 
-  async fetch(request) {
+  async fetch(request: any) {
     const body = await request.json()
     const { identifier, videoId, avgSegDur } = body
 
@@ -105,7 +107,7 @@ export class SegmentRateLimiterDO {
 }
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request: any, env: any, ctx: any) {
     const url = new URL(request.url)
     await maybeSyncPillsApiKey(env)
 
@@ -297,7 +299,7 @@ export default {
 
 // ─── CORS helpers ─────────────────────────────────────────────────────────────
 
-function buildCorsHeaders(request, env) {
+function buildCorsHeaders(request: any, env: any) {
   const requestOrigin  = request.headers.get('Origin') || ''
   const allowedOrigins = parseAllowedOrigins(env.ALLOWED_ORIGINS)
 
@@ -318,14 +320,14 @@ function buildCorsHeaders(request, env) {
   }
 }
 
-function parseAllowedOrigins(envValue) {
+function parseAllowedOrigins(envValue: any) {
   if (!envValue) return []
-  return envValue.split(',').map(o => o.trim()).filter(Boolean)
+  return envValue.split(',').map((o: any) => o.trim()).filter(Boolean);
 }
 
 // ─── Existing handler implementations (unchanged) ─────────────────────────────
 
-async function handleHomepagePlacement(request, env, corsHeaders) {
+async function handleHomepagePlacement(request: any, env: any, corsHeaders: any) {
   if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   try {
     const db = getDatabaseBinding(env)
@@ -352,11 +354,12 @@ async function handleHomepagePlacement(request, env, corsHeaders) {
     return jsonResponse(placement, 200, corsHeaders)
   } catch (error) {
     console.error('handleHomepagePlacement:', error)
+    // @ts-expect-error TS(2571): Object is of type 'unknown'.
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
 }
 
-async function handleVideosList(request, env, corsHeaders) {
+async function handleVideosList(request: any, env: any, corsHeaders: any) {
   try {
     const { session } = getReadSession(env, request)
 
@@ -394,7 +397,7 @@ async function handleVideosList(request, env, corsHeaders) {
     // Cached in KV so this stays cheap for repeated list loads.
     const results = videos.results || []
     if (env.R2_BASE_URL) {
-      await Promise.all(results.map(async (v) => {
+      await Promise.all(results.map(async (v: any) => {
         if (!v || typeof v.id !== 'string') return
         if (typeof v.full_duration === 'number' && v.full_duration > 0) return
         const resolved = await resolveVideoDurationSeconds(v.id, env)
@@ -407,11 +410,12 @@ async function handleVideosList(request, env, corsHeaders) {
     return response
   } catch (error) {
     console.error('Error:', error)
+    // @ts-expect-error TS(2571): Object is of type 'unknown'.
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
 }
 
-async function handleVideoAccess(request, env, corsHeaders) {
+async function handleVideoAccess(request: any, env: any, corsHeaders: any) {
   try {
     const url = new URL(request.url)
     const pathParts = url.pathname.split('/').filter(Boolean)
@@ -547,6 +551,7 @@ async function handleVideoAccess(request, env, corsHeaders) {
                WHERE id = ? AND status = 'processed'`
             ).bind(fullDuration, fullDuration, resolvedVideoId).run()
           } catch (e) {
+            // @ts-expect-error TS(2571): Object is of type 'unknown'.
             console.warn(`Duration backfill failed for ${resolvedVideoId}:`, e?.message ?? e)
           }
         }
@@ -582,11 +587,12 @@ async function handleVideoAccess(request, env, corsHeaders) {
     return jsonResponse(response, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
+    // @ts-expect-error TS(2571): Object is of type 'unknown'.
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
 }
 
-async function handleVideoProxy(request, env, corsHeaders, ctx) {
+async function handleVideoProxy(request: any, env: any, corsHeaders: any, ctx: any) {
   const requestUrl = new URL(request.url)
   const proxyPrefix = '/api/video-proxy/'
   const objectPath = requestUrl.pathname.slice(proxyPrefix.length)
@@ -685,7 +691,7 @@ async function handleVideoProxy(request, env, corsHeaders, ctx) {
   // vt to propagate to rewritten manifest/segment URLs
   const vtForRewrite = requestUrl.searchParams.get('vt') ?? null
 
-  const isSegment = objectPath.endsWith('.ts') || objectPath.endsWith('.m4s')
+  const isSegment = objectPath.endsWith('.js') || objectPath.endsWith('.m4s')
 
   // ── Step 4c: Segment count rate limiting ─────────────────────────────────
   if (isSegment && env.RATE_LIMIT_KV) {
@@ -729,19 +735,22 @@ async function handleVideoProxy(request, env, corsHeaders, ctx) {
   const manifestType = getManifestType(objectPath, upstreamResponse)
   if (manifestType === 'hls') {
     const manifest = await upstreamResponse.text()
+    // @ts-expect-error TS(2345): Argument of type 'string | null' is not assignable... Remove this comment to see the full error message
     const rewrittenManifest = rewriteManifestForProxyWithPreview(manifest, effectivePreviewUntil, objectPath, vtForRewrite)
     const headers = new Headers(upstreamResponse.headers)
     headers.set('Content-Type', 'application/vnd.apple.mpegurl')
     headers.delete('Content-Length')
+    // @ts-expect-error TS(2345): Argument of type 'unknown' is not assignable to pa... Remove this comment to see the full error message
     for (const [k, v] of Object.entries(corsHeaders)) headers.set(k, v)
     return new Response(rewrittenManifest, { status: upstreamResponse.status, headers })
   }
   const headers = new Headers(upstreamResponse.headers)
+  // @ts-expect-error TS(2345): Argument of type 'unknown' is not assignable to pa... Remove this comment to see the full error message
   for (const [k, v] of Object.entries(corsHeaders)) headers.set(k, v)
   return new Response(upstreamResponse.body, { status: upstreamResponse.status, headers })
 }
 
-async function handleBootstrap(request, env, corsHeaders) {
+async function handleBootstrap(request: any, env: any, corsHeaders: any) {
   const body = await request.json().catch(() => null)
   if (!body?.email || typeof body.email !== 'string') {
     return jsonResponse({ error: 'email is required' }, 400, corsHeaders)
@@ -781,7 +790,7 @@ async function handleBootstrap(request, env, corsHeaders) {
   return jsonResponse({ ok: true, message: `${email} is now super_admin. Sign in via magic link to access admin features.` }, 200, corsHeaders)
 }
 
-async function handleAdminConfig(request, env, corsHeaders) {
+async function handleAdminConfig(request: any, env: any, corsHeaders: any) {
   const db = getDatabaseBinding(env)
   await ensureAdminSettingsTable(db)
 
@@ -805,7 +814,7 @@ async function handleAdminConfig(request, env, corsHeaders) {
   return jsonResponse({ ok: true, config: normalized }, 200, corsHeaders)
 }
 
-async function handlePreviewLocks(request, env, corsHeaders) {
+async function handlePreviewLocks(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'editor', 'admin', 'super_admin')
   } catch (error) {
@@ -831,7 +840,7 @@ async function handlePreviewLocks(request, env, corsHeaders) {
   return jsonResponse({ ok: true }, 200, corsHeaders)
 }
 
-async function handleAdminCategories(request, env, corsHeaders) {
+async function handleAdminCategories(request: any, env: any, corsHeaders: any) {
   try {
     const method = request.method
     const db = getDatabaseBinding(env)
@@ -877,6 +886,7 @@ async function handleAdminCategories(request, env, corsHeaders) {
         `).bind(crypto.randomUUID(), slug, name, sortOrder, direction).run()
         return jsonResponse({ ok: true }, 201, corsHeaders)
       } catch (err) {
+        // @ts-expect-error TS(2571): Object is of type 'unknown'.
         if (err?.message?.includes('UNIQUE')) {
           return jsonResponse({ error: 'Category slug already exists' }, 409, corsHeaders)
         }
@@ -923,6 +933,7 @@ async function handleAdminCategories(request, env, corsHeaders) {
         }
         return jsonResponse({ ok: true }, 200, corsHeaders)
       } catch (err) {
+        // @ts-expect-error TS(2571): Object is of type 'unknown'.
         if (err?.message?.includes('UNIQUE')) {
           return jsonResponse({ error: 'Category slug already exists' }, 409, corsHeaders)
         }
@@ -973,13 +984,15 @@ async function handleAdminCategories(request, env, corsHeaders) {
     return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   } catch (err) {
     return jsonResponse({
+      // @ts-expect-error TS(2571): Object is of type 'unknown'.
       error: err?.message || 'Internal Server Error',
+      // @ts-expect-error TS(2571): Object is of type 'unknown'.
       code: err?.code || 'internal_error',
     }, 500, corsHeaders)
   }
 }
 
-async function handleAdminVideosList(request, env, corsHeaders) {
+async function handleAdminVideosList(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'editor', 'admin', 'super_admin')
   } catch {
@@ -991,7 +1004,7 @@ async function handleAdminVideosList(request, env, corsHeaders) {
     // ── 1. Auto-register any R2 uploads that have no D1 row ──────────────────
     if (env.BUCKET) {
       const listed = await env.BUCKET.list({ prefix: 'videos/', delimiter: '/' })
-      const r2VideoIds = (listed.delimitedPrefixes ?? []).map(prefix => {
+      const r2VideoIds = (listed.delimitedPrefixes ?? []).map((prefix: any) => {
         // prefix looks like "videos/abc123/" — extract the folder name
         const parts = prefix.replace(/\/$/, '').split('/')
         return parts[parts.length - 1]
@@ -1020,7 +1033,7 @@ async function handleAdminVideosList(request, env, corsHeaders) {
     `).all()
 
     // ── 3. Annotate each row with r2_exists ──────────────────────────────────
-    const annotated = await Promise.all((videos.results || []).map(async (video) => {
+    const annotated = await Promise.all((videos.results || []).map(async (video: any) => {
       let r2Exists = null
       if (env.BUCKET) {
         r2Exists = await hasProcessedPlaybackArtifact(env.BUCKET, video.id)
@@ -1031,11 +1044,12 @@ async function handleAdminVideosList(request, env, corsHeaders) {
     return jsonResponse({ videos: annotated }, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
+    // @ts-expect-error TS(2571): Object is of type 'unknown'.
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
 }
 
-async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
+async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'editor', 'admin', 'super_admin')
   } catch {
@@ -1125,6 +1139,7 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
             .bind(body.slug ?? null, videoId).run()
         }
       } catch (err) {
+        // @ts-expect-error TS(2571): Object is of type 'unknown'.
         if (err?.message?.includes('UNIQUE')) {
           return jsonResponse({ error: 'Slug already in use by another video' }, 409, corsHeaders)
         }
@@ -1193,11 +1208,12 @@ async function handleAdminVideoUpdate(request, env, ctx, corsHeaders) {
     return jsonResponse({ ok: true, video }, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
+    // @ts-expect-error TS(2571): Object is of type 'unknown'.
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
 }
 
-async function handleAdminVideoDelete(request, env, corsHeaders) {
+async function handleAdminVideoDelete(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'editor', 'admin', 'super_admin')
   } catch {
@@ -1222,12 +1238,13 @@ async function handleAdminVideoDelete(request, env, corsHeaders) {
     if (env.BUCKET) {
       let cursor
       do {
+        // @ts-expect-error TS(7022): 'listed' implicitly has type 'any' because it does... Remove this comment to see the full error message
         const listed = await env.BUCKET.list({ prefix: `videos/${videoId}/`, cursor })
-        const keys = listed.objects.map(obj => obj.key)
+        const keys = listed.objects.map((obj: any) => obj.key)
         if (keys.length > 0) {
           const batchSize = 100
           for (let i = 0; i < keys.length; i += batchSize) {
-            await Promise.all(keys.slice(i, i + batchSize).map(key => env.BUCKET.delete(key)))
+            await Promise.all(keys.slice(i, i + batchSize).map((key: any) => env.BUCKET.delete(key)))
           }
           deletedR2Objects += keys.length
         }
@@ -1243,7 +1260,7 @@ async function handleAdminVideoDelete(request, env, corsHeaders) {
     if (homepageRow?.value) {
       const homepage = safeJsonParse(homepageRow.value, defaultHomepageConfig())
       const before = Array.isArray(homepage.featuredVideoIds) ? homepage.featuredVideoIds : []
-      const after  = before.filter(id => id !== videoId)
+      const after  = before.filter((id: any) => id !== videoId)
       if (after.length !== before.length) {
         homepage.featuredVideoIds = after
         await db.prepare(`
@@ -1259,11 +1276,12 @@ async function handleAdminVideoDelete(request, env, corsHeaders) {
     return jsonResponse({ ok: true, deletedR2Objects }, 200, corsHeaders)
   } catch (error) {
     console.error(`handleAdminVideoDelete [videoId:${videoId}]:`, error)
+    // @ts-expect-error TS(2571): Object is of type 'unknown'.
     return jsonResponse({ error: 'Internal server error', details: error.message }, 500, corsHeaders)
   }
 }
 
-async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
+async function handleAdminVideoNotify(request: any, env: any, ctx: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'editor', 'admin', 'super_admin')
   } catch {
@@ -1320,7 +1338,7 @@ async function handleAdminVideoNotify(request, env, ctx, corsHeaders) {
   return jsonResponse({ ok: true, push_enqueued_at: responseTimestamp }, 200, corsHeaders)
 }
 
-async function handleVideoSwap(request, env, corsHeaders) {
+async function handleVideoSwap(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'editor', 'admin', 'super_admin')
   } catch {
@@ -1454,8 +1472,8 @@ async function handleVideoSwap(request, env, corsHeaders) {
     if (homepageRow?.value) {
       const homepage = safeJsonParse(homepageRow.value, defaultHomepageConfig())
       const before = Array.isArray(homepage.featuredVideoIds) ? homepage.featuredVideoIds : []
-      const after  = before.map(id => id === publishedId ? draftId : id)
-      if (after.some((id, i) => id !== before[i])) {
+      const after  = before.map((id: any) => id === publishedId ? draftId : id)
+      if (after.some((id: any, i: any) => id !== before[i])) {
         homepage.featuredVideoIds = after
         await db.prepare(`
           INSERT INTO admin_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -1464,6 +1482,7 @@ async function handleVideoSwap(request, env, corsHeaders) {
       }
     }
   } catch (err) {
+    // @ts-expect-error TS(2571): Object is of type 'unknown'.
     console.warn('Homepage featured-slot update failed after swap (non-fatal):', err?.message)
   }
 
@@ -1475,7 +1494,7 @@ async function handleVideoSwap(request, env, corsHeaders) {
   return jsonResponse({ ok: true, published, retired }, 200, corsHeaders)
 }
 
-async function handleAdminPushTest(request, env, corsHeaders) {
+async function handleAdminPushTest(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'editor', 'admin', 'super_admin')
   } catch {
@@ -1525,18 +1544,23 @@ async function handleAdminPushTest(request, env, corsHeaders) {
       ok: false,
       endpointHost,
       subscriptionCreatedAt: subscription.created_at || null,
+      // @ts-expect-error TS(2571): Object is of type 'unknown'.
       error: error.message || 'Push test failed',
+      // @ts-expect-error TS(2571): Object is of type 'unknown'.
       code: error.code || 'push_failed',
       delivery: {
+        // @ts-expect-error TS(2571): Object is of type 'unknown'.
         status: error.status ?? null,
+        // @ts-expect-error TS(2571): Object is of type 'unknown'.
         statusClass: error.statusClass ?? null,
+        // @ts-expect-error TS(2571): Object is of type 'unknown'.
         responseSnippet: error.responseSnippet ?? null,
       },
     }, 502, corsHeaders)
   }
 }
 
-function safeEndpointHost(endpoint) {
+function safeEndpointHost(endpoint: any) {
   try {
     return new URL(endpoint).host || null
   } catch {
@@ -1550,7 +1574,7 @@ function safeEndpointHost(endpoint) {
  * Returns true if the hostname should be blocked as a push endpoint target.
  * Prevents SSRF by rejecting localhost, loopback, link-local, and RFC-1918 ranges.
  */
-function isPrivateHost(hostname) {
+function isPrivateHost(hostname: any) {
   // Reject .local mDNS, localhost, and empty hostnames
   if (!hostname || hostname === 'localhost' || hostname.endsWith('.local')) return true
 
@@ -1588,7 +1612,7 @@ function isPrivateHost(hostname) {
   return false
 }
 
-function isPrivateIPv4Octets(a, b) {
+function isPrivateIPv4Octets(a: any, b: any) {
   if (a === 10) return true                               // 10.0.0.0/8
   if (a === 127) return true                              // 127.0.0.0/8 loopback
   if (a === 172 && b >= 16 && b <= 31) return true       // 172.16.0.0/12
@@ -1600,7 +1624,7 @@ function isPrivateIPv4Octets(a, b) {
 
 // ─── Push notification handlers ───────────────────────────────────────────────
 
-function handleGetVapidPublicKey(request, env, corsHeaders) {
+function handleGetVapidPublicKey(request: any, env: any, corsHeaders: any) {
   const publicKey = env.VAPID_PUBLIC_KEY?.trim()
   const privateKey = env.VAPID_PRIVATE_KEY?.trim()
   if (!publicKey || publicKey.startsWith('REPLACE_WITH_') || !privateKey) {
@@ -1609,7 +1633,7 @@ function handleGetVapidPublicKey(request, env, corsHeaders) {
   return jsonResponse({ publicKey }, 200, corsHeaders)
 }
 
-async function handlePushSubscribe(request, env, corsHeaders) {
+async function handlePushSubscribe(request: any, env: any, corsHeaders: any) {
   let user
   try {
     user = await requireAuth(request, env)
@@ -1653,7 +1677,7 @@ async function handlePushSubscribe(request, env, corsHeaders) {
   }
 }
 
-async function handlePushUnsubscribe(request, env, corsHeaders) {
+async function handlePushUnsubscribe(request: any, env: any, corsHeaders: any) {
   let user
   try {
     user = await requireAuth(request, env)
@@ -1678,7 +1702,7 @@ async function handlePushUnsubscribe(request, env, corsHeaders) {
   }
 }
 
-async function hasProcessedPlaybackArtifact(bucket, videoId) {
+async function hasProcessedPlaybackArtifact(bucket: any, videoId: any) {
   const candidateKeys = [
     // Flat layout produced by the current upload script (rclone copies TMP_DIR
     // directly into videos/{id}/ with no processed/ subdirectory)
@@ -1701,7 +1725,7 @@ async function hasProcessedPlaybackArtifact(bucket, videoId) {
 // Follows a master playlist to its first variant if needed.
 // Cached in KV to avoid repeatedly fetching/parsing manifests.
 
-async function resolveVideoDurationSeconds(videoId, env) {
+async function resolveVideoDurationSeconds(videoId: any, env: any) {
   if (!videoId) return null
   if (!env.R2_BASE_URL) return null
 
@@ -1761,11 +1785,11 @@ async function resolveVideoDurationSeconds(videoId, env) {
   return null
 }
 
-async function resolvePlaylistDurationFromUrl(url, depth = 0) {
+async function resolvePlaylistDurationFromUrl(url: any, depth = 0) {
   if (!url || depth > 2) return { duration: null, kind: 'not_found' }
   // Declared outside `try` so `finally` can clear the timer (try-block `let` is not in scope in `finally`).
   const timeoutMs = 5000
-  let controller = null
+  let controller: any = null
   let timeoutId = null
   let signal = undefined
   try {
@@ -1810,6 +1834,7 @@ async function resolvePlaylistDurationFromUrl(url, depth = 0) {
     // Master playlist: follow first variant
     const idx = lines.findIndex(l => l.startsWith('#EXT-X-STREAM-INF'))
     if (idx >= 0 && lines[idx + 1]) {
+      // @ts-expect-error TS(2345): Argument of type 'string | undefined' is not assig... Remove this comment to see the full error message
       const nextUrl = new URL(lines[idx + 1], url).toString()
       return resolvePlaylistDurationFromUrl(nextUrl, depth + 1)
     }
@@ -1824,22 +1849,22 @@ async function resolvePlaylistDurationFromUrl(url, depth = 0) {
 
 // ─── All the unchanged helper functions from the original index.js ─────────────
 
-function getManifestType(objectPath, upstreamResponse) {
+function getManifestType(objectPath: any, upstreamResponse: any) {
   if (objectPath.endsWith('.m3u8')) return 'hls'
   const ct = upstreamResponse.headers.get('content-type') ?? ''
   if (/application\/(vnd\.apple\.mpegurl|x-mpegurl)|audio\/mpegurl/i.test(ct)) return 'hls'
   return null
 }
 
-function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds, objectPath = '', vt = null) {
+function rewriteManifestForProxyWithPreview(manifest: any, previewUntilSeconds: any, objectPath = '', vt = null) {
   const lines = manifest.split('\n')
   const hasPreviewLimit = typeof previewUntilSeconds === 'number' && previewUntilSeconds > 0
-  const isMediaPlaylist = lines.some(l => l.trim().startsWith('#EXTINF:'))
-  const isMasterPlaylist = lines.some(l => l.trim().startsWith('#EXT-X-STREAM-INF'))
+  const isMediaPlaylist = lines.some((l: any) => l.trim().startsWith('#EXTINF:'))
+  const isMasterPlaylist = lines.some((l: any) => l.trim().startsWith('#EXT-X-STREAM-INF'))
   const previewQuery = hasPreviewLimit ? `previewUntil=${Math.floor(previewUntilSeconds)}` : null
 
   // Build extra query params to append to every URL: vt (required) + previewUntil (optional)
-  function buildExtraQuery(includePreview) {
+  function buildExtraQuery(includePreview: any) {
     const parts = []
     if (includePreview && previewQuery) parts.push(previewQuery)
     if (vt) parts.push(`vt=${vt}`)
@@ -1854,18 +1879,18 @@ function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds, objec
   // Resolve segment paths relative to this manifest's directory so that bare
   // filenames (e.g. "seg_1080_1.m4s", "init_1080.mp4") emitted by shaka-packager
   // are routed through the proxy with the vt token intact.
-  function proxySegmentPath(path, query) {
+  function proxySegmentPath(path: any, query: any) {
     return rewriteSegmentPath(path, query, manifestDir)
   }
 
   // Helper to rewrite URLs in HLS tag attributes
-  function rewriteTagAttributes(line, query) {
+  function rewriteTagAttributes(line: any, query: any) {
     // Handle #EXT-X-MAP:URI="..."
-    line = line.replace(/(#EXT-X-MAP:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
+    line = line.replace(/(#EXT-X-MAP:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match: any, prefix: any, url: any, suffix: any) => {
       return prefix + proxySegmentPath(url, query) + suffix
     })
     // Handle #EXT-X-KEY:URI="..."
-    line = line.replace(/(#EXT-X-KEY:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
+    line = line.replace(/(#EXT-X-KEY:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match: any, prefix: any, url: any, suffix: any) => {
       // Preserve custom-scheme URIs (skd://, data:, etc.) - only rewrite scheme-less paths
       if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)) {
         return prefix + url + suffix
@@ -1873,11 +1898,11 @@ function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds, objec
       return prefix + proxySegmentPath(url, query) + suffix
     })
     // Handle #EXT-X-MEDIA:URI="..."
-    line = line.replace(/(#EXT-X-MEDIA:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
+    line = line.replace(/(#EXT-X-MEDIA:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match: any, prefix: any, url: any, suffix: any) => {
       return prefix + proxySegmentPath(url, query) + suffix
     })
     // Handle #EXT-X-I-FRAME-STREAM-INF:URI="..."
-    line = line.replace(/(#EXT-X-I-FRAME-STREAM-INF:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match, prefix, url, suffix) => {
+    line = line.replace(/(#EXT-X-I-FRAME-STREAM-INF:[^"'\n]*URI=["'])([^"']+)(["'])/gi, (match: any, prefix: any, url: any, suffix: any) => {
       return prefix + proxySegmentPath(url, query) + suffix
     })
     return line
@@ -1904,7 +1929,7 @@ function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds, objec
     out.push('#EXT-X-ENDLIST')
     return out.join('\n')
   }
-  return lines.map(line => {
+  return lines.map((line: any) => {
     const t = line.trim()
     if (!t) return line
     if (t.startsWith('#')) {
@@ -1922,10 +1947,10 @@ function rewriteManifestForProxyWithPreview(manifest, previewUntilSeconds, objec
       }
     }
     return proxySegmentPath(t, buildExtraQuery(isMasterPlaylist && hasPreviewLimit))
-  }).join('\n')
+  }).join('\n');
 }
 
-function rewriteSegmentPath(path, query, baseDir = '') {
+function rewriteSegmentPath(path: any, query: any, baseDir = '') {
   // Preserve custom-scheme URIs (skd://, data:, etc.) - only rewrite scheme-less paths
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(path) && !/^https?:\/\//i.test(path)) {
     return path
@@ -1949,7 +1974,7 @@ function rewriteSegmentPath(path, query, baseDir = '') {
   return query ? (proxied.includes('?') ? `${proxied}&${query}` : `${proxied}?${query}`) : proxied
 }
 
-function normalizeVideoId(input) {
+function normalizeVideoId(input: any) {
   const t = (input ?? '').trim()
   const m = t.match(/^videos\/([^/]+)\/processed\/playlist\.m3u8$/i)
   return m ? m[1] : t
@@ -1957,18 +1982,18 @@ function normalizeVideoId(input) {
 
 // Resolve a video row by ID first, then by vanity slug.
 // Returns the D1 row or null.
-async function resolveVideoByIdOrSlug(db, idOrSlug) {
+async function resolveVideoByIdOrSlug(db: any, idOrSlug: any) {
   const byId = await db.prepare('SELECT * FROM videos WHERE id = ?').bind(idOrSlug).first()
   if (byId) return byId
   return db.prepare('SELECT * FROM videos WHERE slug = ?').bind(idOrSlug).first()
 }
 
 // Validate a vanity slug format: lowercase alphanumeric words separated by hyphens.
-function isValidSlug(slug) {
-  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)
+function isValidSlug(slug: any) {
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug);
 }
 
-function safeJsonParse(v, fallback) {
+function safeJsonParse(v: any, fallback: any) {
   if (!v) return fallback
   try { return JSON.parse(v) } catch { return fallback }
 }
@@ -1980,45 +2005,45 @@ function defaultHomepageConfig() {
   }
 }
 
-function normalizeHomepageConfig(config) {
+function normalizeHomepageConfig(config: any) {
   return {
     ...normalizeHomepagePlacementConfig(config),
     layoutBlocks: Array.isArray(config?.layoutBlocks)
-      ? config.layoutBlocks.filter(b => b && typeof b === 'object').map(b => ({
-          id:    typeof b.id    === 'string' ? b.id    : crypto.randomUUID(),
-          type:  normalizeLayoutBlockType(b.type),
-          title: typeof b.title === 'string' ? b.title : '',
-          body:  typeof b.body  === 'string' ? b.body  : '',
-        }))
+      ? config.layoutBlocks.filter((b: any) => b && typeof b === 'object').map((b: any) => ({
+      id:    typeof b.id    === 'string' ? b.id    : crypto.randomUUID(),
+      type:  normalizeLayoutBlockType(b.type),
+      title: typeof b.title === 'string' ? b.title : '',
+      body:  typeof b.body  === 'string' ? b.body  : ''
+    }))
       : [],
-  }
+  };
 }
 
-function normalizeLayoutBlockType(type) {
+function normalizeLayoutBlockType(type: any) {
   if (type === 'featured') return 'featured_row'
   const allowedTypes = new Set(['hero', 'featured_row', 'cta', 'text_split', 'video_grid'])
   return allowedTypes.has(type) ? type : 'hero'
 }
 
-async function canLoadEntrypoint(url) {
+async function canLoadEntrypoint(url: any) {
   try { return (await fetch(url, { method: 'HEAD' })).ok } catch { return false }
 }
 
-function getDatabaseBinding(env) {
+function getDatabaseBinding(env: any) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('Database binding not configured')
   return db
 }
 
-function jsonResponse(data, status = 200, corsHeaders = {}) {
+function jsonResponse(data: any, status = 200, corsHeaders = {}) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   })
 }
 
-let pillsKeySyncPromise = null
-async function maybeSyncPillsApiKey(env) {
+let pillsKeySyncPromise: any = null
+async function maybeSyncPillsApiKey(env: any) {
   if (!env?.PILLS_API_KEY) return
   if (!pillsKeySyncPromise) {
     pillsKeySyncPromise = ensurePillsApiKeySetting(env).catch((error) => {
@@ -2028,7 +2053,7 @@ async function maybeSyncPillsApiKey(env) {
   await pillsKeySyncPromise
 }
 
-async function sha256Hex(value) {
+async function sha256Hex(value: any) {
   const bytes = new TextEncoder().encode(value)
   const hashBuffer = await crypto.subtle.digest('SHA-256', bytes)
   const hashArray = Array.from(new Uint8Array(hashBuffer))
@@ -2040,7 +2065,7 @@ async function sha256Hex(value) {
 // We cache the average HLS segment duration per videoId in KV so we can
 // throttle .ts responses to roughly real-time speed.
 
-async function getAvgSegmentDuration(videoId, env) {
+async function getAvgSegmentDuration(videoId: any, env: any) {
   if (!env.RATE_LIMIT_KV) return null
 
   // Check KV cache first (1-hour TTL)
@@ -2115,7 +2140,7 @@ async function getAvgSegmentDuration(videoId, env) {
 //
 // Uses a Durable Object to ensure atomic increment operations.
 
-async function checkSegmentRateLimit(identifier, videoId, avgSegDur, env) {
+async function checkSegmentRateLimit(identifier: any, videoId: any, avgSegDur: any, env: any) {
   if (!env.RATE_LIMIT_KV) return false
 
   // Check active ban

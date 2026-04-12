@@ -3,18 +3,25 @@ import assert from 'node:assert/strict'
 import { handlePillsPublic, handlePillsUpdate, handleCategoryVideosBySlug, hashPillsApiKeyValue } from '../src/adminExtras.js'
 
 class FakeKV {
+  map: any;
   constructor() {
     this.map = new Map()
   }
-  async get(key) {
+  async get(key: any) {
     return this.map.get(key) ?? null
   }
-  async put(key, value) {
+  async put(key: any, value: any) {
     this.map.set(key, value)
   }
 }
 
 class FakeDb {
+  args: any;
+  categories: any;
+  hashedPillsKey: any;
+  pills: any;
+  settings: any;
+  videos: any;
   constructor() {
     this.settings = new Map([['pills_update_rate_limit_per_minute', '2']])
     this.hashedPillsKey = null
@@ -25,50 +32,59 @@ class FakeDb {
       { id: 'v-2', title: 'Two', publish_status: 'published', upload_date: '2026-01-02T00:00:00Z', category_slug: 'fitness' },
     ]
   }
-  prepare(sql) {
+  prepare(sql: any) {
     const db = this
     return {
-      bind(...args) {
+      bind(...args: any[]) {
+        // @ts-expect-error TS(2339): Property 'args' does not exist on type '{ bind(...... Remove this comment to see the full error message
         this.args = args
         return this
       },
+      // @ts-expect-error TS(7023): 'first' implicitly has return type 'any' because i... Remove this comment to see the full error message
       async first() {
         if (sql.includes('SELECT value FROM admin_settings')) {
+          // @ts-expect-error TS(7022): 'key' implicitly has type 'any' because it does no... Remove this comment to see the full error message
           const key = this.args[0]
+          // @ts-expect-error TS(7022): 'value' implicitly has type 'any' because it does ... Remove this comment to see the full error message
           const value = db.settings.get(key)
           return value == null ? null : { value }
         }
         if (sql.includes('FROM video_categories') && sql.includes('WHERE slug')) {
+          // @ts-expect-error TS(2339): Property 'args' does not exist on type '{ bind(...... Remove this comment to see the full error message
           const slug = this.args[0]
-          return db.categories.find((c) => c.slug === slug) ?? null
+          return db.categories.find((c: any) => c.slug === slug) ?? null;
         }
         if (sql.includes('SELECT COUNT(*) AS total')) {
+          // @ts-expect-error TS(2339): Property 'args' does not exist on type '{ bind(...... Remove this comment to see the full error message
           const slug = this.args[0]
-          return { total: db.videos.filter((v) => v.category_slug === slug && v.publish_status === 'published').length }
+          return { total: db.videos.filter((v: any) => v.category_slug === slug && v.publish_status === 'published').length };
         }
         return null
       },
+      // @ts-expect-error TS(7023): 'all' implicitly has return type 'any' because it ... Remove this comment to see the full error message
       async all() {
         if (sql.includes('FROM pills')) {
           return { results: [...db.pills].sort((a, b) => a.sort_order - b.sort_order) }
         }
         if (sql.includes('FROM videos v') && sql.includes('WHERE vc.slug = ?')) {
+          // @ts-expect-error TS(2339): Property 'args' does not exist on type '{ bind(...... Remove this comment to see the full error message
           const [slug, limit, offset] = this.args
           const sortDirection = sql.includes('ORDER BY datetime(v.upload_date) ASC') ? 'asc' : 'desc'
+          // @ts-expect-error TS(7022): 'rows' implicitly has type 'any' because it does n... Remove this comment to see the full error message
           const rows = db.videos
-            .filter((v) => v.category_slug === slug && v.publish_status === 'published')
-            .sort((a, b) => {
+            .filter((v: any) => v.category_slug === slug && v.publish_status === 'published')
+            .sort((a: any, b: any) => {
               const ta = Date.parse(a.upload_date || '') || 0
               const tb = Date.parse(b.upload_date || '') || 0
               return sortDirection === 'asc' ? ta - tb : tb - ta
             })
             .slice(offset, offset + limit)
-            .map((v) => ({
-              ...v,
-              category_id: 'cat-1',
-              category_name: 'Fitness',
-              category_slug: slug,
-            }))
+            .map((v: any) => ({
+            ...v,
+            category_id: 'cat-1',
+            category_name: 'Fitness',
+            category_slug: slug
+          }))
           return { results: rows }
         }
         return { results: [] }
@@ -76,13 +92,15 @@ class FakeDb {
       async run() {
         if (sql.includes('INSERT INTO pills_updates_audit')) return { meta: { changes: 1 } }
         if (sql.includes('INSERT INTO admin_settings') && sql.includes('pills_api_key')) {
+          // @ts-expect-error TS(2339): Property 'args' does not exist on type '{ bind(...... Remove this comment to see the full error message
           const [, value] = this.args
           db.settings.set('pills_api_key', value)
           return { meta: { changes: 1 } }
         }
         if (sql.includes('INSERT INTO pills (id, label, value, color, sort_order, updated_at)')) {
+          // @ts-expect-error TS(2339): Property 'args' does not exist on type '{ bind(...... Remove this comment to see the full error message
           const [id, label, value, color, sortOrder] = this.args
-          const idx = db.pills.findIndex((p) => p.id === id)
+          const idx = db.pills.findIndex((p: any) => p.id === id)
           const next = { id, label, value, color, sort_order: sortOrder, updated_at: new Date().toISOString() }
           if (idx >= 0) db.pills[idx] = next
           else db.pills.push(next)
@@ -90,10 +108,10 @@ class FakeDb {
         }
         return { meta: { changes: 1 } }
       },
-    }
+    };
   }
-  async batch(statements) {
-    await Promise.all(statements.map((s) => s.run()))
+  async batch(statements: any) {
+    await Promise.all(statements.map((s: any) => s.run()))
   }
 }
 
@@ -154,6 +172,7 @@ describe('pills update endpoint', () => {
 
   it('supports env-managed API key path with rate limiting', async () => {
     const env = await envWithDb()
+    // @ts-expect-error TS(2339): Property 'PILLS_API_KEY' does not exist on type '{... Remove this comment to see the full error message
     env.PILLS_API_KEY = 'env-secret-key'
     env.DB.settings.delete('pills_api_key')
     const req = () => new Request('http://localhost/api/pills/update', {
@@ -173,6 +192,7 @@ describe('pills update endpoint', () => {
 
   it('returns config error when pills_update_rate_limit_per_minute is invalid', async () => {
     const env = await envWithDb()
+    // @ts-expect-error TS(2339): Property 'PILLS_API_KEY' does not exist on type '{... Remove this comment to see the full error message
     env.PILLS_API_KEY = 'env-secret-key'
     env.DB.settings.delete('pills_api_key')
     env.DB.settings.set('pills_update_rate_limit_per_minute', '')

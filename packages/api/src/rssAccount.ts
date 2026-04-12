@@ -9,14 +9,14 @@
 import { requireAuth } from './auth.js'
 import { computeRssTokenHex } from './rssToken.js'
 
-function jsonResponse(data, status = 200, corsHeaders = {}) {
+function jsonResponse(data: any, status = 200, corsHeaders = {}) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   })
 }
 
-export async function handleGetAccountRss(request, env, corsHeaders) {
+export async function handleGetAccountRss(request: any, env: any, corsHeaders: any) {
   let user
   try {
     user = await requireAuth(request, env)

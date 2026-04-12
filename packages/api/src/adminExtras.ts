@@ -12,13 +12,18 @@ const PILLS_KEY_HASH_PREFIX = 'sha256'
 const PILLS_KEY_HASH_LEGACY_PREFIX = 'pbkdf2-sha256'
 const PILLS_KEY_HASH_ITERATIONS = 120000
 
-function getDb(env) {
+function getDb(env: any) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('D1 binding not found')
   return db
 }
 
-function buildAdminAuditLogStatement(db, { actorUserId, actionType, targetUserId, detail }) {
+function buildAdminAuditLogStatement(db: any, {
+  actorUserId,
+  actionType,
+  targetUserId,
+  detail
+}: any) {
   return db.prepare(`
     INSERT INTO admin_audit_logs (id, actor_user_id, action_type, target_user_id, detail_json, created_at)
     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -31,14 +36,14 @@ function buildAdminAuditLogStatement(db, { actorUserId, actionType, targetUserId
   )
 }
 
-function jsonResponse(data, status = 200, corsHeaders = {}) {
+function jsonResponse(data: any, status = 200, corsHeaders = {}) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   })
 }
 
-export async function handleHomepageContent(request, env, corsHeaders) {
+export async function handleHomepageContent(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'admin', 'super_admin')
   } catch {
@@ -74,7 +79,7 @@ export async function handleHomepageContent(request, env, corsHeaders) {
   }
 }
 
-export async function handlePillsPublic(request, env, corsHeaders) {
+export async function handlePillsPublic(request: any, env: any, corsHeaders: any) {
   if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const db = getDb(env)
   const rows = await db.prepare(`
@@ -84,7 +89,7 @@ export async function handlePillsPublic(request, env, corsHeaders) {
   return jsonResponse({ pills: rows?.results ?? [] }, 200, corsHeaders)
 }
 
-export async function handlePillsUpdate(request, env, corsHeaders) {
+export async function handlePillsUpdate(request: any, env: any, corsHeaders: any) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const db = getDb(env)
   const preAuthRateLimit = await checkPillsUpdateRateLimit(request, env, { phase: 'ip' })
@@ -165,12 +170,12 @@ export async function handlePillsUpdate(request, env, corsHeaders) {
   return jsonResponse({ ok: true, updated: statements.length }, 200, corsHeaders)
 }
 
-async function checkPillsUpdateRateLimit(request, env, options = {}) {
+async function checkPillsUpdateRateLimit(request: any, env: any, options = {}) {
   const kv = env.RATE_LIMIT_KV || null
   if (!kv) return { limited: false, retryAfterSeconds: 0 }
 
   const configured = Number.parseInt(
-    String(await getSetting(env, 'pills_update_rate_limit_per_minute') ?? ''),
+    String((await getSetting(env, 'pills_update_rate_limit_per_minute')) ?? ''),
     10,
   )
   const perMinuteLimit = Number.isFinite(configured) && configured > 0 ? configured : null
@@ -179,7 +184,9 @@ async function checkPillsUpdateRateLimit(request, env, options = {}) {
   }
   const minute = Math.floor(Date.now() / 60000)
   const sourceIp = extractClientIp(request)
+  // @ts-expect-error TS(2339): Property 'phase' does not exist on type '{}'.
   const phase = options.phase === 'key' ? 'key' : 'ip'
+  // @ts-expect-error TS(2339): Property 'keyFingerprint' does not exist on type '... Remove this comment to see the full error message
   const keyFingerprint = typeof options.keyFingerprint === 'string' ? options.keyFingerprint : 'unknown'
   const rateKey = phase === 'ip'
     ? `pillsupd:${sourceIp}:${minute}`
@@ -191,7 +198,7 @@ async function checkPillsUpdateRateLimit(request, env, options = {}) {
   return { limited: false, retryAfterSeconds: 0 }
 }
 
-function extractClientIp(request) {
+function extractClientIp(request: any) {
   const cf = request.headers.get('CF-Connecting-IP')
   if (cf && cf.trim()) return cf.trim()
   const forwardedFor = request.headers.get('x-forwarded-for')
@@ -201,7 +208,7 @@ function extractClientIp(request) {
   return 'unknown'
 }
 
-export async function handleAdminPills(request, env, corsHeaders) {
+export async function handleAdminPills(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'admin', 'super_admin')
   } catch {
@@ -294,7 +301,7 @@ export async function handleAdminPills(request, env, corsHeaders) {
   return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
 }
 
-export async function handleAdminPillsSettings(request, env, corsHeaders) {
+export async function handleAdminPillsSettings(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'admin', 'super_admin')
   } catch {
@@ -323,7 +330,7 @@ export async function handleAdminPillsSettings(request, env, corsHeaders) {
   return jsonResponse({ ok: true, hasKey: true, maskedKey: buildMaskedKey(nextHash) }, 200, corsHeaders)
 }
 
-export async function handleCategoryVideosBySlug(request, env, corsHeaders) {
+export async function handleCategoryVideosBySlug(request: any, env: any, corsHeaders: any) {
   if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const db = getDb(env)
   const url = new URL(request.url)
@@ -378,7 +385,7 @@ export async function handleCategoryVideosBySlug(request, env, corsHeaders) {
   }, 200, corsHeaders)
 }
 
-export async function ensurePillsApiKeySetting(env) {
+export async function ensurePillsApiKeySetting(env: any) {
   const envKey = typeof env.PILLS_API_KEY === 'string' ? env.PILLS_API_KEY.trim() : ''
   if (!envKey) {
     await normalizeStoredPillsApiKeyHash(env)
@@ -390,14 +397,14 @@ export async function ensurePillsApiKeySetting(env) {
   await setSetting(env, 'pills_api_key', envHash)
 }
 
-async function getActivePillsApiKeyHash(env) {
+async function getActivePillsApiKeyHash(env: any) {
   const envKey = typeof env.PILLS_API_KEY === 'string' ? env.PILLS_API_KEY.trim() : ''
   if (envKey) return hashPillsApiKey(envKey)
   const normalizedStored = await normalizeStoredPillsApiKeyHash(env)
   return normalizedStored || ''
 }
 
-async function normalizeStoredPillsApiKeyHash(env) {
+async function normalizeStoredPillsApiKeyHash(env: any) {
   const stored = (await getSetting(env, 'pills_api_key')) ?? ''
   const normalized = String(stored).trim()
   if (!normalized) return ''
@@ -407,7 +414,7 @@ async function normalizeStoredPillsApiKeyHash(env) {
   return rehashed
 }
 
-function isHashedPillsApiKey(value) {
+function isHashedPillsApiKey(value: any) {
   return typeof value === 'string'
     && (
       value.startsWith(`${PILLS_KEY_HASH_PREFIX}$`)
@@ -415,18 +422,18 @@ function isHashedPillsApiKey(value) {
     )
 }
 
-async function hashPillsApiKey(rawKey) {
+async function hashPillsApiKey(rawKey: any) {
   const normalized = typeof rawKey === 'string' ? rawKey.trim() : ''
   if (!normalized) return ''
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized))
   return `${PILLS_KEY_HASH_PREFIX}$${bytesToHex(new Uint8Array(digest))}`
 }
 
-export async function hashPillsApiKeyValue(rawKey) {
+export async function hashPillsApiKeyValue(rawKey: any) {
   return hashPillsApiKey(rawKey)
 }
 
-async function verifyPillsApiKeyValue(rawCandidate, storedHash) {
+async function verifyPillsApiKeyValue(rawCandidate: any, storedHash: any) {
   const candidate = typeof rawCandidate === 'string' ? rawCandidate.trim() : ''
   if (!candidate || !storedHash) return false
   if (storedHash.startsWith(`${PILLS_KEY_HASH_PREFIX}$`)) {
@@ -444,7 +451,7 @@ async function verifyPillsApiKeyValue(rawCandidate, storedHash) {
   return timingSafeEqual(derived, expected)
 }
 
-async function derivePbkdf2Sha256(value, saltBytes, iterations) {
+async function derivePbkdf2Sha256(value: any, saltBytes: any, iterations: any) {
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
     new TextEncoder().encode(value),
@@ -459,11 +466,12 @@ async function derivePbkdf2Sha256(value, saltBytes, iterations) {
   )
 }
 
-function bytesToHex(bytes) {
+function bytesToHex(bytes: any) {
+  // @ts-expect-error TS(2571): Object is of type 'unknown'.
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-function hexToBytes(hex) {
+function hexToBytes(hex: any) {
   if (!hex || hex.length % 2 !== 0) return new Uint8Array(0)
   const out = new Uint8Array(hex.length / 2)
   for (let i = 0; i < out.length; i += 1) {
@@ -472,25 +480,26 @@ function hexToBytes(hex) {
   return out
 }
 
-function timingSafeEqual(a, b) {
+function timingSafeEqual(a: any, b: any) {
   if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array)) return false
   if (a.length !== b.length) return false
   let mismatch = 0
+  // @ts-expect-error TS(2532): Object is possibly 'undefined'.
   for (let i = 0; i < a.length; i += 1) mismatch |= (a[i] ^ b[i])
   return mismatch === 0
 }
 
-function getPillsKeyFingerprint(keyHash) {
+function getPillsKeyFingerprint(keyHash: any) {
   if (!keyHash || typeof keyHash !== 'string') return 'unknown'
   return keyHash.slice(-12)
 }
 
-function buildMaskedKey(keyValue) {
+function buildMaskedKey(keyValue: any) {
   const suffix = keyValue.slice(-4)
   return `••••••••${suffix}`
 }
 
-function parseUsersListQuery(url) {
+function parseUsersListQuery(url: any) {
   const q = url.searchParams
   const page = Math.min(500, Math.max(1, Number.parseInt(q.get('page') || '1', 10) || 1))
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(q.get('pageSize') || '25', 10) || 25))
@@ -500,7 +509,11 @@ function parseUsersListQuery(url) {
   return { page, pageSize, search, role, subscription }
 }
 
-function usersListWhereClause({ search, role, subscription }) {
+function usersListWhereClause({
+  search,
+  role,
+  subscription
+}: any) {
   const clauses = ['1=1']
   const binds = []
   if (search) {
@@ -527,7 +540,7 @@ function usersListWhereClause({ search, role, subscription }) {
   return { sql: clauses.join(' AND '), binds }
 }
 
-export async function handleAdminUsers(request, env, corsHeaders) {
+export async function handleAdminUsers(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'admin', 'super_admin')
   } catch {
@@ -712,7 +725,7 @@ export async function handleAdminUsers(request, env, corsHeaders) {
   return jsonResponse({ error: 'role or subscriptionStatus is required' }, 400, corsHeaders)
 }
 
-export async function handleAdminAnalytics(request, env, corsHeaders) {
+export async function handleAdminAnalytics(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'admin', 'super_admin')
   } catch {
@@ -751,7 +764,7 @@ export async function handleAdminAnalytics(request, env, corsHeaders) {
   }, 200, corsHeaders)
 }
 
-export async function logSegmentEvent(env, payload) {
+export async function logSegmentEvent(env: any, payload: any) {
   const db = getDb(env)
   const requestPath = typeof payload?.requestPath === 'string' ? payload.requestPath : ''
   const eventType = typeof payload?.eventType === 'string' ? payload.eventType : 'segment'
