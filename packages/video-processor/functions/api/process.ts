@@ -29,7 +29,7 @@ export async function onRequest(context: RequestContext<ProcessEnv>) {
   const expectedToken = env.PROCESS_API_TOKEN?.trim()
   const allowUnauthenticatedLocalDev = envFlagEnabled(env.LOCAL_DEV_ALLOW_UNAUTH_PROCESS_API)
   if (!expectedToken && !allowUnauthenticatedLocalDev) {
-    return withCors(json({ error: 'Unauthorized' }, 401), request)
+    return withCors(json({ error: 'Unauthorized' }, 401), request, env)
   }
   if (expectedToken) {
     const authHeader = request.headers.get('Authorization') || ''

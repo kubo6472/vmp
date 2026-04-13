@@ -55,6 +55,7 @@ export async function onRequest(context: RequestContext<UploadsEnv>) {
       {},
       request,
       TUS_UPLOAD_ALLOW_METHODS,
+      env,
     )
   }
 
