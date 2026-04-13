@@ -2050,7 +2050,7 @@ function normalizeHomepageConfig(config: any) {
 
 function normalizeLayoutBlockType(type: any) {
   if (type === 'featured') return 'featured_row'
-  const allowedTypes = new Set(['hero', 'featured_row', 'cta', 'text_split', 'video_grid'])
+  const allowedTypes = new Set(['hero', 'featured_row', 'cta', 'text_split', 'video_grid', 'video_grid_legacy'])
   return allowedTypes.has(type) ? type : 'hero'
 }
 
