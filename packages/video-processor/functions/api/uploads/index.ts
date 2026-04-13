@@ -21,9 +21,14 @@ interface UploadsEnv extends WorkerEnv {
 
 export async function onRequest(context: RequestContext<UploadsEnv>) {
   const { request, env } = context
+  const maxUploadLength = resolveMaxUploadLength(env.MAX_UPLOAD_LENGTH)
 
   if (request.method === 'OPTIONS') {
-    return tusResponse(null, 204, {}, request, TUS_UPLOAD_ALLOW_METHODS, env)
+    return tusResponse(null, 204, {
+      'Tus-Version': TUS_VERSION,
+      'Tus-Extension': '',
+      'Tus-Max-Size': String(maxUploadLength),
+    }, request, TUS_UPLOAD_ALLOW_METHODS, env)
   }
 
   if (!env.VIDEO_BUCKET) {
@@ -36,7 +41,9 @@ export async function onRequest(context: RequestContext<UploadsEnv>) {
 
   const tusVersion = request.headers.get('Tus-Resumable')
   if (tusVersion !== TUS_VERSION) {
-    return tusResponse(jsonString({ error: 'Missing or invalid Tus-Resumable header' }), 412, {}, request, TUS_UPLOAD_ALLOW_METHODS, env)
+    return tusResponse(jsonString({ error: 'Missing or invalid Tus-Resumable header' }), 412, {
+      'Tus-Version': TUS_VERSION,
+    }, request, TUS_UPLOAD_ALLOW_METHODS, env)
   }
 
   const uploadLengthRaw = request.headers.get('Upload-Length')
@@ -47,7 +54,6 @@ export async function onRequest(context: RequestContext<UploadsEnv>) {
   if (!Number.isSafeInteger(uploadLength) || uploadLength <= 0) {
     return tusResponse(jsonString({ error: 'Upload-Length header is required and must be > 0' }), 400, {}, request, TUS_UPLOAD_ALLOW_METHODS, env)
   }
-  const maxUploadLength = resolveMaxUploadLength(env.MAX_UPLOAD_LENGTH)
   if (uploadLength > maxUploadLength) {
     return tusResponse(
       jsonString({ error: `Upload-Length exceeds maximum allowed size (${maxUploadLength} bytes)` }),
