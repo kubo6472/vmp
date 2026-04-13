@@ -28,7 +28,10 @@ function crc32(buf: Uint8Array) {
     return t
   })()
   let c = 0xffffffff
-  for (const byte of buf) c = table[(c ^ byte) & 0xff] ^ (c >>> 8)
+  for (const byte of buf) {
+    const idx = (c ^ byte) & 0xff
+    c = table[idx]! ^ (c >>> 8)
+  }
   return (c ^ 0xffffffff) >>> 0
 }
 
@@ -143,9 +146,12 @@ function fillTriangle(buf: Buffer, size: number, p0: [number, number], p1: [numb
       const t = coverage / (N * N)
       if (px < 0 || px >= size || py < 0 || py >= size) continue
       const i = (py * size + px) * 3
-      buf[i] = Math.round(buf[i] * (1 - t) + r * t)
-      buf[i + 1] = Math.round(buf[i + 1] * (1 - t) + g * t)
-      buf[i + 2] = Math.round(buf[i + 2] * (1 - t) + b * t)
+      const br = buf[i] ?? 0
+      const bg = buf[i + 1] ?? 0
+      const bb = buf[i + 2] ?? 0
+      buf[i] = Math.round(br * (1 - t) + r * t)
+      buf[i + 1] = Math.round(bg * (1 - t) + g * t)
+      buf[i + 2] = Math.round(bb * (1 - t) + b * t)
     }
   }
 }

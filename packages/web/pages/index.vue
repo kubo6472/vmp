@@ -235,7 +235,7 @@ function dismissPwaBanner() {
 
 interface LayoutBlock {
   id: string
-  type: 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
+  type: 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid' | 'video_grid_legacy'
   title: string
   body: string
 }
@@ -260,11 +260,12 @@ const categories = ref<VideoCategory[]>([])
 const pills = ref<Array<{ id: string; label: string; value: number; color: string }>>([])
 
 const blockLabelMap: Record<LayoutBlock['type'], string> = {
-  hero:         'Hero',
-  featured_row: 'Featured videos',
-  cta:          'Call to action',
-  text_split:   'Highlights',
-  video_grid:   'Available videos',
+  hero:                'Hero',
+  featured_row:        'Featured videos',
+  cta:                 'Call to action',
+  text_split:          'Highlights',
+  video_grid:          'Available videos',
+  video_grid_legacy:   'Available videos',
 }
 
 const renderedBlocks = computed(() =>

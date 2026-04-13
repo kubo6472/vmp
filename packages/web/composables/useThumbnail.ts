@@ -24,8 +24,9 @@ const SIZE_RE = /(\/)(large|medium|small)(\.jpg)(\?.*)?$/
  * Pure helper — swap the size token in a thumbnail URL.
  * Safe to call in v-for loops or outside of setup contexts.
  */
-export function sizeUrl(url: string | null | undefined, size: ThumbnailSize): string | null {
-  if (!url) return null
+/** Returns `undefined` when there is no URL so Vue `img :src` matches `string | undefined`. */
+export function sizeUrl(url: string | null | undefined, size: ThumbnailSize): string | undefined {
+  if (!url) return undefined
   return url.replace(
     SIZE_RE,
     (_match, slash: string, _currentSize: string, ext: string, query: string | undefined) =>
@@ -38,7 +39,7 @@ export function sizeUrl(url: string | null | undefined, size: ThumbnailSize): st
  * Use in component <script setup> blocks where the URL is a Ref.
  */
 export function useThumbnail(thumbnailUrl: Ref<string | null | undefined>) {
-  function sizedUrl(size: ThumbnailSize): string | null {
+  function sizedUrl(size: ThumbnailSize): string | undefined {
     return sizeUrl(thumbnailUrl.value, size)
   }
 

@@ -137,18 +137,19 @@ export function usePushNotifications() {
 
     // Reuse any existing subscription rather than creating a duplicate
     const existingSubscription = await reg.pushManager.getSubscription()
-    let pushSubscription: PushSubscription | null = existingSubscription
+    // Holder so TypeScript tracks mutations across the nested `doSubscribe` closure.
+    const browserSub = { current: existingSubscription as PushSubscription | null }
 
     async function doSubscribe(): Promise<void> {
-      if (!pushSubscription) {
+      if (!browserSub.current) {
         const applicationServerKey = _urlB64ToUint8Array(vapidPublicKey)
-        pushSubscription = await reg.pushManager.subscribe({
+        browserSub.current = await reg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: applicationServerKey.buffer as ArrayBuffer,
         })
       }
 
-      const subJson = pushSubscription.toJSON()
+      const subJson = browserSub.current.toJSON()
       const res = await fetch(`${apiUrl}/api/push/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
@@ -175,7 +176,7 @@ export function usePushNotifications() {
       if (existingSubscription) {
         console.warn('Existing push subscription rejected by server, retrying with fresh one:', firstError)
         await existingSubscription.unsubscribe().catch(() => {})
-        pushSubscription = null
+        browserSub.current = null
         try {
           await doSubscribe()
         } catch (retryError) {
@@ -184,7 +185,8 @@ export function usePushNotifications() {
             ? `Failed to enable notifications: ${retryError.message}`
             : 'Failed to enable notifications. Please try again.'
           // Roll back the fresh subscription created during the retry
-          if (pushSubscription) await pushSubscription.unsubscribe().catch(() => {})
+          const rollback = browserSub.current as PushSubscription | null
+          if (rollback) await rollback.unsubscribe().catch(() => {})
           await _reconcile()
           return
         }
@@ -194,7 +196,8 @@ export function usePushNotifications() {
           ? `Failed to enable notifications: ${firstError.message}`
           : 'Failed to enable notifications. Please try again.'
         // Roll back the newly created browser subscription
-        if (pushSubscription) await pushSubscription.unsubscribe().catch(() => {})
+        const rollback = browserSub.current as PushSubscription | null
+        if (rollback) await rollback.unsubscribe().catch(() => {})
         await _reconcile()
         return
       }

@@ -1223,6 +1223,7 @@ const onDrop = (targetIndex: number) => {
   if (draggingIndex.value === null || draggingIndex.value === targetIndex) return
   const reordered = [...layoutBlocks.value]
   const [moved]   = reordered.splice(draggingIndex.value, 1)
+  if (!moved) return
   reordered.splice(targetIndex, 0, moved)
   layoutBlocks.value  = reordered
   draggingIndex.value = null
@@ -1284,12 +1285,18 @@ const updateVideoCategory = async (video: Video, nextCategoryId: string) => {
     }
     const { video: updated } = await res.json()
     const idx = uploads.value.findIndex(v => v.id === video.id)
-    if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], category_id: updated?.category_id ?? null }
+    if (idx !== -1) {
+      const cur = uploads.value[idx]!
+      uploads.value[idx] = { ...cur, category_id: updated?.category_id ?? null }
+    }
     showToast('success', `Category updated for ${video.title}.`)
     await loadCategories()
   } catch (e: any) {
     const idx = uploads.value.findIndex(v => v.id === video.id)
-    if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], category_id: previousCategoryId }
+    if (idx !== -1) {
+      const cur = uploads.value[idx]!
+      uploads.value[idx] = { ...cur, category_id: previousCategoryId }
+    }
     showToast('error', `Failed to update category: ${e.message}`)
   }
 }
@@ -1626,7 +1633,8 @@ function adminUserSubscriptionSelectTitle(u: AdminUserRow): string {
 function patchUserRowById(userId: string, patch: Partial<AdminUserRow>) {
   const i = users.value.findIndex((x) => x.id === userId)
   if (i === -1) return
-  users.value[i] = { ...users.value[i], ...patch }
+  const cur = users.value[i]!
+  users.value[i] = { ...cur, ...patch }
 }
 
 const updateUser = async (userId: string, patch: Record<string, string>) => {
@@ -1794,7 +1802,8 @@ const movePill = async (idx: number, direction: -1 | 1) => {
   const next = [...adminPills.value]
   const swapIdx = idx + direction
   if (swapIdx < 0 || swapIdx >= next.length) return
-  const [moved] = next.splice(idx, 1)
+  const moved = next.splice(idx, 1)[0]
+  if (!moved) return
   next.splice(swapIdx, 0, moved)
   adminPills.value = next.map((pill, i) => ({ ...pill, sort_order: i }))
   try {
@@ -2007,7 +2016,10 @@ async function saveTitleEdit(video: Video) {
       throw new Error(err.error || `HTTP ${res.status}`)
     }
     const idx = uploads.value.findIndex(v => v.id === video.id)
-    if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], title: newTitle }
+    if (idx !== -1) {
+      const cur = uploads.value[idx]!
+      uploads.value[idx] = { ...cur, title: newTitle }
+    }
     // Keep the featured grid in sync so header cards show the new title immediately
     featuredSlots.value = featuredSlots.value.map(slot =>
       slot?.id === video.id ? { ...slot, title: newTitle } : slot
@@ -2032,7 +2044,10 @@ async function updateVideoStatus(video: Video, newStatus: 'draft' | 'published' 
     }
     const { video: updated } = await res.json()
     const idx = uploads.value.findIndex(v => v.id === video.id)
-    if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], ...updated }
+    if (idx !== -1) {
+      const cur = uploads.value[idx]!
+      uploads.value[idx] = { ...cur, ...updated }
+    }
     showToast('success', `Status updated: ${video.title} → ${newStatus}.`)
   } catch (e: any) {
     saveMessage.value = `Failed to update "${video.title}": ${e.message}`
@@ -2126,7 +2141,8 @@ async function handleThumbnailSelect(event: Event, video: Video) {
       const cacheBustedUrl = String(data.thumbnails.large)
       const idx = uploads.value.findIndex(v => v.id === video.id)
       if (idx !== -1) {
-        uploads.value[idx] = { ...uploads.value[idx], thumbnail_url: cacheBustedUrl }
+        const cur = uploads.value[idx]!
+        uploads.value[idx] = { ...cur, thumbnail_url: cacheBustedUrl }
       }
       featuredSlots.value = featuredSlots.value.map(slot =>
         slot?.id === video.id ? { ...slot, thumbnail_url: cacheBustedUrl } : slot
@@ -2276,9 +2292,10 @@ async function runConfirmedAction() {
   }
   const snap = { ...current }
   closeConfirmModal()
-  const patch = snap.mode === 'user_role'
-    ? { role: snap.nextRole }
-    : { subscriptionStatus: snap.nextSubscription }
+  const patch: Record<string, string> =
+    snap.mode === 'user_role'
+      ? { role: snap.nextRole }
+      : { subscriptionStatus: snap.nextSubscription }
   const ok = await updateUser(snap.userId, patch)
   if (!ok) {
     patchUserRowById(snap.userId, { uiRole: undefined, uiSubscription: undefined })
@@ -2310,7 +2327,10 @@ async function saveSlugEdit(video: Video) {
       throw new Error(err.error || `HTTP ${res.status}`)
     }
     const idx = uploads.value.findIndex(v => v.id === video.id)
-    if (idx !== -1) uploads.value[idx] = { ...uploads.value[idx], slug: newSlug }
+    if (idx !== -1) {
+      const cur = uploads.value[idx]!
+      uploads.value[idx] = { ...cur, slug: newSlug }
+    }
     showToast('success', newSlug ? `Slug set: /watch/${newSlug}` : 'Slug cleared.')
   } catch (e: any) {
     showToast('error', `Failed to update slug: ${e.message}`)
@@ -2373,8 +2393,8 @@ function onConfirmModalKeydown(e: KeyboardEvent) {
     'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
   )
   if (!focusable.length) return
-  const first = focusable[0]
-  const last = focusable[focusable.length - 1]
+  const first = focusable[0]!
+  const last = focusable[focusable.length - 1]!
   const active = document.activeElement as HTMLElement | null
   if (e.shiftKey && active === first) {
     e.preventDefault()
@@ -2415,8 +2435,8 @@ function onSwapModalKeydown(e: KeyboardEvent) {
     'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
   )
   if (!focusable.length) return
-  const first = focusable[0]
-  const last = focusable[focusable.length - 1]
+  const first = focusable[0]!
+  const last = focusable[focusable.length - 1]!
   const active = document.activeElement as HTMLElement | null
   if (e.shiftKey && active === first) {
     e.preventDefault()
