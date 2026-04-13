@@ -713,6 +713,7 @@ async function handleVideoProxy(request: any, env: any, corsHeaders: any, ctx: a
   const vtForRewrite = requestUrl.searchParams.get('vt') ?? null
 
   const isSegment = objectPath.endsWith('.m4s')
+  let segmentDurationForAnalytics = null
 
   // ── Step 4c: Segment count rate limiting ─────────────────────────────────
   if (isSegment && env.RATE_LIMIT_KV) {
@@ -720,6 +721,7 @@ async function handleVideoProxy(request: any, env: any, corsHeaders: any, ctx: a
     try { authUser = await requireAuth(request, env) } catch { /* anonymous */ }
     const identifier = authUser?.sub ?? request.headers.get('CF-Connecting-IP') ?? 'unknown'
     const avgDur = await getAvgSegmentDuration(proxyVideoId, env)
+    segmentDurationForAnalytics = avgDur
     const limited = await checkSegmentRateLimit(identifier, proxyVideoId, avgDur, env)
     if (limited) {
       return new Response(JSON.stringify({ error: 'Too many segment requests. Slow down.' }), {
@@ -747,6 +749,7 @@ async function handleVideoProxy(request: any, env: any, corsHeaders: any, ctx: a
       requestPath: normalizedPath,
       eventType: 'segment',
       segmentIndex,
+      segmentDurationSeconds: segmentDurationForAnalytics,
       referer,
       sourceHost,
       ipHash,

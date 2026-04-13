@@ -769,22 +769,86 @@ export async function handleAdminAnalytics(request: any, env: any, corsHeaders: 
   }
   if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const db = getDb(env)
+  const analytics = await buildSegmentAnalyticsSnapshot(db)
+  return jsonResponse(analytics, 200, corsHeaders)
+}
+
+function canonicalSessionExpression() {
+  return `
+    COALESCE(
+      session_key,
+      CASE
+        WHEN user_id IS NOT NULL THEN 'u:' || user_id
+        WHEN ip_hash IS NOT NULL THEN 'i:' || ip_hash
+        ELSE 'path:' || request_path
+      END
+    )
+  `
+}
+
+export async function buildSegmentAnalyticsSnapshot(db: any) {
+  const sessionExpr = canonicalSessionExpression()
   const [views, sourceRows, retentionRows, subsRows] = await Promise.all([
-    db.prepare(`SELECT COUNT(*) AS total FROM video_segment_events WHERE event_type = 'segment'`).first(),
     db.prepare(`
-      SELECT COALESCE(source_host, 'direct') AS source, COUNT(*) AS hits
+      SELECT COUNT(DISTINCT ${sessionExpr}) AS total
       FROM video_segment_events
+      WHERE event_type = 'segment'
+    `).first(),
+    db.prepare(`
+      SELECT
+        COALESCE(source_category, 'direct') AS source,
+        COUNT(DISTINCT ${sessionExpr}) AS hits
+      FROM video_segment_events
+      WHERE event_type = 'segment'
       GROUP BY source
       ORDER BY hits DESC
       LIMIT 12
     `).all(),
     db.prepare(`
-      SELECT video_id, CAST(AVG(position_seconds) AS INTEGER) AS avg_position, COUNT(*) AS hits
-      FROM video_segment_events
-      WHERE position_seconds IS NOT NULL
-      GROUP BY video_id
-      ORDER BY hits DESC
-      LIMIT 20
+      WITH events AS (
+        SELECT
+          e.video_id AS video_id,
+          ${sessionExpr} AS session_id,
+          CASE
+            WHEN e.playback_position_seconds IS NOT NULL THEN e.playback_position_seconds
+            WHEN e.segment_index IS NOT NULL AND e.segment_duration_seconds IS NOT NULL THEN e.segment_index * e.segment_duration_seconds
+            WHEN e.position_seconds IS NOT NULL THEN e.position_seconds
+            ELSE NULL
+          END AS playback_seconds
+        FROM video_segment_events e
+        WHERE e.event_type = 'segment'
+      ),
+      normalized AS (
+        SELECT
+          ev.video_id AS video_id,
+          ev.session_id AS session_id,
+          v.full_duration AS full_duration,
+          CASE
+            WHEN v.full_duration IS NULL OR v.full_duration <= 0 OR ev.playback_seconds IS NULL THEN NULL
+            WHEN ev.playback_seconds < 0 THEN 0
+            WHEN ev.playback_seconds > v.full_duration THEN v.full_duration
+            ELSE ev.playback_seconds
+          END AS bounded_seconds
+        FROM events ev
+        LEFT JOIN videos v ON v.id = ev.video_id
+        WHERE ev.session_id IS NOT NULL
+      ),
+      buckets AS (
+        SELECT
+          video_id,
+          session_id,
+          CAST((bounded_seconds * 100.0) / NULLIF(full_duration, 0) AS INTEGER) AS pct
+        FROM normalized
+        WHERE bounded_seconds IS NOT NULL AND full_duration > 0
+      )
+      SELECT
+        video_id,
+        CAST(CASE WHEN pct >= 100 THEN 90 ELSE pct - (pct % 10) END AS INTEGER) AS bucket_start_percent,
+        COUNT(DISTINCT session_id) AS viewers
+      FROM buckets
+      GROUP BY video_id, bucket_start_percent
+      ORDER BY viewers DESC, video_id ASC, bucket_start_percent ASC
+      LIMIT 120
     `).all(),
     db.prepare(`
       SELECT status, COUNT(*) AS count
@@ -792,12 +856,109 @@ export async function handleAdminAnalytics(request: any, env: any, corsHeaders: 
       GROUP BY status
     `).all(),
   ])
-  return jsonResponse({
+
+  return {
     totalViews: Number(views?.total || 0),
     trafficSources: sourceRows?.results ?? [],
     retention: retentionRows?.results ?? [],
     subscriptions: subsRows?.results ?? [],
-  }, 200, corsHeaders)
+  }
+}
+
+function normalizeSourceHost(rawHost: any) {
+  if (typeof rawHost !== 'string' || !rawHost.trim()) return ''
+  return rawHost.trim().toLowerCase().replace(/^www\./, '').split(':')[0] || ''
+}
+
+const SEARCH_TRAFFIC_HOST_MARKERS = ['google.', 'bing.', 'duckduckgo.', 'search.yahoo.', 'yandex.', 'baidu.']
+const SOCIAL_TRAFFIC_HOST_MARKERS = ['facebook.', 'instagram.', 'x.com', 't.co', 'linkedin.', 'reddit.', 'tiktok.', 'pinterest.', 'youtube.']
+
+function hostMatches(host: string, markers: string[]) {
+  return markers.some((marker) => host === marker || host.endsWith(`.${marker}`) || host.includes(marker))
+}
+
+export function classifySegmentSource(payload: any) {
+  const refererRaw = typeof payload?.referer === 'string' ? payload.referer : ''
+  let sourceHost = normalizeSourceHost(payload?.sourceHost)
+  let campaignSource = null
+  let campaignMedium = null
+  if (refererRaw) {
+    try {
+      const refererUrl = new URL(refererRaw)
+      sourceHost = sourceHost || normalizeSourceHost(refererUrl.host)
+      campaignSource = refererUrl.searchParams.get('utm_source')
+      campaignMedium = refererUrl.searchParams.get('utm_medium')
+    } catch {
+      // Keep direct attribution for malformed referers.
+    }
+  }
+  if (campaignSource || campaignMedium) {
+    return {
+      category: 'campaign',
+      detail: campaignSource || campaignMedium || sourceHost || 'campaign',
+      sourceHost: sourceHost || null,
+      campaignSource,
+      campaignMedium,
+    }
+  }
+  if (!sourceHost) {
+    return {
+      category: 'direct',
+      detail: 'direct',
+      sourceHost: null,
+      campaignSource: null,
+      campaignMedium: null,
+    }
+  }
+  if (hostMatches(sourceHost, SEARCH_TRAFFIC_HOST_MARKERS)) {
+    return {
+      category: 'search',
+      detail: sourceHost,
+      sourceHost,
+      campaignSource: null,
+      campaignMedium: null,
+    }
+  }
+  if (hostMatches(sourceHost, SOCIAL_TRAFFIC_HOST_MARKERS)) {
+    return {
+      category: 'social',
+      detail: sourceHost,
+      sourceHost,
+      campaignSource: null,
+      campaignMedium: null,
+    }
+  }
+  return {
+    category: 'referral',
+    detail: sourceHost,
+    sourceHost,
+    campaignSource: null,
+    campaignMedium: null,
+  }
+}
+
+export function derivePlaybackPositionSeconds(payload: any) {
+  if (Number.isFinite(payload?.playbackPositionSeconds)) {
+    return Math.max(0, Number(payload.playbackPositionSeconds))
+  }
+  const segmentIndex = Number.isFinite(payload?.segmentIndex) ? Number(payload.segmentIndex) : null
+  const segmentDuration = Number.isFinite(payload?.segmentDurationSeconds) ? Number(payload.segmentDurationSeconds) : null
+  if (segmentIndex != null && segmentIndex >= 0 && segmentDuration != null && segmentDuration > 0) {
+    return segmentIndex * segmentDuration
+  }
+  if (Number.isFinite(payload?.positionSeconds)) return Math.max(0, Number(payload.positionSeconds))
+  if (segmentIndex != null && segmentIndex >= 0) return segmentIndex
+  return null
+}
+
+export function buildSegmentSessionKey(payload: any) {
+  const videoId = typeof payload?.videoId === 'string' && payload.videoId.trim() ? payload.videoId.trim() : 'unknown'
+  const userId = typeof payload?.userId === 'string' && payload.userId.trim() ? payload.userId.trim() : ''
+  const ipHash = typeof payload?.ipHash === 'string' && payload.ipHash.trim() ? payload.ipHash.trim() : ''
+  const actorKey = userId ? `u:${userId}` : (ipHash ? `i:${ipHash}` : 'anon')
+  const eventTimestampMs = Number.isFinite(payload?.timestampMs) ? Number(payload.timestampMs) : Date.now()
+  const sessionBucket = Math.floor(eventTimestampMs / (30 * 60 * 1000))
+  return `${videoId}:${actorKey}:${sessionBucket}`
 }
 
 export async function logSegmentEvent(env: any, payload: any) {
@@ -805,19 +966,38 @@ export async function logSegmentEvent(env: any, payload: any) {
   const requestPath = typeof payload?.requestPath === 'string' ? payload.requestPath : ''
   const eventType = typeof payload?.eventType === 'string' ? payload.eventType : 'segment'
   if (!requestPath) return
+  const source = classifySegmentSource(payload)
+  const segmentIndex = Number.isFinite(payload?.segmentIndex) ? Number(payload.segmentIndex) : null
+  const segmentDuration = Number.isFinite(payload?.segmentDurationSeconds) ? Number(payload.segmentDurationSeconds) : null
+  const playbackPosition = derivePlaybackPositionSeconds({
+    ...payload,
+    segmentIndex,
+    segmentDurationSeconds: segmentDuration,
+  })
+  const sessionKey = buildSegmentSessionKey(payload)
   await db.prepare(`
     INSERT INTO video_segment_events (
-      id, video_id, user_id, request_path, event_type, position_seconds, referer, source_host, ip_hash, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      id, video_id, user_id, request_path, event_type, position_seconds, referer, source_host, ip_hash,
+      segment_index, segment_duration_seconds, playback_position_seconds, session_key,
+      source_category, source_detail, campaign_source, campaign_medium, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `).bind(
     crypto.randomUUID(),
     payload.videoId || 'unknown',
     payload.userId || null,
     requestPath,
     eventType,
-    Number.isFinite(payload.segmentIndex) ? payload.segmentIndex : null,
+    segmentIndex,
     payload.referer || null,
-    payload.sourceHost || null,
+    source.sourceHost || null,
     payload.ipHash || null,
+    segmentIndex,
+    segmentDuration,
+    playbackPosition,
+    sessionKey,
+    source.category,
+    source.detail,
+    source.campaignSource,
+    source.campaignMedium,
   ).run()
 }
