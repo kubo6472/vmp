@@ -277,7 +277,7 @@ const heroBlock = computed(() =>
   renderedBlocks.value.find(b => b.type === 'hero')
 )
 const hasVideoGridBlock = computed(() =>
-  renderedBlocks.value.some(b => b.type === 'video_grid')
+  renderedBlocks.value.some(b => b.type === 'video_grid' || b.type === 'video_grid_legacy')
 )
 const videoById = computed(() => new Map(videos.value.map(v => [v.id, v])))
 

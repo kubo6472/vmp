@@ -1024,7 +1024,7 @@ interface AdminUserRow {
   uiSubscription?: string
 }
 
-type BlockType = 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid'
+type BlockType = 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid' | 'video_grid_legacy'
 interface LayoutBlock {
   id: string
   type: BlockType
@@ -1077,7 +1077,7 @@ const swapModal = ref<{
   sourceVideo: Video | null
   targetId: string | null
 }>({ open: false, step: 0, sourceVideo: null, targetId: null })
-const componentTypes: BlockType[] = ['hero', 'featured_row', 'cta', 'text_split', 'video_grid']
+const componentTypes: BlockType[] = ['hero', 'featured_row', 'cta', 'text_split', 'video_grid', 'video_grid_legacy']
 const layoutBlocks = ref<LayoutBlock[]>([])
 
 const newsletterListId = ref('')
