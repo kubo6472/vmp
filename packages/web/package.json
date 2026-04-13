@@ -4,12 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:sw-push": "tsc --ignoreConfig sw-push.ts --target ES2022 --module ES2020 --lib ES2022,WebWorker --skipLibCheck --outDir public --removeComments",
+    "typecheck:scripts": "tsc --ignoreConfig --noEmit sw-push.ts scripts/gen-icons.ts tailwind.config.ts --target ES2022 --module ES2020 --moduleResolution bundler --skipLibCheck --types node --lib ES2022,WebWorker",
+    "predev": "npm run build:sw-push",
+    "prebuild": "npm run build:sw-push",
+    "predeploy": "npm run build:sw-push",
     "dev": "nuxi dev",
     "build": "nuxi build --preset=cloudflare_pages",
     "generate": "nuxi generate",
     "preview": "nuxi preview",
+    "typecheck": "nuxi prepare && nuxi typecheck",
     "deploy": "nuxi build --preset=cloudflare_pages && wrangler pages deploy dist/",
-    "gen:icons": "node scripts/gen-icons.mjs"
+    "gen:icons": "tsx scripts/gen-icons.ts"
   },
   "dependencies": {
     "@nuxtjs/color-mode": "^4.0.0",
@@ -25,6 +31,8 @@
   "devDependencies": {
     "@nuxtjs/tailwindcss": "^6.12.2",
     "@types/qrcode": "^1.5.6",
+    "@types/node": "^24.7.2",
+    "tsx": "^4.20.6",
     "wrangler": "^4.81.0"
   },
   "overrides": {
