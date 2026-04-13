@@ -129,6 +129,11 @@ function feedCacheKey(request: any, extraParams = {}) {
   return new Request(suffix ? `${base}?${suffix}` : base, { method: 'GET' })
 }
 
+function getDefaultCache(): Cache | null {
+  const maybeDefault = (caches as unknown as { default?: Cache }).default
+  return maybeDefault ?? null
+}
+
 async function recordFeedPoll(db: any, {
   endpoint,
   userId
@@ -181,7 +186,7 @@ export async function handlePublicFeed(request: any, env: any, corsHeaders: any)
 
     const { session } = getReadSession(env, request)
     const db = getDb(env)
-    const cache = caches?.default
+    const cache = getDefaultCache()
     const publicPollMeta = { endpoint: 'feed_public', userId: 'public' }
     if (cache) {
       const cached = await cache.match(feedCacheKey(request, { v: 1 }))
@@ -290,7 +295,7 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
       })
     }
 
-    const cache = caches?.default
+    const cache = getDefaultCache()
     const expectedToken = await computeRssTokenHex(rssSecret, userId)
     if (!constantTimeEqual(expectedToken, token)) {
       // 404 to avoid leaking valid user IDs.

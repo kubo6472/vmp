@@ -13,6 +13,14 @@ const BREVO_BASE = 'https://api.brevo.com/v3'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+}
+
+function recordString(value: Record<string, unknown>, key: string): string | undefined {
+  return typeof value[key] === 'string' ? (value[key] as string) : undefined
+}
+
 /** Default 10 minutes; min 1 minute; max 24h (admin_settings: brevo_newsletter_poll_interval_ms) */
 export const DEFAULT_NEWSLETTER_POLL_INTERVAL_MS = 600_000
 
@@ -170,9 +178,9 @@ export async function syncPayingSubscriberToNewsletter(db: any, userId: any, env
 
   const res = await brevoFetch('/contacts', { method: 'POST', body: JSON.stringify(body) }, env)
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
+    const err = asRecord(await res.json().catch(() => null))
     const userIdHash = await hashUserId(userId)
-    newsletterLog('sync_contact_failed', { userIdHash, status: res.status, code: err?.code })
+    newsletterLog('sync_contact_failed', { userIdHash, status: res.status, code: recordString(err, 'code') })
     return false
   }
   return true
@@ -225,8 +233,8 @@ async function syncAllEligibleSubscribers(db: any, env: any) {
   while (true) {
     const pageRes = await brevoFetch(`/contacts/lists/${listId}/contacts?limit=${pageLimit}&offset=${offset}`, { method: 'GET' }, env)
     if (!pageRes.ok) break
-    const page = await pageRes.json().catch(() => ({}))
-    const contacts = Array.isArray(page?.contacts) ? page.contacts : []
+    const page = asRecord(await pageRes.json().catch(() => null))
+    const contacts = Array.isArray(page.contacts) ? page.contacts : []
     for (const contact of contacts) {
       const email = typeof contact?.email === 'string' ? contact.email.trim().toLowerCase() : ''
       if (email) remoteEmails.add(email)
@@ -255,8 +263,8 @@ async function syncAllEligibleSubscribers(db: any, env: any) {
       env,
     )
     if (!res.ok && res.status !== 404) {
-      const err = await res.json().catch(() => ({}))
-      newsletterLog('remove_stale_email_failed', { status: res.status, code: err?.code })
+      const err = asRecord(await res.json().catch(() => null))
+      newsletterLog('remove_stale_email_failed', { status: res.status, code: recordString(err, 'code') })
     }
   }
 
@@ -283,9 +291,9 @@ export async function removeSubscriberFromNewsletter(db: any, userId: any, env: 
     env,
   )
   if (!res.ok && res.status !== 404) {
-    const err = await res.json().catch(() => ({}))
+    const err = asRecord(await res.json().catch(() => null))
     const userIdHash = await hashUserId(userId)
-    newsletterLog('remove_from_list_failed', { userIdHash, status: res.status, code: err?.code })
+    newsletterLog('remove_from_list_failed', { userIdHash, status: res.status, code: recordString(err, 'code') })
   }
 }
 
@@ -421,8 +429,8 @@ async function brevoCampaignLooksSent(campaignId: any, env: any) {
   if (!Number.isFinite(id) || id <= 0) return false
   const res = await brevoFetch(`/emailCampaigns/${id}`, { method: 'GET' }, env)
   if (!res.ok) return false
-  const data = await res.json().catch(() => null)
-  const st = typeof data?.status === 'string' ? data.status.toLowerCase() : ''
+  const data = asRecord(await res.json().catch(() => null))
+  const st = (recordString(data, 'status') || '').toLowerCase()
   return BREVO_CAMPAIGN_SENT_STATUSES.has(st)
 }
 
@@ -844,25 +852,27 @@ export async function handleAdminNewsletterSend(request: any, env: any, corsHead
     if (campaignId == null || !Number.isFinite(campaignId)) {
       const createRes = await brevoFetch('/emailCampaigns', { method: 'POST', body: JSON.stringify(campaignPayload) }, env)
       if (!createRes.ok) {
-        const err = await createRes.json().catch(() => ({}))
+        const err = asRecord(await createRes.json().catch(() => null))
+        const brevoCode = recordString(err, 'code')
+        const brevoMessage = recordString(err, 'message')
         newsletterLog('send_create_failed', {
           correlationId,
           httpStatus: createRes.status,
-          brevoCode: typeof err.code === 'string' ? err.code : undefined,
+          brevoCode,
         })
         const status = createRes.status === 504 ? 504 : (createRes.status >= 400 && createRes.status < 600 ? createRes.status : 502)
-        const msg = typeof err.message === 'string' ? err.message : 'Failed to create email campaign'
+        const msg = brevoMessage || 'Failed to create email campaign'
         await releaseIfHeld()
         return jsonResponse({
           error: msg,
           code: createRes.status === 504 ? 'brevo_timeout' : 'brevo_campaign_error',
           brevoStatus: createRes.status,
-          brevoCode: typeof err.code === 'string' ? err.code : undefined,
+          brevoCode,
         }, status, corsHeaders)
       }
 
-      const created = await createRes.json().catch(() => null)
-      const newId = created?.id
+      const created = asRecord(await createRes.json().catch(() => null))
+      const newId = created.id
       if (newId == null || !Number.isFinite(Number(newId))) {
         newsletterLog('send_create_unexpected_body', { correlationId })
         await releaseIfHeld()
@@ -907,22 +917,24 @@ export async function handleAdminNewsletterSend(request: any, env: any, corsHead
 
     const sendRes = await brevoFetch(`/emailCampaigns/${campaignId}/sendNow`, { method: 'POST' }, env)
     if (!sendRes.ok && sendRes.status !== 204) {
-      const err = await sendRes.json().catch(() => ({}))
+      const err = asRecord(await sendRes.json().catch(() => null))
+      const brevoCode = recordString(err, 'code')
+      const brevoMessage = recordString(err, 'message')
       newsletterLog('send_now_failed', {
         correlationId,
         campaignId,
         httpStatus: sendRes.status,
-        brevoCode: typeof err.code === 'string' ? err.code : undefined,
+        brevoCode,
       })
       const status = sendRes.status === 504 ? 504 : (sendRes.status >= 400 && sendRes.status < 600 ? sendRes.status : 502)
-      const msg = typeof err.message === 'string' ? err.message : 'Campaign created but send failed'
+      const msg = brevoMessage || 'Campaign created but send failed'
       await releaseAfterSendNowFail()
       return jsonResponse({
         error: msg,
         code: sendRes.status === 504 ? 'brevo_timeout' : 'brevo_send_failed',
         campaignId,
         brevoStatus: sendRes.status,
-        brevoCode: typeof err.code === 'string' ? err.code : undefined,
+        brevoCode,
       }, status, corsHeaders)
     }
 
@@ -969,22 +981,25 @@ export async function handleAdminNewsletterCampaigns(request: any, env: any, cor
   if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const res = await fetchBrevoEmailCampaignsWithRetry(env)
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
+    const err = asRecord(await res.json().catch(() => null))
+    const brevoCode = recordString(err, 'code')
+    const brevoMessage = recordString(err, 'message')
     newsletterLog('campaigns_list_failed', {
       correlationId,
       httpStatus: res.status,
-      brevoCode: typeof err.code === 'string' ? err.code : undefined,
+      brevoCode,
     })
     return jsonResponse({
-      error: typeof err.message === 'string' ? err.message : 'Failed to fetch campaigns',
+      error: brevoMessage || 'Failed to fetch campaigns',
       code: 'brevo_campaigns_error',
       brevoStatus: res.status,
-      brevoCode: typeof err.code === 'string' ? err.code : undefined,
+      brevoCode,
     }, res.status, corsHeaders)
   }
-  const data = await res.json().catch(() => ({}))
-  newsletterLog('campaigns_list_ok', { correlationId, count: Array.isArray(data?.campaigns) ? data.campaigns.length : 0 })
-  return jsonResponse({ campaigns: data?.campaigns ?? [] }, 200, corsHeaders)
+  const data = asRecord(await res.json().catch(() => null))
+  const campaigns = Array.isArray(data.campaigns) ? data.campaigns : []
+  newsletterLog('campaigns_list_ok', { correlationId, count: campaigns.length })
+  return jsonResponse({ campaigns }, 200, corsHeaders)
 }
 
 export async function handleAdminNewsletterTemplates(request: any, env: any, corsHeaders: any) {

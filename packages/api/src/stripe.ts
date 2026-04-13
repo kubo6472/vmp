@@ -54,7 +54,7 @@ function encodeStripeBody(obj: any, prefix = '') {
   return parts.join('&')
 }
 
-async function stripePost(path: any, body: any, env: any) {
+async function stripePost(path: any, body: any, env: any): Promise<any> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 10_000)
   try {
@@ -67,7 +67,7 @@ async function stripePost(path: any, body: any, env: any) {
       body: encodeStripeBody(body),
       signal: controller.signal,
     })
-    return res.json()
+    return (await res.json()) as any
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'AbortError') {
       const err = new Error('Stripe request timed out')
@@ -80,7 +80,7 @@ async function stripePost(path: any, body: any, env: any) {
   }
 }
 
-async function stripeGet(path: any, env: any) {
+async function stripeGet(path: any, env: any): Promise<any> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 10_000)
   try {
@@ -88,7 +88,7 @@ async function stripeGet(path: any, env: any) {
       headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
       signal: controller.signal,
     })
-    return res.json()
+    return (await res.json()) as any
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'AbortError') {
       const err = new Error('Stripe request timed out')
