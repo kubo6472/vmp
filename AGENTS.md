@@ -2,14 +2,13 @@
 
 ## Project overview
 
-VMP (Video Monetization Platform) is a subscription-gated HLS video streaming platform. npm workspaces monorepo with four packages:
+VMP (Video Monetization Platform) is a subscription-gated HLS video streaming platform. npm workspaces monorepo with three packages:
 
 | Package | Path | Runtime |
 |---|---|---|
 | `@vmp/api` | `packages/api` | Cloudflare Worker (JS) — REST API, auth, Stripe, push, thumbnails |
 | `@vmp/web` | `packages/web` | Nuxt 4 / Vue 3 frontend (TypeScript) |
 | `@vmp/shared` | `packages/shared` | Shared TS types |
-| `@vmp/video-processor` | `packages/video-processor` | Cloudflare Pages admin for video upload |
 
 ### Infrastructure
 

@@ -1,13 +1,12 @@
 # VMP (Video Monetization Platform)
 
-VMP is a Cloudflare-based video subscription platform with a Worker API, Nuxt web app, shared TypeScript types, and a Pages-based video processor admin.
+VMP is a Cloudflare-based video subscription platform with a Worker API, Nuxt web app, and shared TypeScript types.
 
 ## Monorepo packages
 
 - `@vmp/api` (`packages/api`) — Cloudflare Worker API + D1/R2/KV integrations.
 - `@vmp/web` (`packages/web`) — Nuxt 4 frontend deployed to Cloudflare Pages.
 - `@vmp/shared` (`packages/shared`) — shared TypeScript contracts.
-- `@vmp/video-processor` (`packages/video-processor`) — Pages Functions admin for upload/processing.
 
 ## Deployment model (high level)
 
@@ -16,7 +15,6 @@ VMP is a Cloudflare-based video subscription platform with a Worker API, Nuxt we
 - Deploy pipeline fails fast on type-checking before build/deploy:
   - `@vmp/shared` `tsc --noEmit`
   - `@vmp/api` `tsc --noEmit`
-  - `@vmp/video-processor` `tsc --noEmit`
   - `@vmp/web` `nuxi prepare && nuxi typecheck`
 
 ## Prerequisites
@@ -52,8 +50,6 @@ These are useful for controlled/manual rollouts outside GitHub Actions.
    - `npm run deploy:api`
 2. Web deploy:
    - `npm run deploy:web`
-3. Video processor deploy:
-   - `npm run deploy:video-processor`
 
 ## Runtime secrets/vars
 

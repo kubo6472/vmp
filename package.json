@@ -9,13 +9,12 @@
   "scripts": {
     "dev": "npm run dev --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspace=@vmp/shared && npm run typecheck --workspace=@vmp/api && npm run typecheck --workspace=@vmp/video-processor && npm run typecheck --workspace=@vmp/web",
-    "typecheck:deploy": "npm run typecheck --workspace=@vmp/shared && npm run typecheck --workspace=@vmp/api && npm run typecheck --workspace=@vmp/video-processor && npm run typecheck:scripts --workspace=@vmp/web && npm run build:sw-push --workspace=@vmp/web",
+    "typecheck": "npm run typecheck --workspace=@vmp/shared && npm run typecheck --workspace=@vmp/api && npm run typecheck --workspace=@vmp/web",
+    "typecheck:deploy": "npm run typecheck --workspace=@vmp/shared && npm run typecheck --workspace=@vmp/api && npm run typecheck:scripts --workspace=@vmp/web && npm run build:sw-push --workspace=@vmp/web",
     "deploy:api": "npm run deploy --workspace=@vmp/api",
     "deploy:web": "npm run deploy --workspace=@vmp/web",
     "db:create": "cd packages/api && wrangler d1 execute video-subscription-db --file=./migrations/0001_initial.sql",
-    "db:seed": "cd packages/api && wrangler d1 execute video-subscription-db --file=./migrations/0002_seed.sql",
-    "deploy:video-processor": "npm run deploy --workspace=@vmp/video-processor"
+    "db:seed": "cd packages/api && wrangler d1 execute video-subscription-db --file=./migrations/0002_seed.sql"
   },
   "devDependencies": {
     "typescript": "^6.0.2"

@@ -48,7 +48,7 @@ Use this when staging/production D1, KV, and/or R2 were intentionally reset.
 1) Freeze auto-deploys
 
 - Confirm only `.github/workflows/deploy.yml` auto-deploys from `main`/tags.
-- Keep `cd-api.yml`, `cd-web.yml`, and `cd-video-processor.yml` manual-only.
+- Keep `cd-api.yml` and `cd-web.yml` manual-only.
 
 1. Recreate bindings/resources (per environment)
 
@@ -81,7 +81,6 @@ Use this when staging/production D1, KV, and/or R2 were intentionally reset.
 
 - Deploy API first.
 - Deploy web second.
-- Deploy video-processor admin (if changed).
 
 1. Post-deploy smoke checks
 
