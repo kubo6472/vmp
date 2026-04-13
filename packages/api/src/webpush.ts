@@ -47,6 +47,15 @@ function isError(value: unknown): value is Error {
   return value instanceof Error
 }
 
+function normalizeFrontendBaseUrl(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  let end = trimmed.length
+  while (end > 0 && trimmed[end - 1] === '/') end -= 1
+  return trimmed.slice(0, end)
+}
+
 /** Ensure Uint8Array has ArrayBuffer (not SharedArrayBuffer) for SubtleCrypto compatibility */
 function toArrayBuffer(data: Uint8Array | ArrayBuffer): ArrayBuffer {
   if (data instanceof ArrayBuffer) return data
@@ -477,9 +486,7 @@ export async function sendPushToAllSubscribers(videoTitle: string, videoId: stri
     return { attempted: 0, succeeded: 0, failed: 0, stale: 0 }
   }
 
-  const frontendBaseUrl = typeof env.FRONTEND_URL === 'string'
-    ? env.FRONTEND_URL.trim().replace(/\/+$/, '')
-    : ''
+  const frontendBaseUrl = normalizeFrontendBaseUrl(env.FRONTEND_URL)
   const watchPath = `/watch/${encodeURIComponent(String(videoId))}`
   const payload = {
     title: 'New video published',

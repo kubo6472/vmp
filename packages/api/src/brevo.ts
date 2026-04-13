@@ -444,8 +444,26 @@ async function persistSentAtIfBrevoDelivered(db: any, dedupeKey: any, row: any, 
   return true
 }
 
+function sanitizeErrorPayload(value: unknown): unknown {
+  if (value instanceof Error) {
+    return { error: 'Internal error', code: 'internal_error' }
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeErrorPayload(item))
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (key.toLowerCase() === 'stack') continue
+      out[key] = sanitizeErrorPayload(nested)
+    }
+    return out
+  }
+  return value
+}
+
 function jsonResponse(data: any, status = 200, corsHeaders = {}) {
-  return new Response(JSON.stringify(data, null, 2), {
+  return new Response(JSON.stringify(sanitizeErrorPayload(data), null, 2), {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   })
