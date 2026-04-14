@@ -64,6 +64,10 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function getPublicErrorMessage(fallback = 'Internal server error'): string {
+  return fallback
+}
+
 function getErrorField(error: unknown, key: string): unknown {
   if (typeof error !== 'object' || error === null) return undefined
   return (error as Record<string, unknown>)[key]
@@ -379,7 +383,7 @@ async function handleHomepagePlacement(request: any, env: any, corsHeaders: any)
     return jsonResponse(placement, 200, corsHeaders)
   } catch (error) {
     console.error('handleHomepagePlacement:', error)
-    return jsonResponse({ error: 'Internal server error', details: getErrorMessage(error) }, 500, corsHeaders)
+    return jsonResponse({ error: getPublicErrorMessage('Internal server error') }, 500, corsHeaders)
   }
 }
 
@@ -434,7 +438,7 @@ async function handleVideosList(request: any, env: any, corsHeaders: any) {
     return response
   } catch (error) {
     console.error('Error:', error)
-    return jsonResponse({ error: 'Internal server error', details: getErrorMessage(error) }, 500, corsHeaders)
+    return jsonResponse({ error: getPublicErrorMessage('Internal server error') }, 500, corsHeaders)
   }
 }
 
@@ -609,7 +613,7 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any) {
     return jsonResponse(response, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
-    return jsonResponse({ error: 'Internal server error', details: getErrorMessage(error) }, 500, corsHeaders)
+    return jsonResponse({ error: getPublicErrorMessage('Internal server error') }, 500, corsHeaders)
   }
 }
 
@@ -1003,8 +1007,9 @@ async function handleAdminCategories(request: any, env: any, corsHeaders: any) {
     return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   } catch (err) {
     const codeField = getErrorField(err, 'code')
+    console.error('handleVideoCategories error:', err)
     return jsonResponse({
-      error: getErrorMessage(err) || 'Internal Server Error',
+      error: getPublicErrorMessage('Internal Server Error'),
       code: typeof codeField === 'string' ? codeField : 'internal_error',
     }, 500, corsHeaders)
   }
@@ -1078,7 +1083,7 @@ async function handleAdminVideosList(request: any, env: any, corsHeaders: any) {
     return jsonResponse({ videos: annotated }, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
-    return jsonResponse({ error: 'Internal server error', details: getErrorMessage(error) }, 500, corsHeaders)
+    return jsonResponse({ error: getPublicErrorMessage('Internal server error') }, 500, corsHeaders)
   }
 }
 
@@ -1240,7 +1245,7 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
     return jsonResponse({ ok: true, video }, 200, corsHeaders)
   } catch (error) {
     console.error('Error:', error)
-    return jsonResponse({ error: 'Internal server error', details: getErrorMessage(error) }, 500, corsHeaders)
+    return jsonResponse({ error: getPublicErrorMessage('Internal server error') }, 500, corsHeaders)
   }
 }
 
@@ -1307,7 +1312,7 @@ async function handleAdminVideoDelete(request: any, env: any, corsHeaders: any) 
     return jsonResponse({ ok: true, deletedR2Objects }, 200, corsHeaders)
   } catch (error) {
     console.error(`handleAdminVideoDelete [videoId:${videoId}]:`, error)
-    return jsonResponse({ error: 'Internal server error', details: getErrorMessage(error) }, 500, corsHeaders)
+    return jsonResponse({ error: getPublicErrorMessage('Internal server error') }, 500, corsHeaders)
   }
 }
 
@@ -1577,7 +1582,7 @@ async function handleAdminPushTest(request: any, env: any, corsHeaders: any) {
       ok: false,
       endpointHost,
       subscriptionCreatedAt: subscription.created_at || null,
-      error: getErrorMessage(error) || 'Push test failed',
+      error: getPublicErrorMessage('Push test failed'),
       code: typeof code === 'string' ? code : 'push_failed',
       delivery: {
         status: typeof status === 'number' ? status : null,
