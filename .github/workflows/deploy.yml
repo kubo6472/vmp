@@ -86,7 +86,13 @@ jobs:
             echo "Skipping admin smoke check because secrets.STAGING_ADMIN_SMOKE_TOKEN is not configured."
             exit 0
           fi
-          curl -fsS -H "Authorization: Bearer $ADMIN_SMOKE_TOKEN" "$API_BASE_URL/api/auth/me" | node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync(0,"utf8"));const user=body?.user||{};if(!(user.id||user.sub)||!["admin","super_admin"].includes(user.role)){console.error("Admin smoke check failed",body);process.exit(1)}'
+          auth_status="$(curl -sS -o /tmp/admin-smoke-staging.json -w "%{http_code}" -H "Authorization: Bearer $ADMIN_SMOKE_TOKEN" "$API_BASE_URL/api/auth/me")"
+          if [ "$auth_status" != "200" ]; then
+            echo "Admin smoke check failed with HTTP $auth_status"
+            cat /tmp/admin-smoke-staging.json
+            exit 1
+          fi
+          node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync("/tmp/admin-smoke-staging.json","utf8"));const user=body?.user||{};if(!(user.id||user.sub)||!["admin","super_admin"].includes(user.role)){console.error("Admin smoke check failed",body);process.exit(1)}'
 
       - name: Smoke check frontend reachability (staging)
         run: |
@@ -165,7 +171,13 @@ jobs:
             echo "Skipping admin smoke check because secrets.PROD_ADMIN_SMOKE_TOKEN is not configured."
             exit 0
           fi
-          curl -fsS -H "Authorization: Bearer $ADMIN_SMOKE_TOKEN" "$API_BASE_URL/api/auth/me" | node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync(0,"utf8"));const user=body?.user||{};if(!(user.id||user.sub)||!["admin","super_admin"].includes(user.role)){console.error("Admin smoke check failed",body);process.exit(1)}'
+          auth_status="$(curl -sS -o /tmp/admin-smoke-production.json -w "%{http_code}" -H "Authorization: Bearer $ADMIN_SMOKE_TOKEN" "$API_BASE_URL/api/auth/me")"
+          if [ "$auth_status" != "200" ]; then
+            echo "Admin smoke check failed with HTTP $auth_status"
+            cat /tmp/admin-smoke-production.json
+            exit 1
+          fi
+          node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync("/tmp/admin-smoke-production.json","utf8"));const user=body?.user||{};if(!(user.id||user.sub)||!["admin","super_admin"].includes(user.role)){console.error("Admin smoke check failed",body);process.exit(1)}'
 
       - name: Smoke check frontend reachability (production)
         run: |
