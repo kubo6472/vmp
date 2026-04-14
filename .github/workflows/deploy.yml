@@ -9,11 +9,24 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      target:
+        description: Deploy target
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
 
 jobs:
   deploy-staging:
-    if: startsWith(github.ref, 'refs/heads/main')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/main')) || (github.event_name == 'workflow_dispatch' && inputs.target == 'staging')
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    environment: staging
+    env:
+      API_BASE_URL: ${{ vars.API_URL_STAGING }}
+      FRONTEND_URL: ${{ vars.FRONTEND_URL_STAGING }}
+      EXPECTED_ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS_STAGING }}
     steps:
       - uses: actions/checkout@v6
       
@@ -34,7 +47,14 @@ jobs:
       
       - run: npm run build --workspace=@vmp/web
         env:
-          API_URL: https://vmp-api.tjm.sk
+          API_URL: ${{ env.API_BASE_URL }}
+
+      - name: Validate staging env/domain wiring
+        run: |
+          test -n "$API_BASE_URL" || (echo "Missing vars.API_URL_STAGING" && exit 1)
+          test -n "$FRONTEND_URL" || (echo "Missing vars.FRONTEND_URL_STAGING" && exit 1)
+          test -n "$EXPECTED_ALLOWED_ORIGINS" || (echo "Missing vars.ALLOWED_ORIGINS_STAGING" && exit 1)
+          test -n "${{ secrets.STAGING_ADMIN_SMOKE_TOKEN }}" || (echo "Missing secrets.STAGING_ADMIN_SMOKE_TOKEN" && exit 1)
       
       - name: Deploy API (staging)
         env:
@@ -47,10 +67,35 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN_STAGING }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_STAGING }}
-          command: pages deploy packages/web/dist --project-name ${{ secrets.CF_PAGES_PROJECT_NAME }} --branch main
+          command: pages deploy packages/web/dist --project-name ${{ vars.CF_PAGES_PROJECT_NAME_STAGING }} --branch main
+
+      - name: Smoke check API health (staging)
+        run: |
+          curl -fsS "$API_BASE_URL/api/health" | node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync(0,"utf8"));if(body.status!=="healthy"){console.error("Unexpected /api/health payload",body);process.exit(1)}'
+
+      - name: Smoke check API CORS origin (staging)
+        run: |
+          curl -sSI -H "Origin: $FRONTEND_URL" "$API_BASE_URL/api/health" | rg -i "^access-control-allow-origin: ${FRONTEND_URL}$"
+          echo "$EXPECTED_ALLOWED_ORIGINS" | rg "$FRONTEND_URL"
+
+      - name: Smoke check authenticated admin endpoint (staging)
+        env:
+          ADMIN_SMOKE_TOKEN: ${{ secrets.STAGING_ADMIN_SMOKE_TOKEN }}
+        run: |
+          curl -fsS -H "Authorization: Bearer $ADMIN_SMOKE_TOKEN" "$API_BASE_URL/api/auth/me" | node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync(0,"utf8"));if(!body?.user?.id||!["admin","super_admin"].includes(body?.user?.role)){console.error("Admin smoke check failed",body);process.exit(1)}'
+
+      - name: Smoke check frontend reachability (staging)
+        run: |
+          curl -fsS "$FRONTEND_URL" >/dev/null
+
   deploy-production:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    environment: production
+    env:
+      API_BASE_URL: ${{ vars.API_URL_PROD }}
+      FRONTEND_URL: ${{ vars.FRONTEND_URL_PROD }}
+      EXPECTED_ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS_PROD }}
     steps:
       - uses: actions/checkout@v6
       
@@ -77,7 +122,14 @@ jobs:
       
       - run: npm run build --workspace=@vmp/web
         env:
-          API_URL: https://vmp-prod-api.tjm.sk
+          API_URL: ${{ env.API_BASE_URL }}
+
+      - name: Validate production env/domain wiring
+        run: |
+          test -n "$API_BASE_URL" || (echo "Missing vars.API_URL_PROD" && exit 1)
+          test -n "$FRONTEND_URL" || (echo "Missing vars.FRONTEND_URL_PROD" && exit 1)
+          test -n "$EXPECTED_ALLOWED_ORIGINS" || (echo "Missing vars.ALLOWED_ORIGINS_PROD" && exit 1)
+          test -n "${{ secrets.PROD_ADMIN_SMOKE_TOKEN }}" || (echo "Missing secrets.PROD_ADMIN_SMOKE_TOKEN" && exit 1)
       
       - name: Deploy API (production)
         env:
@@ -90,4 +142,23 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN_PROD }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_PROD }}
-          command: pages deploy packages/web/dist --project-name vmp-web --branch main
+          command: pages deploy packages/web/dist --project-name ${{ vars.CF_PAGES_PROJECT_NAME_PROD }} --branch main
+
+      - name: Smoke check API health (production)
+        run: |
+          curl -fsS "$API_BASE_URL/api/health" | node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync(0,"utf8"));if(body.status!=="healthy"){console.error("Unexpected /api/health payload",body);process.exit(1)}'
+
+      - name: Smoke check API CORS origin (production)
+        run: |
+          curl -sSI -H "Origin: $FRONTEND_URL" "$API_BASE_URL/api/health" | rg -i "^access-control-allow-origin: ${FRONTEND_URL}$"
+          echo "$EXPECTED_ALLOWED_ORIGINS" | rg "$FRONTEND_URL"
+
+      - name: Smoke check authenticated admin endpoint (production)
+        env:
+          ADMIN_SMOKE_TOKEN: ${{ secrets.PROD_ADMIN_SMOKE_TOKEN }}
+        run: |
+          curl -fsS -H "Authorization: Bearer $ADMIN_SMOKE_TOKEN" "$API_BASE_URL/api/auth/me" | node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync(0,"utf8"));if(!body?.user?.id||!["admin","super_admin"].includes(body?.user?.role)){console.error("Admin smoke check failed",body);process.exit(1)}'
+
+      - name: Smoke check frontend reachability (production)
+        run: |
+          curl -fsS "$FRONTEND_URL" >/dev/null
