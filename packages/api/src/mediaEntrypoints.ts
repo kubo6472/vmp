@@ -7,13 +7,22 @@
 
 export function buildEntrypointCandidates(base: any, videoId: any, options: any = {}) {
   const preferPodcast = options?.preferPodcast === true
+  /** When true, prefer assets that match the current preview window (HLS or podcast_preview.mp3). */
+  const rssPreview = options?.rssPreview === true && preferPodcast
   const candidates = []
   if (preferPodcast) {
-    candidates.push(
-      `${base}/videos/${videoId}/podcast.mp3`,
-      `${base}/videos/${videoId}/processed/podcast.mp3`,
-      `${base}/videos/${videoId}/processed/audio/podcast.mp3`,
-    )
+    if (rssPreview) {
+      candidates.push(
+        `${base}/videos/${videoId}/podcast_preview.mp3`,
+        `${base}/videos/${videoId}/processed/podcast_preview.mp3`,
+      )
+    } else {
+      candidates.push(
+        `${base}/videos/${videoId}/podcast.mp3`,
+        `${base}/videos/${videoId}/processed/podcast.mp3`,
+        `${base}/videos/${videoId}/processed/audio/podcast.mp3`,
+      )
+    }
   }
   candidates.push(
     `${base}/videos/${videoId}/master.m3u8`,
@@ -27,9 +36,10 @@ export async function resolveMediaEntrypointUrl({
   env,
   videoId,
   preferPodcast = false,
+  rssPreview = false,
 }: any) {
   const base = env.R2_BASE_URL
-  const candidates = buildEntrypointCandidates(base, videoId, { preferPodcast })
+  const candidates = buildEntrypointCandidates(base, videoId, { preferPodcast, rssPreview })
   for (const c of candidates) {
     if (await canLoadEntrypoint(c)) return c
   }

@@ -3,9 +3,9 @@
  *
  * RSS / Podcast feed endpoints (Step 9).
  *
- * Note: enclosures prefer `podcast.mp3` when available, then fall back to HLS playlists,
- * all proxied through /api/video-proxy. We rely on `vt` tokens (HMAC, short-lived)
- * for access control and preview truncation.
+ * Note: enclosures prefer HLS (preview-truncated) or `podcast_preview.mp3` when a preview
+ * cap applies, else full `podcast.mp3`, all proxied through /api/video-proxy. We rely on
+ * `vt` tokens (HMAC, short-lived) for access control and preview truncation.
  */
  
 import { isAdministrativeRole } from './roles.js'
@@ -127,7 +127,7 @@ async function listPublishedVideos(db: any) {
   // Some local dev D1 states may not have the newer publish_status column yet.
   try {
     const byPublishStatus = await db.prepare(`
-      SELECT id, title, description, thumbnail_url, full_duration, preview_duration, published_at
+      SELECT id, title, description, thumbnail_url, full_duration, preview_duration, published_at, updated_at
       FROM videos
       WHERE publish_status = 'published'
       ORDER BY datetime(published_at) DESC, datetime(upload_date) DESC
@@ -137,12 +137,100 @@ async function listPublishedVideos(db: any) {
     // Fall back to the legacy visibility column.
   }
   const rows = await db.prepare(`
-    SELECT id, title, description, thumbnail_url, full_duration, preview_duration, published_at
+    SELECT id, title, description, thumbnail_url, full_duration, preview_duration, published_at, updated_at
     FROM videos
     WHERE visibility = 'public'
     ORDER BY datetime(published_at) DESC, datetime(upload_date) DESC
   `).all()
   return rows.results || []
+}
+
+async function sha256HexOfString(s: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
+  return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** Bust RSS edge cache when preview windows or metadata change (per-video). */
+async function rssFeedVersionFingerprint(rows: any[]): Promise<string> {
+  const parts = (rows || []).map((v: any) => {
+    const id = v.id ?? ''
+    const p = Number(v.preview_duration ?? 0) || 0
+    const u = v.updated_at != null ? String(v.updated_at) : ''
+    return `${id}:${p}:${u}`
+  })
+  parts.sort()
+  return sha256HexOfString(parts.join('|'))
+}
+
+function entrypointPathnameLower(entrypointUrl: unknown): string {
+  try {
+    return new URL(String(entrypointUrl ?? '')).pathname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+async function buildRssEnclosureForVideo({
+  request,
+  env,
+  videoId,
+  vtUserId,
+  previewUntilSeconds,
+  v,
+}: {
+  request: any
+  env: any
+  videoId: string
+  vtUserId: string
+  previewUntilSeconds: number | null
+  v: any
+}) {
+  const hasPreviewCap = previewUntilSeconds !== null
+    && typeof previewUntilSeconds === 'number'
+    && previewUntilSeconds > 0
+
+  const entrypointUrl = await resolveMediaEntrypointUrl({
+    env,
+    videoId,
+    preferPodcast: true,
+    rssPreview: hasPreviewCap,
+  })
+
+  const pathLower = entrypointPathnameLower(entrypointUrl)
+  const isMp3 = pathLower.endsWith('.mp3')
+  const proxyPreviewSeconds = isMp3 && hasPreviewCap ? null : (hasPreviewCap ? previewUntilSeconds : null)
+
+  const basePlaylistUrl = buildProxyPlaylistUrl(request, entrypointUrl, proxyPreviewSeconds)
+
+  let enclosureUrl = basePlaylistUrl
+  if (env.JWT_SECRET) {
+    const vt = await signVideoToken(
+      vtUserId,
+      videoId,
+      env.JWT_SECRET,
+      hasPreviewCap ? previewUntilSeconds : null,
+      { ttlSeconds: 60 * 60 * 24 * 30 },
+    )
+    enclosureUrl = basePlaylistUrl.includes('?') ? `${basePlaylistUrl}&vt=${vt}` : `${basePlaylistUrl}?vt=${vt}`
+  }
+
+  let itunesDurationStr: string
+  if (isMp3 && hasPreviewCap) {
+    itunesDurationStr = secondsToItunesDuration(previewUntilSeconds)
+  } else {
+    itunesDurationStr = secondsToItunesDuration(v.full_duration ?? v.preview_duration ?? 0)
+  }
+
+  return {
+    title: v.title || `Episode ${videoId}`,
+    description: v.description || '',
+    guid: videoId,
+    pubDate: toRfc2822Date(v.published_at),
+    enclosureUrl,
+    enclosureType: inferEnclosureContentType(entrypointUrl),
+    imageUrl: buildSquareCoverImageUrl(v.thumbnail_url),
+    itunesDuration: itunesDurationStr,
+  }
 }
  
 function feedResponse(xml: any, corsHeaders: any, cacheControl: any) {
@@ -228,8 +316,12 @@ export async function handlePublicFeed(request: any, env: any, corsHeaders: any)
     const db = getDb(env)
     const cache = getDefaultCache()
     const publicPollMeta = { endpoint: 'feed_public', userId: 'public' }
+
+    const videos = await listPublishedVideos(session)
+    const feedV = await rssFeedVersionFingerprint(videos)
+
     if (cache) {
-      const cached = await cache.match(feedCacheKey(request, { v: 1 }))
+      const cached = await cache.match(feedCacheKey(request, { v: 2, fp: feedV }))
       if (cached) {
         await recordFeedPoll(db, publicPollMeta)
         return cached
@@ -250,45 +342,27 @@ export async function handlePublicFeed(request: any, env: any, corsHeaders: any)
       imageUrl: buildFeedFaviconUrl(request, env),
     }
 
-    const videos = await listPublishedVideos(session)
-
     const items = []
     for (const v of videos) {
       const videoId = v.id
       if (!videoId) continue
       const previewDuration = v.preview_duration ?? v.full_duration ?? 0
-      const entrypointUrl = await resolveMediaEntrypointUrl({ env, videoId, preferPodcast: true })
-      const basePlaylistUrl = buildProxyPlaylistUrl(request, entrypointUrl, previewDuration && previewDuration > 0 ? previewDuration : null)
-
-      let enclosureUrl = basePlaylistUrl
-      if (env.JWT_SECRET) {
-        const vt = await signVideoToken(
-          'anonymous',
-          videoId,
-          env.JWT_SECRET,
-          previewDuration && previewDuration > 0 ? previewDuration : null,
-          { ttlSeconds: 60 * 60 * 24 * 30 }
-        )
-        enclosureUrl = basePlaylistUrl.includes('?') ? `${basePlaylistUrl}&vt=${vt}` : `${basePlaylistUrl}?vt=${vt}`
-      }
-
-      items.push({
-        title: v.title || `Episode ${videoId}`,
-        description: v.description || '',
-        guid: videoId,
-        pubDate: toRfc2822Date(v.published_at),
-        enclosureUrl,
-        enclosureType: inferEnclosureContentType(entrypointUrl),
-        imageUrl: buildSquareCoverImageUrl(v.thumbnail_url),
-        itunesDuration: secondsToItunesDuration(v.full_duration ?? previewDuration ?? 0),
-      })
+      const previewUntil = previewDuration && previewDuration > 0 ? previewDuration : null
+      items.push(await buildRssEnclosureForVideo({
+        request,
+        env,
+        videoId,
+        vtUserId: 'anonymous',
+        previewUntilSeconds: previewUntil,
+        v,
+      }))
     }
 
     const xml = buildRssXml({ channel, items })
     await recordFeedPoll(db, publicPollMeta)
     const response = feedResponse(xml, corsHeaders, 'public, max-age=300, s-maxage=300')
     applySessionBookmark(response.headers, session)
-    if (cache) await cache.put(feedCacheKey(request, { v: 1 }), response.clone())
+    if (cache) await cache.put(feedCacheKey(request, { v: 2, fp: feedV }), response.clone())
     return response
   } catch (err: unknown) {
     const message = getErrorMessage(err)
@@ -358,8 +432,17 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
     const subscription = await getActiveSubscriptionRow(session, userId)
     const hasPremiumAccess = isAdministrativeRole(user.role) || Boolean(subscription)
     const userPollMeta = { endpoint: 'feed_user', userId }
+
+    const videos = await listPublishedVideos(session)
+    const feedV = await rssFeedVersionFingerprint(videos)
+
     if (cache) {
-      const cached = await cache.match(feedCacheKey(request, { v: 1, uid: userId, premium: hasPremiumAccess ? 1 : 0 }))
+      const cached = await cache.match(feedCacheKey(request, {
+        v: 2,
+        fp: feedV,
+        uid: userId,
+        premium: hasPremiumAccess ? 1 : 0,
+      }))
       if (cached) {
         await recordFeedPoll(db, userPollMeta)
         return cached
@@ -380,8 +463,6 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
       imageUrl: buildFeedFaviconUrl(request, env),
     }
 
-    const videos = await listPublishedVideos(session)
-
     const items = []
     for (const v of videos) {
       const videoId = v.id
@@ -390,38 +471,26 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
       const previewDuration = v.preview_duration ?? v.full_duration ?? 0
       const previewUntil = hasPremiumAccess ? null : (previewDuration && previewDuration > 0 ? previewDuration : null)
 
-      const entrypointUrl = await resolveMediaEntrypointUrl({ env, videoId, preferPodcast: true })
-      const basePlaylistUrl = buildProxyPlaylistUrl(request, entrypointUrl, previewUntil && previewUntil > 0 ? previewUntil : null)
-
-      let enclosureUrl = basePlaylistUrl
-      if (env.JWT_SECRET) {
-        const vt = await signVideoToken(
-          userId,
-          videoId,
-          env.JWT_SECRET,
-          previewUntil,
-          { ttlSeconds: 60 * 60 * 24 * 30 }
-        )
-        enclosureUrl = basePlaylistUrl.includes('?') ? `${basePlaylistUrl}&vt=${vt}` : `${basePlaylistUrl}?vt=${vt}`
-      }
-
-      items.push({
-        title: v.title || `Episode ${videoId}`,
-        description: v.description || '',
-        guid: videoId,
-        pubDate: toRfc2822Date(v.published_at),
-        enclosureUrl,
-        enclosureType: inferEnclosureContentType(entrypointUrl),
-        imageUrl: buildSquareCoverImageUrl(v.thumbnail_url),
-        itunesDuration: secondsToItunesDuration(v.full_duration ?? previewDuration ?? 0),
-      })
+      items.push(await buildRssEnclosureForVideo({
+        request,
+        env,
+        videoId,
+        vtUserId: userId,
+        previewUntilSeconds: previewUntil,
+        v,
+      }))
     }
 
     const xml = buildRssXml({ channel, items })
     await recordFeedPoll(db, userPollMeta)
     const response = feedResponse(xml, corsHeaders, 'private, max-age=300, stale-while-revalidate=60')
     applySessionBookmark(response.headers, session)
-    if (cache) await cache.put(feedCacheKey(request, { v: 1, uid: userId, premium: hasPremiumAccess ? 1 : 0 }), response.clone())
+    if (cache) {
+      await cache.put(
+        feedCacheKey(request, { v: 2, fp: feedV, uid: userId, premium: hasPremiumAccess ? 1 : 0 }),
+        response.clone(),
+      )
+    }
     return response
   } catch (err: unknown) {
     const message = getErrorMessage(err)

@@ -25,4 +25,16 @@ describe('buildEntrypointCandidates', () => {
       'https://cdn.example.com/videos/vid_123/processed/playlist.m3u8',
     ])
   })
+
+  it('prefers preview MP3 then HLS when rssPreview is enabled', () => {
+    const base = 'https://cdn.example.com'
+    const videoId = 'vid_123'
+    assert.deepEqual(buildEntrypointCandidates(base, videoId, { preferPodcast: true, rssPreview: true }), [
+      'https://cdn.example.com/videos/vid_123/podcast_preview.mp3',
+      'https://cdn.example.com/videos/vid_123/processed/podcast_preview.mp3',
+      'https://cdn.example.com/videos/vid_123/master.m3u8',
+      'https://cdn.example.com/videos/vid_123/processed/hls/master.m3u8',
+      'https://cdn.example.com/videos/vid_123/processed/playlist.m3u8',
+    ])
+  })
 })

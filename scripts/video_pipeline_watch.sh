@@ -5,6 +5,8 @@ INBOX_DIR="/mnt/videos/inbox"
 TMP_DIR_BASE="/mnt/tmp/video_pipeline"
 R2_BUCKET="vmp-videos"
 MP3_NAME="podcast.mp3"
+# Optional RSS preview clip (same bucket path): `podcast_preview.mp3` — generate with
+# `scripts/render_podcast_preview_mp3.sh` when preview_duration changes, or rely on HLS in the feed.
 BACKFILL_FROM_R2="${BACKFILL_FROM_R2:-1}"
 MP3_ONLY="${MP3_ONLY:-0}"
 
