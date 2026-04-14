@@ -742,7 +742,6 @@ export async function handleGoCardlessWebhook(request: any, env: any, corsHeader
     const db = getDb(env)
     for (const event of events) {
       const resourceType = String(event?.resource_type ?? '')
-      const action = String(event?.action ?? '')
       const subscriptionId = String(event?.links?.subscription ?? '').trim()
       if (resourceType !== 'subscriptions' || !subscriptionId) continue
 
