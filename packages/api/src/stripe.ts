@@ -226,12 +226,12 @@ function getDb(env: any) {
  * Resolve plan_type ('monthly'|'yearly'|'club') from a Stripe price ID
  * by comparing against the price IDs stored in admin_settings.
  */
-async function resolvePlanType(db: any, stripePriceId: any, env: any) {
-  const keys = ['stripe_price_monthly', 'stripe_price_yearly', 'stripe_price_club']
-  const planNames = ['monthly', 'yearly', 'club']
+async function resolvePlanType(db: any, stripePriceId: any, env: any): Promise<PlanType> {
+  const keys = ['stripe_price_monthly', 'stripe_price_yearly', 'stripe_price_club'] as const
+  const planNames: PlanType[] = ['monthly', 'yearly', 'club']
   for (let i = 0; i < keys.length; i++) {
     const stored = await getSetting(env, keys[i], { ttlSeconds: 300 })
-    if (stored && stored === stripePriceId) return planNames[i]
+    if (stored && stored === stripePriceId) return planNames[i] ?? 'monthly'
   }
   return 'monthly' // fallback
 }

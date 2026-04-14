@@ -292,12 +292,19 @@ async function openPortal() {
 }
 
 async function maybeCompleteGoCardlessCheckout() {
-  const redirectFlowId = typeof route.query.gocardless_redirect_flow_id === 'string'
-    ? route.query.gocardless_redirect_flow_id
-    : ''
-  const checkoutToken = typeof route.query.gocardless_checkout_token === 'string'
-    ? route.query.gocardless_checkout_token
-    : ''
+  const searchParams = import.meta.client
+    ? new URLSearchParams(window.location.search)
+    : null
+  const redirectFlowId = (
+    (typeof route.query.gocardless_redirect_flow_id === 'string' ? route.query.gocardless_redirect_flow_id : '') ||
+    searchParams?.get('gocardless_redirect_flow_id') ||
+    ''
+  ).trim()
+  const checkoutToken = (
+    (typeof route.query.gocardless_checkout_token === 'string' ? route.query.gocardless_checkout_token : '') ||
+    searchParams?.get('gocardless_checkout_token') ||
+    ''
+  ).trim()
   if (!redirectFlowId || !checkoutToken) return
 
   let completed = false

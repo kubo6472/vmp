@@ -180,7 +180,7 @@ async function loadPrices() {
         : []
       availableProviders.value = providers.length ? providers : ['stripe']
       if (!availableProviders.value.includes(selectedProvider.value)) {
-        selectedProvider.value = availableProviders.value[0]
+        selectedProvider.value = availableProviders.value[0] ?? 'stripe'
       }
     } else {
       priceError.value = true
