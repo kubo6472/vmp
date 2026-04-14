@@ -56,6 +56,7 @@ import {
 import { getReadSession, applySessionBookmark } from './d1Session.js'
 import { placeHomepageVideos, normalizeHomepagePlacementConfig } from './homepagePlacement.js'
 import { ensureAdminSettingsTable } from './adminSettingsTable.js'
+import { normalizeLivestreamStatus } from './livestreams.js'
 import type { DurableObjectState, ExecutionContext } from '@cloudflare/workers-types'
 
 type CorsHeaders = Record<string, string>
@@ -220,11 +221,17 @@ export default {
     if (url.pathname === '/api/admin/videos') {
       return handleAdminVideosList(request, env, corsHeaders)
     }
+    if (url.pathname === '/api/admin/videos/livestreams' && request.method === 'POST') {
+      return handleAdminLivestreamCreate(request, env, corsHeaders)
+    }
     if (url.pathname.match(/^\/api\/admin\/videos\/[^/]+\/thumbnail$/) && request.method === 'POST') {
       return handleThumbnailUpload(request, env, corsHeaders)
     }
     if (url.pathname.match(/^\/api\/admin\/videos\/[^/]+\/thumbnail$/) && request.method === 'DELETE') {
       return handleThumbnailDelete(request, env, corsHeaders)
+    }
+    if (url.pathname.match(/^\/api\/admin\/videos\/[^/]+\/livestream$/) && request.method === 'PATCH') {
+      return handleAdminLivestreamUpdate(request, env, corsHeaders)
     }
     if (url.pathname.startsWith('/api/admin/videos/') && request.method === 'PATCH') {
       return handleAdminVideoUpdate(request, env, ctx, corsHeaders)
@@ -400,18 +407,28 @@ async function handleVideosList(request: any, env: any, corsHeaders: any) {
       ? `SELECT v.id, v.title, v.description, v.thumbnail_url, v.full_duration, v.preview_duration, v.upload_date, v.publish_status, v.slug,
                 vc.id AS category_id,
                 vc.name AS category_name,
-                vc.slug AS category_slug
+                vc.slug AS category_slug,
+                ls.provider AS livestream_provider,
+                ls.status AS livestream_status,
+                ls.playback_url AS livestream_playback_url,
+                ls.recording_video_id AS livestream_recording_video_id
          FROM videos v
          LEFT JOIN video_category_assignments vca ON vca.video_id = v.id
          LEFT JOIN video_categories vc ON vc.id = vca.category_id
+         LEFT JOIN livestreams ls ON ls.video_id = v.id
          ORDER BY v.upload_date DESC`
       : `SELECT v.id, v.title, v.description, v.thumbnail_url, v.full_duration, v.preview_duration, v.upload_date, v.publish_status, v.slug,
                 vc.id AS category_id,
                 vc.name AS category_name,
-                vc.slug AS category_slug
+                vc.slug AS category_slug,
+                ls.provider AS livestream_provider,
+                ls.status AS livestream_status,
+                ls.playback_url AS livestream_playback_url,
+                ls.recording_video_id AS livestream_recording_video_id
          FROM videos v
          LEFT JOIN video_category_assignments vca ON vca.video_id = v.id
          LEFT JOIN video_categories vc ON vc.id = vca.category_id
+         LEFT JOIN livestreams ls ON ls.video_id = v.id
          WHERE v.publish_status = 'published'
          ORDER BY v.upload_date DESC`
 
@@ -530,6 +547,14 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any) {
     const video = await resolveVideoByIdOrSlug(db, videoId)
     // Use the canonical database ID for all downstream operations (R2 paths, token signing).
     const resolvedVideoId = video?.id ?? videoId
+    const livestream = video
+      ? await db.prepare(`
+          SELECT video_id, provider, stream_id, stream_key, ingest_url, playback_url, status, recording_video_id, started_at, ended_at
+          FROM livestreams
+          WHERE video_id = ?
+          LIMIT 1
+        `).bind(resolvedVideoId).first()
+      : null
 
     // Treat all non-viewer staff roles as premium-equivalent entitlements.
     const hasElevatedRole = isAdministrativeRole(authUser?.role)
@@ -547,7 +572,18 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any) {
     const hasVideoMetadata = Boolean(video)
     const hasAccess = hasPremiumAccess || !hasVideoMetadata
     const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0
-    const resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId: resolvedVideoId })
+    const isLivestream = Boolean(livestream)
+    const livestreamStatus = normalizeLivestreamStatus(livestream?.status, 'scheduled')
+    const hasLivestreamPlaybackUrl = typeof livestream?.playback_url === 'string' && livestream.playback_url.trim().length > 0
+    const livestreamPlaybackUrl = hasLivestreamPlaybackUrl ? livestream.playback_url.trim() : null
+    const livestreamRecordingId = typeof livestream?.recording_video_id === 'string' && livestream.recording_video_id.trim().length > 0
+      ? livestream.recording_video_id.trim()
+      : null
+
+    let resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId: resolvedVideoId })
+    if (livestreamRecordingId) {
+      resolvedEntrypointUrl = await resolveMediaEntrypointUrl({ env, videoId: livestreamRecordingId })
+    }
     const basePlaylistUrl = buildProxyPlaylistUrl(request, resolvedEntrypointUrl, hasPremiumAccess ? null : previewDuration)
     // Unify duration logic with the frontend: if D1 has 0/unknown duration,
     // attempt to resolve from the HLS playlist stored in R2.
@@ -584,11 +620,21 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any) {
     // authenticate every subsequent manifest and segment request.
     const effectiveUserId = authUser?.sub ?? userId ?? 'anonymous'
     let playlistUrl = basePlaylistUrl
+    if (isLivestream) {
+      if (livestreamPlaybackUrl && hasPremiumAccess) {
+        playlistUrl = livestreamPlaybackUrl
+      } else if (!livestreamPlaybackUrl && !livestreamRecordingId) {
+        playlistUrl = null
+      }
+    }
     if (env.JWT_SECRET) {
-      const vt = await signVideoToken(effectiveUserId, resolvedVideoId, env.JWT_SECRET, hasPremiumAccess ? null : previewDuration)
-      playlistUrl = basePlaylistUrl.includes('?')
-        ? `${basePlaylistUrl}&vt=${vt}`
-        : `${basePlaylistUrl}?vt=${vt}`
+      const shouldSignProxyUrl = typeof playlistUrl === 'string' && playlistUrl.startsWith(new URL(request.url).origin)
+      if (shouldSignProxyUrl) {
+        const vt = await signVideoToken(effectiveUserId, resolvedVideoId, env.JWT_SECRET, hasPremiumAccess ? null : previewDuration)
+        playlistUrl = playlistUrl.includes('?')
+          ? `${playlistUrl}&vt=${vt}`
+          : `${playlistUrl}?vt=${vt}`
+      }
     }
 
     const response = {
@@ -600,7 +646,17 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any) {
         status: subscription ? subscription.status : 'none',
         expiresAt: subscription ? subscription.current_period_end : null,
       },
-      video: { title: video?.title ?? `Uploaded Video ${videoId}`, fullDuration, previewDuration, playlistUrl },
+      video: {
+        title: video?.title ?? `Uploaded Video ${videoId}`,
+        fullDuration,
+        previewDuration,
+        playlistUrl,
+        isLivestream,
+        livestreamStatus,
+        livestreamProvider: livestream?.provider ?? null,
+        livestreamPlaybackUrl,
+        livestreamRecordingVideoId: livestreamRecordingId,
+      },
       chapters: [
         { title: 'Preview', startTime: 0, endTime: previewDuration, accessible: true },
         { title: 'Full Content', startTime: previewDuration, endTime: fullDuration, accessible: hasAccess },
@@ -1059,17 +1115,27 @@ async function handleAdminVideosList(request: any, env: any, corsHeaders: any) {
       )
       SELECT v.id, v.title, v.description, v.thumbnail_url, v.full_duration, v.preview_duration,
              v.upload_date, v.status, v.publish_status, v.published_at, v.updated_at, v.slug,
-             vca.category_id, COALESCE(vc.total_views, 0) AS total_views
+             vca.category_id, COALESCE(vc.total_views, 0) AS total_views,
+             ls.provider AS livestream_provider,
+             ls.status AS livestream_status,
+             ls.stream_id AS livestream_stream_id,
+             ls.stream_key AS livestream_stream_key,
+             ls.ingest_url AS livestream_ingest_url,
+             ls.playback_url AS livestream_playback_url,
+             ls.recording_video_id AS livestream_recording_video_id
       FROM videos v
       LEFT JOIN video_category_assignments vca ON vca.video_id = v.id
       LEFT JOIN view_counts vc ON vc.video_id = v.id
+      LEFT JOIN livestreams ls ON ls.video_id = v.id
       ORDER BY v.upload_date DESC
     `).all()
 
     // ── 3. Annotate each row with r2_exists ──────────────────────────────────
     const annotated = await Promise.all((videos.results || []).map(async (video: any) => {
       let r2Exists = null
-      if (env.BUCKET) {
+      if (video?.livestream_provider) {
+        r2Exists = true
+      } else if (env.BUCKET) {
         r2Exists = await hasProcessedPlaybackArtifact(env.BUCKET, video.id)
       }
       return { ...video, r2_exists: r2Exists }
@@ -1080,6 +1146,200 @@ async function handleAdminVideosList(request: any, env: any, corsHeaders: any) {
     console.error('Error:', error)
     return jsonResponse({ error: 'Internal server error', details: getErrorMessage(error) }, 500, corsHeaders)
   }
+}
+
+async function handleAdminLivestreamCreate(request: any, env: any, corsHeaders: any) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
+  const body = await request.json().catch(() => null)
+  if (!body || typeof body !== 'object') return jsonResponse({ error: 'Request body is required' }, 400, corsHeaders)
+
+  const title = typeof body.title === 'string' ? body.title.trim() : ''
+  if (!title) return jsonResponse({ error: 'title is required' }, 400, corsHeaders)
+
+  const description = typeof body.description === 'string' ? body.description.trim() : null
+  const slug = typeof body.slug === 'string' && body.slug.trim() ? body.slug.trim() : null
+  const publishStatus = typeof body.publishStatus === 'string' ? body.publishStatus : 'draft'
+  if (!['draft', 'published', 'archived'].includes(publishStatus)) {
+    return jsonResponse({ error: 'publishStatus must be one of: draft, published, archived' }, 400, corsHeaders)
+  }
+  if (slug && !isValidSlug(slug)) {
+    return jsonResponse({ error: 'slug must be lowercase alphanumeric words separated by hyphens' }, 400, corsHeaders)
+  }
+
+  const provider = typeof body.provider === 'string' && body.provider.trim() ? body.provider.trim() : 'realtimekit'
+  const streamId = typeof body.streamId === 'string' && body.streamId.trim() ? body.streamId.trim() : null
+  const streamKey = typeof body.streamKey === 'string' && body.streamKey.trim() ? body.streamKey.trim() : null
+  const ingestUrl = typeof body.ingestUrl === 'string' && body.ingestUrl.trim() ? body.ingestUrl.trim() : null
+  const playbackUrl = typeof body.playbackUrl === 'string' && body.playbackUrl.trim() ? body.playbackUrl.trim() : null
+  if (playbackUrl) {
+    try {
+      const parsed = new URL(playbackUrl)
+      if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('invalid_protocol')
+    } catch {
+      return jsonResponse({ error: 'playbackUrl must be a valid http(s) URL' }, 400, corsHeaders)
+    }
+  }
+  const livestreamStatus = normalizeLivestreamStatus(body.status, 'scheduled')
+
+  const categoryId = typeof body.categoryId === 'string' && body.categoryId.trim() ? body.categoryId.trim() : null
+  const db = getDatabaseBinding(env)
+  if (categoryId) {
+    const category = await db.prepare(`SELECT id FROM video_categories WHERE id = ?`).bind(categoryId).first()
+    if (!category) {
+      return jsonResponse({ error: 'Category not found', code: 'category_not_found' }, 404, corsHeaders)
+    }
+  }
+  if (slug) {
+    const conflict = await db.prepare('SELECT 1 FROM videos WHERE slug = ? OR id = ? LIMIT 1').bind(slug, slug).first()
+    if (conflict) return jsonResponse({ error: 'Slug already in use or conflicts with an existing video ID' }, 409, corsHeaders)
+  }
+
+  const videoId = crypto.randomUUID()
+  const publishedAt = publishStatus === 'published' ? new Date().toISOString() : null
+
+  await db.prepare(`
+    INSERT INTO videos (
+      id, title, description, full_duration, preview_duration, status, publish_status, published_at, slug, upload_date, updated_at
+    )
+    VALUES (?, ?, ?, 0, 0, 'processed', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).bind(videoId, title, description, publishStatus, publishedAt, slug).run()
+
+  await db.prepare(`
+    INSERT INTO livestreams (
+      video_id, provider, stream_id, stream_key, ingest_url, playback_url, status, started_at, ended_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, CURRENT_TIMESTAMP)
+  `).bind(videoId, provider, streamId, streamKey, ingestUrl, playbackUrl, livestreamStatus).run()
+
+  if (categoryId) {
+    await db.prepare(`
+      INSERT INTO video_category_assignments (video_id, category_id, assigned_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(video_id) DO UPDATE SET category_id = excluded.category_id, assigned_at = CURRENT_TIMESTAMP
+    `).bind(videoId, categoryId).run()
+  }
+
+  const livestreamVideo = await db.prepare(`
+    SELECT v.id, v.title, v.description, v.thumbnail_url, v.full_duration, v.preview_duration,
+           v.upload_date, v.status, v.publish_status, v.published_at, v.updated_at, v.slug, vca.category_id,
+           ls.provider AS livestream_provider,
+           ls.status AS livestream_status,
+           ls.stream_id AS livestream_stream_id,
+           ls.stream_key AS livestream_stream_key,
+           ls.ingest_url AS livestream_ingest_url,
+           ls.playback_url AS livestream_playback_url,
+           ls.recording_video_id AS livestream_recording_video_id
+    FROM videos v
+    LEFT JOIN video_category_assignments vca ON vca.video_id = v.id
+    LEFT JOIN livestreams ls ON ls.video_id = v.id
+    WHERE v.id = ?
+    LIMIT 1
+  `).bind(videoId).first()
+
+  return jsonResponse({ ok: true, video: livestreamVideo }, 201, corsHeaders)
+}
+
+async function handleAdminLivestreamUpdate(request: any, env: any, corsHeaders: any) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
+  const url = new URL(request.url)
+  const pathParts = url.pathname.split('/').filter(Boolean)
+  const videoId = pathParts[3]
+  if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
+
+  const body = await request.json().catch(() => null)
+  if (!body || typeof body !== 'object') return jsonResponse({ error: 'Request body is required' }, 400, corsHeaders)
+
+  const updates = []
+  const values = []
+  if (typeof body.provider === 'string') {
+    updates.push('provider = ?')
+    values.push(body.provider.trim() || 'realtimekit')
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'streamId')) {
+    updates.push('stream_id = ?')
+    values.push(typeof body.streamId === 'string' && body.streamId.trim() ? body.streamId.trim() : null)
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'streamKey')) {
+    updates.push('stream_key = ?')
+    values.push(typeof body.streamKey === 'string' && body.streamKey.trim() ? body.streamKey.trim() : null)
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'ingestUrl')) {
+    updates.push('ingest_url = ?')
+    values.push(typeof body.ingestUrl === 'string' && body.ingestUrl.trim() ? body.ingestUrl.trim() : null)
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'playbackUrl')) {
+    const playbackUrl = typeof body.playbackUrl === 'string' && body.playbackUrl.trim() ? body.playbackUrl.trim() : null
+    if (playbackUrl) {
+      try {
+        const parsed = new URL(playbackUrl)
+        if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('invalid_protocol')
+      } catch {
+        return jsonResponse({ error: 'playbackUrl must be a valid http(s) URL' }, 400, corsHeaders)
+      }
+    }
+    updates.push('playback_url = ?')
+    values.push(playbackUrl)
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+    updates.push('status = ?')
+    values.push(normalizeLivestreamStatus(body.status, 'scheduled'))
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'recordingVideoId')) {
+    const recordingVideoId = typeof body.recordingVideoId === 'string' && body.recordingVideoId.trim()
+      ? body.recordingVideoId.trim()
+      : null
+    if (recordingVideoId) {
+      const db = getDatabaseBinding(env)
+      const recordingVideo = await db.prepare('SELECT id FROM videos WHERE id = ?').bind(recordingVideoId).first()
+      if (!recordingVideo) {
+        return jsonResponse({ error: 'recordingVideoId must reference an existing video' }, 400, corsHeaders)
+      }
+    }
+    updates.push('recording_video_id = ?')
+    values.push(recordingVideoId)
+  }
+
+  if (!updates.length) return jsonResponse({ error: 'No livestream fields to update' }, 400, corsHeaders)
+
+  const db = getDatabaseBinding(env)
+  values.push(videoId)
+  const result = await db.prepare(`
+    UPDATE livestreams
+    SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP
+    WHERE video_id = ?
+  `).bind(...values).run()
+
+  const changes = result.meta?.changes ?? result.changes ?? 0
+  if (!changes) return jsonResponse({ error: 'Livestream not found' }, 404, corsHeaders)
+
+  const livestreamVideo = await db.prepare(`
+    SELECT v.id, v.title, v.description, v.thumbnail_url, v.full_duration, v.preview_duration,
+           v.upload_date, v.status, v.publish_status, v.published_at, v.updated_at, v.slug, vca.category_id,
+           ls.provider AS livestream_provider,
+           ls.status AS livestream_status,
+           ls.stream_id AS livestream_stream_id,
+           ls.stream_key AS livestream_stream_key,
+           ls.ingest_url AS livestream_ingest_url,
+           ls.playback_url AS livestream_playback_url,
+           ls.recording_video_id AS livestream_recording_video_id
+    FROM videos v
+    LEFT JOIN video_category_assignments vca ON vca.video_id = v.id
+    LEFT JOIN livestreams ls ON ls.video_id = v.id
+    WHERE v.id = ?
+    LIMIT 1
+  `).bind(videoId).first()
+
+  return jsonResponse({ ok: true, video: livestreamVideo }, 200, corsHeaders)
 }
 
 async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHeaders: any) {
@@ -1116,8 +1376,15 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
     return jsonResponse({ error: 'slug must be lowercase alphanumeric words separated by hyphens (e.g. my-video-title), or null to clear it' }, 400, corsHeaders)
   }
 
+  const db = getDatabaseBinding(env)
+  const videoExists = await db.prepare('SELECT 1 FROM videos WHERE id = ?').bind(videoId).first()
+  if (!videoExists) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+  const livestreamRow = await db.prepare('SELECT video_id FROM livestreams WHERE video_id = ? LIMIT 1').bind(videoId).first()
+  const isLivestreamVideo = Boolean(livestreamRow)
+
   // Guard: refuse to publish if the processed playlist is missing from R2.
-  if (hasStatus && body.status === 'published' && env.BUCKET) {
+  // Livestream videos are allowed to publish without an uploaded VOD.
+  if (hasStatus && body.status === 'published' && env.BUCKET && !isLivestreamVideo) {
     const exists = await hasProcessedPlaybackArtifact(env.BUCKET, videoId)
     if (!exists) {
       return jsonResponse({
@@ -1126,10 +1393,6 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
       }, 422, corsHeaders)
     }
   }
-
-  const db = getDatabaseBinding(env)
-  const videoExists = await db.prepare('SELECT 1 FROM videos WHERE id = ?').bind(videoId).first()
-  if (!videoExists) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
   let validatedCategoryId = null
   if (hasCategoryId) {
     if (body.categoryId === null) {
@@ -1217,9 +1480,17 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
     }
 
     const video = await db.prepare(`
-      SELECT v.id, v.title, v.status, v.publish_status, v.published_at, v.updated_at, v.slug, vca.category_id
+      SELECT v.id, v.title, v.status, v.publish_status, v.published_at, v.updated_at, v.slug, vca.category_id,
+             ls.provider AS livestream_provider,
+             ls.status AS livestream_status,
+             ls.stream_id AS livestream_stream_id,
+             ls.stream_key AS livestream_stream_key,
+             ls.ingest_url AS livestream_ingest_url,
+             ls.playback_url AS livestream_playback_url,
+             ls.recording_video_id AS livestream_recording_video_id
       FROM videos v
       LEFT JOIN video_category_assignments vca ON vca.video_id = v.id
+      LEFT JOIN livestreams ls ON ls.video_id = v.id
       WHERE v.id = ?
     `).bind(videoId).first()
     if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
@@ -1463,6 +1734,17 @@ async function handleVideoSwap(request: any, env: any, corsHeaders: any) {
   if ((retireResult.meta?.changes ?? 0) === 0 || (promoteResult.meta?.changes ?? 0) === 0) {
     return jsonResponse({ error: 'Swap failed: video status changed concurrently, please retry' }, 409, corsHeaders)
   }
+
+  // If the replaced source was a livestream, mark it as replaced and keep an
+  // explicit link to the promoted VOD row.
+  await db.prepare(`
+    UPDATE livestreams
+    SET status = 'replaced_with_vod',
+        recording_video_id = ?,
+        ended_at = COALESCE(ended_at, CURRENT_TIMESTAMP),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE video_id = ?
+  `).bind(draftId, publishedId).run()
 
   // Copy thumbnails only after the swap has committed so a failed swap never
   // overwrites the draft's existing thumbnail assets.

@@ -1,15 +1,9 @@
-<!-- 
+<!--
   packages/web/pages/admin/index.vue
-  
-  ONE change from the previous version: definePageMeta({ middleware: 'admin' })
-  is added at the top of the <script setup> block. Everything else is identical.
 
   The middleware (packages/web/middleware/admin.ts) handles:
     - Unauthenticated → /login?redirect=/admin
     - Wrong role       → /
-  
-  So by the time this component mounts, user.value is guaranteed to be an
-  editor, admin, or super_admin.
 -->
 <template>
   <div class="min-h-screen overflow-x-hidden bg-gray-50 dark:bg-gray-950">
@@ -122,7 +116,16 @@
 
         <!-- Video Management -->
         <div v-if="activeAdminTab === 'videos'" id="videos-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
-          <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">Video management</h2>
+          <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-xl font-bold text-gray-900 dark:text-white">Video management</h2>
+            <button
+              class="inline-flex items-center gap-2 px-3 py-2 rounded bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold"
+              @click="openLivestreamModal"
+            >
+              <span class="text-base leading-none">+</span>
+              Create new livestream
+            </button>
+          </div>
           <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Set preview lock per video: 0s means premium-only access, while matching full duration unlocks the full video.</p>
           <div>
             <div v-if="videosLoading" class="space-y-3">
@@ -268,17 +271,23 @@
                         </template>
                       </div>
                       <div class="mt-1 flex flex-wrap gap-1">
-                        <span v-if="video.r2_exists === false" class="inline-flex items-center gap-1 rounded-full bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300 px-2 py-0.5 text-[10px] font-semibold">⚠ R2 missing</span>
+                        <span v-if="video.livestream_provider" class="inline-flex items-center gap-1 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 px-2 py-0.5 text-[10px] font-semibold">🔴 Live</span>
+                        <span v-if="video.r2_exists === false && !video.livestream_provider" class="inline-flex items-center gap-1 rounded-full bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300 px-2 py-0.5 text-[10px] font-semibold">⚠ R2 missing</span>
                         <span v-if="video.publish_status === 'draft'" class="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-0.5 text-[10px] font-semibold">📝 Draft</span>
                       </div>
                     </td>
                     <td class="py-3 pr-4">
-                      <span
-                        class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
-                        :class="statusBadgeClass(video.publish_status)"
-                      >
-                        {{ video.publish_status ?? 'draft' }}
-                      </span>
+                      <div class="space-y-1">
+                        <span
+                          class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+                          :class="statusBadgeClass(video.publish_status)"
+                        >
+                          {{ video.publish_status ?? 'draft' }}
+                        </span>
+                        <span v-if="video.livestream_provider" class="block text-[11px] text-purple-600 dark:text-purple-300">
+                          stream: {{ video.livestream_status || 'scheduled' }}
+                        </span>
+                      </div>
                     </td>
                     <td class="py-3 pr-4">
                       <select
@@ -302,6 +311,7 @@
                           type="number"
                           min="0"
                           :max="getActualDuration(video)"
+                          :disabled="Boolean(video.livestream_provider)"
                           class="w-24 px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
                         />
                         <button class="text-xs text-gray-600 dark:text-gray-300 hover:underline whitespace-nowrap" @click="previewLockByVideoId[video.id] = getActualDuration(video)">Unlock full</button>
@@ -1000,6 +1010,65 @@
       </div>
     </div>
 
+    <div v-if="livestreamModal.open" class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" @click.self="closeLivestreamModal">
+      <div class="w-full max-w-2xl rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Create livestream video</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400">Creates a standard video row backed by RealtimeKit metadata. Attach VOD later via swap.</p>
+          </div>
+          <button class="text-sm text-gray-600 dark:text-gray-300 hover:underline" @click="closeLivestreamModal">Close</button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label class="text-sm text-gray-700 dark:text-gray-300">Title
+            <input v-model="livestreamModal.form.title" type="text" class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+          </label>
+          <label class="text-sm text-gray-700 dark:text-gray-300">Slug (optional)
+            <input v-model="livestreamModal.form.slug" type="text" placeholder="my-livestream" class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+          </label>
+          <label class="text-sm text-gray-700 dark:text-gray-300">Stream status
+            <select v-model="livestreamModal.form.status" class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+              <option value="scheduled">scheduled</option>
+              <option value="live">live</option>
+              <option value="ended">ended</option>
+            </select>
+          </label>
+          <label class="text-sm text-gray-700 dark:text-gray-300">Publish status
+            <select v-model="livestreamModal.form.publishStatus" class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+              <option value="draft">draft</option>
+              <option value="published">published</option>
+            </select>
+          </label>
+          <label class="text-sm text-gray-700 dark:text-gray-300">Playback URL
+            <input v-model="livestreamModal.form.playbackUrl" type="url" placeholder="https://..." class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+          </label>
+          <label class="text-sm text-gray-700 dark:text-gray-300">Ingest URL
+            <input v-model="livestreamModal.form.ingestUrl" type="url" placeholder="rtmps://..." class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+          </label>
+          <label class="text-sm text-gray-700 dark:text-gray-300">Stream ID
+            <input v-model="livestreamModal.form.streamId" type="text" class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+          </label>
+          <label class="text-sm text-gray-700 dark:text-gray-300">Stream key
+            <input v-model="livestreamModal.form.streamKey" type="text" class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+          </label>
+          <label class="text-sm text-gray-700 dark:text-gray-300 md:col-span-2">Description
+            <textarea v-model="livestreamModal.form.description" rows="2" class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"></textarea>
+          </label>
+        </div>
+        <p v-if="livestreamModal.error" class="mt-3 text-sm text-red-600 dark:text-red-300">{{ livestreamModal.error }}</p>
+        <div class="mt-4 flex justify-end gap-2">
+          <button class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 text-sm" @click="closeLivestreamModal">Cancel</button>
+          <button
+            class="px-3 py-2 rounded bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold disabled:opacity-50"
+            :disabled="livestreamModal.saving"
+            @click="createLivestream"
+          >
+            {{ livestreamModal.saving ? 'Creating…' : 'Create livestream' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Swap modal -->
     <div v-if="swapModal.open" class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" @click.self="swapModal.open = false">
       <div
@@ -1126,6 +1195,13 @@ interface Video {
   slug?: string | null
   category_id?: string | null
   total_views?: number
+  livestream_provider?: string | null
+  livestream_status?: string | null
+  livestream_stream_id?: string | null
+  livestream_stream_key?: string | null
+  livestream_ingest_url?: string | null
+  livestream_playback_url?: string | null
+  livestream_recording_video_id?: string | null
 }
 
 interface Category {
@@ -1255,6 +1331,22 @@ const swapModal = ref<{
   sourceVideo: Video | null
   targetId: string | null
 }>({ open: false, step: 0, sourceVideo: null, targetId: null })
+const livestreamModal = ref({
+  open: false,
+  saving: false,
+  error: '',
+  form: {
+    title: '',
+    description: '',
+    slug: '',
+    status: 'scheduled',
+    publishStatus: 'draft',
+    playbackUrl: '',
+    ingestUrl: '',
+    streamId: '',
+    streamKey: '',
+  },
+})
 const componentTypes: BlockType[] = ['hero', 'featured_row', 'cta', 'text_split', 'video_grid', 'video_grid_legacy']
 const layoutBlocks = ref<LayoutBlock[]>([])
 
@@ -1437,7 +1529,9 @@ const chronologicallySortedUploads = computed(() =>
   [...uploads.value].sort((a, b) => new Date(b.upload_date).getTime() - new Date(a.upload_date).getTime())
 )
 
-const draftVideos      = computed(() => chronologicallySortedUploads.value.filter(v => v.publish_status === 'draft' && v.r2_exists !== false))
+const draftVideos      = computed(() => chronologicallySortedUploads.value.filter(v =>
+  v.publish_status === 'draft' && v.r2_exists !== false && !v.livestream_provider
+))
 const swapTargetVideo  = computed(() => uploads.value.find(v => v.id === swapModal.value.targetId) ?? null)
 
 const featuredVideos = computed(() =>
@@ -1499,6 +1593,72 @@ const getDefaultBlocks = (): LayoutBlock[] => ([
   { id: crypto.randomUUID(), type: 'hero',         title: 'Hero section',         body: 'Feature your main value proposition here.' },
   { id: crypto.randomUUID(), type: 'featured_row', title: 'Featured videos row',  body: 'Drag this block to position featured content on the page.' },
 ])
+
+const resetLivestreamModal = () => {
+  livestreamModal.value = {
+    open: false,
+    saving: false,
+    error: '',
+    form: {
+      title: '',
+      description: '',
+      slug: '',
+      status: 'scheduled',
+      publishStatus: 'draft',
+      playbackUrl: '',
+      ingestUrl: '',
+      streamId: '',
+      streamKey: '',
+    },
+  }
+}
+
+const openLivestreamModal = () => {
+  livestreamModal.value.open = true
+  livestreamModal.value.error = ''
+}
+
+const closeLivestreamModal = () => {
+  resetLivestreamModal()
+}
+
+const createLivestream = async () => {
+  const title = livestreamModal.value.form.title.trim()
+  if (!title) {
+    livestreamModal.value.error = 'Title is required.'
+    return
+  }
+  livestreamModal.value.saving = true
+  livestreamModal.value.error = ''
+  try {
+    const payload = {
+      title,
+      description: livestreamModal.value.form.description.trim() || null,
+      slug: livestreamModal.value.form.slug.trim() || null,
+      status: livestreamModal.value.form.status,
+      publishStatus: livestreamModal.value.form.publishStatus,
+      playbackUrl: livestreamModal.value.form.playbackUrl.trim() || null,
+      ingestUrl: livestreamModal.value.form.ingestUrl.trim() || null,
+      streamId: livestreamModal.value.form.streamId.trim() || null,
+      streamKey: livestreamModal.value.form.streamKey.trim() || null,
+      provider: 'realtimekit',
+    }
+    const res = await fetch(`${config.public.apiUrl}/api/admin/videos/livestreams`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify(payload),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    showToast('success', 'Livestream video created.')
+    resetLivestreamModal()
+    await loadVideos()
+  } catch (e: any) {
+    livestreamModal.value.error = e.message || 'Failed to create livestream'
+  } finally {
+    livestreamModal.value.saving = false
+  }
+}
 
 const loadVideos = async () => {
   videosLoading.value = true

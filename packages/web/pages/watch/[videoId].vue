@@ -176,6 +176,15 @@
                 <media-fullscreen-button></media-fullscreen-button>
               </media-control-bar>
             </media-controller>
+            <div
+              v-if="videoData.video.isLivestream && !videoData.video.playlistUrl"
+              class="absolute inset-0 z-10 bg-black/85 flex items-center justify-center px-6 text-center"
+            >
+              <div>
+                <p class="text-base font-semibold text-white">Livestream feed unavailable</p>
+                <p class="mt-1 text-sm text-gray-300">The stream is not currently connected. Attach a recording or update the livestream playback URL in admin.</p>
+              </div>
+            </div>
           </div>
 
           <!-- Video Info -->
@@ -193,7 +202,15 @@
               </span>
 
               <span
-                v-if="videoData.hasAccess"
+                v-if="videoData.video.isLivestream"
+                class="flex items-center space-x-1 text-rose-600 dark:text-rose-400 font-semibold"
+              >
+                <span class="inline-block w-2 h-2 rounded-full bg-rose-500"></span>
+                <span>Livestream · {{ videoData.video.livestreamStatus || 'scheduled' }}</span>
+              </span>
+
+              <span
+                v-else-if="videoData.hasAccess"
                 class="flex items-center space-x-1 text-yellow-600 dark:text-yellow-400 font-semibold"
               >
                 <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -212,6 +229,9 @@
 
             <p class="text-gray-700 dark:text-gray-300 leading-relaxed">
               {{ videoDescription }}
+            </p>
+            <p v-if="videoData.video.isLivestream" class="mt-3 text-sm text-gray-500 dark:text-gray-400">
+              Live playback depends on RealtimeKit ingest/playback availability. Rewind/time-shift and tokenized segment protection are limited until a VOD recording is attached.
             </p>
           </div>
         </div>
