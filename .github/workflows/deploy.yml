@@ -74,20 +74,19 @@ jobs:
 
       - name: Smoke check API CORS origin (staging)
         run: |
-          curl -sSI -H "Origin: $FRONTEND_URL" "$API_BASE_URL/api/health" | rg -i "^access-control-allow-origin: ${FRONTEND_URL}$"
-          echo "$EXPECTED_ALLOWED_ORIGINS" | rg "$FRONTEND_URL"
+          headers="$(curl -fsSI -H "Origin: $FRONTEND_URL" "$API_BASE_URL/api/health" | tr -d '\r')"
+          echo "$headers" | rg -i "^access-control-allow-origin: ${FRONTEND_URL}$"
+          echo ",${EXPECTED_ALLOWED_ORIGINS}," | tr -d ' ' | rg -F ",${FRONTEND_URL},"
 
       - name: Smoke check authenticated admin endpoint (staging)
-        if: ${{ secrets.STAGING_ADMIN_SMOKE_TOKEN != '' }}
         env:
           ADMIN_SMOKE_TOKEN: ${{ secrets.STAGING_ADMIN_SMOKE_TOKEN }}
         run: |
+          if [ -z "$ADMIN_SMOKE_TOKEN" ]; then
+            echo "Skipping admin smoke check because secrets.STAGING_ADMIN_SMOKE_TOKEN is not configured."
+            exit 0
+          fi
           curl -fsS -H "Authorization: Bearer $ADMIN_SMOKE_TOKEN" "$API_BASE_URL/api/auth/me" | node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync(0,"utf8"));if(!body?.user?.id||!["admin","super_admin"].includes(body?.user?.role)){console.error("Admin smoke check failed",body);process.exit(1)}'
-
-      - name: Skip admin smoke check (staging)
-        if: ${{ secrets.STAGING_ADMIN_SMOKE_TOKEN == '' }}
-        run: |
-          echo "Skipping admin smoke check because secrets.STAGING_ADMIN_SMOKE_TOKEN is not configured."
 
       - name: Smoke check frontend reachability (staging)
         run: |
@@ -154,20 +153,19 @@ jobs:
 
       - name: Smoke check API CORS origin (production)
         run: |
-          curl -sSI -H "Origin: $FRONTEND_URL" "$API_BASE_URL/api/health" | rg -i "^access-control-allow-origin: ${FRONTEND_URL}$"
-          echo "$EXPECTED_ALLOWED_ORIGINS" | rg "$FRONTEND_URL"
+          headers="$(curl -fsSI -H "Origin: $FRONTEND_URL" "$API_BASE_URL/api/health" | tr -d '\r')"
+          echo "$headers" | rg -i "^access-control-allow-origin: ${FRONTEND_URL}$"
+          echo ",${EXPECTED_ALLOWED_ORIGINS}," | tr -d ' ' | rg -F ",${FRONTEND_URL},"
 
       - name: Smoke check authenticated admin endpoint (production)
-        if: ${{ secrets.PROD_ADMIN_SMOKE_TOKEN != '' }}
         env:
           ADMIN_SMOKE_TOKEN: ${{ secrets.PROD_ADMIN_SMOKE_TOKEN }}
         run: |
+          if [ -z "$ADMIN_SMOKE_TOKEN" ]; then
+            echo "Skipping admin smoke check because secrets.PROD_ADMIN_SMOKE_TOKEN is not configured."
+            exit 0
+          fi
           curl -fsS -H "Authorization: Bearer $ADMIN_SMOKE_TOKEN" "$API_BASE_URL/api/auth/me" | node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync(0,"utf8"));if(!body?.user?.id||!["admin","super_admin"].includes(body?.user?.role)){console.error("Admin smoke check failed",body);process.exit(1)}'
-
-      - name: Skip admin smoke check (production)
-        if: ${{ secrets.PROD_ADMIN_SMOKE_TOKEN == '' }}
-        run: |
-          echo "Skipping admin smoke check because secrets.PROD_ADMIN_SMOKE_TOKEN is not configured."
 
       - name: Smoke check frontend reachability (production)
         run: |
