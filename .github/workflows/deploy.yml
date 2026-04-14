@@ -78,21 +78,21 @@ jobs:
           echo "$headers" | rg -i "^access-control-allow-origin: ${FRONTEND_URL}$"
           echo ",${EXPECTED_ALLOWED_ORIGINS}," | tr -d ' ' | rg -F ",${FRONTEND_URL},"
 
-      - name: Smoke check authenticated admin endpoint (staging)
+      - name: Smoke check deployment auth endpoint (staging)
         env:
-          ADMIN_SMOKE_TOKEN: ${{ secrets.STAGING_ADMIN_SMOKE_TOKEN }}
+          DEPLOY_SMOKE_AUTH_TOKEN: ${{ secrets.STAGING_DEPLOY_SMOKE_AUTH_TOKEN }}
         run: |
-          if [ -z "$ADMIN_SMOKE_TOKEN" ]; then
-            echo "Skipping admin smoke check because secrets.STAGING_ADMIN_SMOKE_TOKEN is not configured."
+          if [ -z "$DEPLOY_SMOKE_AUTH_TOKEN" ]; then
+            echo "Skipping deploy auth smoke check because secrets.STAGING_DEPLOY_SMOKE_AUTH_TOKEN is not configured."
             exit 0
           fi
-          auth_status="$(curl -sS -o /tmp/admin-smoke-staging.json -w "%{http_code}" -H "Authorization: Bearer $ADMIN_SMOKE_TOKEN" "$API_BASE_URL/api/auth/me")"
+          auth_status="$(curl -sS -o /tmp/smoke-auth-staging.json -w "%{http_code}" -H "X-Smoke-Token: $DEPLOY_SMOKE_AUTH_TOKEN" "$API_BASE_URL/api/admin/smoke-auth")"
           if [ "$auth_status" != "200" ]; then
-            echo "Admin smoke check failed with HTTP $auth_status"
-            cat /tmp/admin-smoke-staging.json
+            echo "Deploy auth smoke check failed with HTTP $auth_status"
+            cat /tmp/smoke-auth-staging.json
             exit 1
           fi
-          node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync("/tmp/admin-smoke-staging.json","utf8"));const user=body?.user||{};if(!(user.id||user.sub)||!["admin","super_admin"].includes(user.role)){console.error("Admin smoke check failed",body);process.exit(1)}'
+          node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync("/tmp/smoke-auth-staging.json","utf8"));if(body?.ok!==true){console.error("Deploy auth smoke response invalid",body);process.exit(1)}'
 
       - name: Smoke check frontend reachability (staging)
         run: |
@@ -163,21 +163,21 @@ jobs:
           echo "$headers" | rg -i "^access-control-allow-origin: ${FRONTEND_URL}$"
           echo ",${EXPECTED_ALLOWED_ORIGINS}," | tr -d ' ' | rg -F ",${FRONTEND_URL},"
 
-      - name: Smoke check authenticated admin endpoint (production)
+      - name: Smoke check deployment auth endpoint (production)
         env:
-          ADMIN_SMOKE_TOKEN: ${{ secrets.PROD_ADMIN_SMOKE_TOKEN }}
+          DEPLOY_SMOKE_AUTH_TOKEN: ${{ secrets.PROD_DEPLOY_SMOKE_AUTH_TOKEN }}
         run: |
-          if [ -z "$ADMIN_SMOKE_TOKEN" ]; then
-            echo "Skipping admin smoke check because secrets.PROD_ADMIN_SMOKE_TOKEN is not configured."
+          if [ -z "$DEPLOY_SMOKE_AUTH_TOKEN" ]; then
+            echo "Skipping deploy auth smoke check because secrets.PROD_DEPLOY_SMOKE_AUTH_TOKEN is not configured."
             exit 0
           fi
-          auth_status="$(curl -sS -o /tmp/admin-smoke-production.json -w "%{http_code}" -H "Authorization: Bearer $ADMIN_SMOKE_TOKEN" "$API_BASE_URL/api/auth/me")"
+          auth_status="$(curl -sS -o /tmp/smoke-auth-production.json -w "%{http_code}" -H "X-Smoke-Token: $DEPLOY_SMOKE_AUTH_TOKEN" "$API_BASE_URL/api/admin/smoke-auth")"
           if [ "$auth_status" != "200" ]; then
-            echo "Admin smoke check failed with HTTP $auth_status"
-            cat /tmp/admin-smoke-production.json
+            echo "Deploy auth smoke check failed with HTTP $auth_status"
+            cat /tmp/smoke-auth-production.json
             exit 1
           fi
-          node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync("/tmp/admin-smoke-production.json","utf8"));const user=body?.user||{};if(!(user.id||user.sub)||!["admin","super_admin"].includes(user.role)){console.error("Admin smoke check failed",body);process.exit(1)}'
+          node -e 'const fs=require("node:fs");const body=JSON.parse(fs.readFileSync("/tmp/smoke-auth-production.json","utf8"));if(body?.ok!==true){console.error("Deploy auth smoke response invalid",body);process.exit(1)}'
 
       - name: Smoke check frontend reachability (production)
         run: |

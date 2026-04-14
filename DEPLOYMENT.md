@@ -38,8 +38,8 @@ Required repository secrets:
 - `CLOUDFLARE_API_TOKEN_PROD`
 - `CLOUDFLARE_ACCOUNT_ID_STAGING`
 - `CLOUDFLARE_ACCOUNT_ID_PROD`
-- `STAGING_ADMIN_SMOKE_TOKEN` (JWT for an admin/super_admin staging account)
-- `PROD_ADMIN_SMOKE_TOKEN` (JWT for an admin/super_admin production account)
+- `STAGING_SMOKE_AUTH_TOKEN` (shared secret for staging `/api/admin/smoke-auth` smoke check)
+- `PROD_SMOKE_AUTH_TOKEN` (shared secret for production `/api/admin/smoke-auth` smoke check)
 
 Note: the deploy workflow reads these exact `CLOUDFLARE_*_STAGING/PROD` secret names.
 
@@ -63,8 +63,17 @@ The hardened workflows now enforce:
 - Post-deploy smoke checks validate:
   - `/api/health` payload (`{ status: "healthy" }`)
   - CORS `Access-Control-Allow-Origin` against `FRONTEND_URL_*`
-  - authenticated admin endpoint (`GET /api/auth/me`)
+  - machine smoke-auth endpoint (`GET /api/admin/smoke-auth`) via `X-Smoke-Token`
   - frontend reachability.
+
+Smoke auth endpoint details:
+
+- Route: `GET /api/admin/smoke-auth`
+- Header: `X-Smoke-Token: <token>`
+- Secrets used by workflow:
+  - Worker env secrets: `SMOKE_AUTH_TOKEN_STAGING` / `SMOKE_AUTH_TOKEN_PROD`
+  - GitHub Action secrets: `STAGING_SMOKE_AUTH_TOKEN` / `PROD_SMOKE_AUTH_TOKEN`
+- Token must match exactly (timing-safe compare); use a long random value and rotate as needed.
 
 ## Fresh infrastructure bootstrap runbook
 

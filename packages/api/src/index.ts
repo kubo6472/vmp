@@ -53,6 +53,7 @@ import {
   ensurePillsApiKeySetting,
   logSegmentEvent,
 } from './adminExtras.js'
+import { handleAdminSmokeAuth } from './smokeAuth.js'
 import { getReadSession, applySessionBookmark } from './d1Session.js'
 import { placeHomepageVideos, normalizeHomepagePlacementConfig } from './homepagePlacement.js'
 import { ensureAdminSettingsTable } from './adminSettingsTable.js'
@@ -282,6 +283,9 @@ export default {
     }
     if (url.pathname === '/api/admin/pills/settings' && ['GET', 'PATCH'].includes(request.method)) {
       return handleAdminPillsSettings(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/smoke-auth' && request.method === 'GET') {
+      return handleAdminSmokeAuth(request, env, corsHeaders)
     }
     if (url.pathname.match(/^\/api\/categories\/[^/]+\/videos$/) && request.method === 'GET') {
       return handleCategoryVideosBySlug(request, env, corsHeaders)
