@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeGoCardlessStatus, normalizeStripeStatus } from '../src/stripe.js'
+import { normalizeGoCardlessStatus } from '../src/gocardless.js'
+import { normalizeStripeStatus } from '../src/stripeClient.js'
 
 describe('normalizeStripeStatus', () => {
   it('maps active lifecycle statuses', () => {

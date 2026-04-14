@@ -970,10 +970,149 @@
           </div>
         </div>
 
-        <div v-if="activeAdminTab === 'system'" id="system-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-4">
-          <h2 class="text-xl font-bold text-gray-900 dark:text-white">System</h2>
-          <p class="text-sm text-gray-600 dark:text-gray-400">Operational controls and refresh actions.</p>
-          <button class="px-4 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-gray-100" @click="reloadAll">Reload data</button>
+        <div v-if="activeAdminTab === 'system'" id="system-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 class="text-xl font-bold text-gray-900 dark:text-white">System</h2>
+              <p class="text-sm text-gray-600 dark:text-gray-400">Operational controls, payments, and refresh actions.</p>
+            </div>
+            <button class="px-4 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-gray-100" @click="reloadAll">Reload data</button>
+          </div>
+
+          <div v-if="!isAdmin" class="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+            Only site administrators can edit payment gateway settings.
+          </div>
+
+          <template v-else>
+            <div v-if="paymentSettingsMessage" class="rounded-lg border px-4 py-3 text-sm" :class="paymentSettingsMessageClass">{{ paymentSettingsMessage }}</div>
+
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-4">
+              <h3 class="font-semibold text-gray-900 dark:text-white">Payments</h3>
+              <p class="text-sm text-gray-600 dark:text-gray-400">
+                Configure which gateways appear at checkout, per-gateway prices shown in the premium overlay, and Stripe price IDs used for Stripe Checkout.
+              </p>
+
+              <div class="flex flex-wrap gap-4">
+                <label class="inline-flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
+                  <input v-model="paymentSettings.enabledProviders" type="checkbox" value="stripe" class="rounded border-gray-300 dark:border-gray-600">
+                  Stripe (card)
+                </label>
+                <label class="inline-flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
+                  <input v-model="paymentSettings.enabledProviders" type="checkbox" value="gocardless" class="rounded border-gray-300 dark:border-gray-600">
+                  GoCardless (bank debit)
+                </label>
+              </div>
+
+              <div>
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Button order (drag via order fields)</p>
+                <div class="flex flex-wrap gap-3">
+                  <label class="text-sm text-gray-700 dark:text-gray-300">1st
+                    <select v-model="paymentSettings.providerOrder[0]" class="mt-1 block px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                      <option value="stripe">Stripe</option>
+                      <option value="gocardless">GoCardless</option>
+                    </select>
+                  </label>
+                  <label class="text-sm text-gray-700 dark:text-gray-300">2nd
+                    <select v-model="paymentSettings.providerOrder[1]" class="mt-1 block px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                      <option value="stripe">Stripe</option>
+                      <option value="gocardless">GoCardless</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Plans offered</p>
+                <div class="flex flex-wrap gap-4">
+                  <label class="inline-flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
+                    <input v-model="paymentSettings.allowedPlans" type="checkbox" value="monthly" class="rounded border-gray-300 dark:border-gray-600">
+                    Monthly
+                  </label>
+                  <label class="inline-flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
+                    <input v-model="paymentSettings.allowedPlans" type="checkbox" value="yearly" class="rounded border-gray-300 dark:border-gray-600">
+                    Yearly
+                  </label>
+                  <label class="inline-flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
+                    <input v-model="paymentSettings.allowedPlans" type="checkbox" value="club" class="rounded border-gray-300 dark:border-gray-600">
+                    Club
+                  </label>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="space-y-2">
+                  <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Fallback prices (EUR)</h4>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Used when a provider-specific price is empty.</p>
+                  <div class="grid grid-cols-3 gap-2">
+                    <label class="text-xs text-gray-600 dark:text-gray-300">Monthly
+                      <input v-model="paymentSettings.basePrices.monthly" type="text" inputmode="decimal" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" placeholder="e.g. 6.90">
+                    </label>
+                    <label class="text-xs text-gray-600 dark:text-gray-300">Yearly
+                      <input v-model="paymentSettings.basePrices.yearly" type="text" inputmode="decimal" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" placeholder="e.g. 74.90">
+                    </label>
+                    <label class="text-xs text-gray-600 dark:text-gray-300">Club
+                      <input v-model="paymentSettings.basePrices.club" type="text" inputmode="decimal" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" placeholder="e.g. 109.00">
+                    </label>
+                  </div>
+                </div>
+                <div class="space-y-2">
+                  <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Stripe price IDs</h4>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">From Stripe Dashboard → Products → Price IDs.</p>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Monthly price ID
+                    <input v-model="paymentSettings.stripePriceIds.monthly" type="text" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-xs" placeholder="price_...">
+                  </label>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Yearly price ID
+                    <input v-model="paymentSettings.stripePriceIds.yearly" type="text" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-xs" placeholder="price_...">
+                  </label>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Club price ID
+                    <input v-model="paymentSettings.stripePriceIds.club" type="text" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-xs" placeholder="price_...">
+                  </label>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="rounded-lg border border-gray-100 dark:border-gray-800 p-3 space-y-2">
+                  <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Stripe display prices (EUR)</h4>
+                  <div class="grid grid-cols-3 gap-2">
+                    <label class="text-xs text-gray-600 dark:text-gray-300">Monthly
+                      <input v-model="paymentSettings.providerPrices.stripe.monthly" type="text" inputmode="decimal" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                    <label class="text-xs text-gray-600 dark:text-gray-300">Yearly
+                      <input v-model="paymentSettings.providerPrices.stripe.yearly" type="text" inputmode="decimal" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                    <label class="text-xs text-gray-600 dark:text-gray-300">Club
+                      <input v-model="paymentSettings.providerPrices.stripe.club" type="text" inputmode="decimal" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                  </div>
+                </div>
+                <div class="rounded-lg border border-gray-100 dark:border-gray-800 p-3 space-y-2">
+                  <h4 class="text-sm font-semibold text-gray-900 dark:text-white">GoCardless display prices (EUR)</h4>
+                  <div class="grid grid-cols-3 gap-2">
+                    <label class="text-xs text-gray-600 dark:text-gray-300">Monthly
+                      <input v-model="paymentSettings.providerPrices.gocardless.monthly" type="text" inputmode="decimal" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                    <label class="text-xs text-gray-600 dark:text-gray-300">Yearly
+                      <input v-model="paymentSettings.providerPrices.gocardless.yearly" type="text" inputmode="decimal" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                    <label class="text-xs text-gray-600 dark:text-gray-300">Club
+                      <input v-model="paymentSettings.providerPrices.gocardless.club" type="text" inputmode="decimal" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-50"
+                  :disabled="paymentSettingsSaving"
+                  @click="savePaymentSettings"
+                >
+                  {{ paymentSettingsSaving ? 'Saving…' : 'Save payment settings' }}
+                </button>
+              </div>
+            </div>
+          </template>
         </div>
       </section>
 
@@ -1372,6 +1511,33 @@ const newsletterEditingTemplateId = ref<string | null>(null)
 const newsletterTemplateSaving = ref(false)
 const homepageHeroTitle = ref('')
 const homepageHeroSubtitle = ref('')
+
+type PaymentProvider = 'stripe' | 'gocardless'
+type PlanType = 'monthly' | 'yearly' | 'club'
+interface PaymentPriceRow { monthly: string; yearly: string; club: string }
+
+const paymentSettings = ref<{
+  enabledProviders: PaymentProvider[]
+  providerOrder: [PaymentProvider, PaymentProvider]
+  allowedPlans: PlanType[]
+  basePrices: PaymentPriceRow
+  providerPrices: { stripe: PaymentPriceRow; gocardless: PaymentPriceRow }
+  stripePriceIds: PaymentPriceRow
+}>({
+  enabledProviders: ['stripe'],
+  providerOrder: ['stripe', 'gocardless'],
+  allowedPlans: ['monthly', 'yearly', 'club'],
+  basePrices: { monthly: '', yearly: '', club: '' },
+  providerPrices: {
+    stripe: { monthly: '', yearly: '', club: '' },
+    gocardless: { monthly: '', yearly: '', club: '' },
+  },
+  stripePriceIds: { monthly: '', yearly: '', club: '' },
+})
+const paymentSettingsSaving = ref(false)
+const paymentSettingsMessage = ref('')
+const paymentSettingsMessageClass = ref('')
+
 let usersLoadRequestId = 0
 const users = ref<AdminUserRow[]>([])
 const usersLoading = ref(false)
@@ -1976,6 +2142,100 @@ const loadHomepageContent = async () => {
   homepageHeroSubtitle.value = data.subtitle || ''
 }
 
+const loadPaymentSettings = async () => {
+  if (!isAdmin.value) return
+  paymentSettingsMessage.value = ''
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/payments/settings`, { headers: authHeader() })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    const enabled = Array.isArray(data.enabledProviders) ? data.enabledProviders.filter((p: string) => p === 'stripe' || p === 'gocardless') : ['stripe']
+    const order = Array.isArray(data.providerOrder) ? data.providerOrder.filter((p: string) => p === 'stripe' || p === 'gocardless') : []
+    const first: PaymentProvider = order[0] === 'gocardless' ? 'gocardless' : 'stripe'
+    const second: PaymentProvider = order[1] === 'stripe' || order[1] === 'gocardless' ? order[1] : (first === 'stripe' ? 'gocardless' : 'stripe')
+    const allowed = Array.isArray(data.allowedPlans) ? data.allowedPlans.filter((p: string) => p === 'monthly' || p === 'yearly' || p === 'club') : ['monthly', 'yearly', 'club']
+    paymentSettings.value = {
+      enabledProviders: enabled.length ? enabled : ['stripe'],
+      providerOrder: [first, second],
+      allowedPlans: allowed.length ? allowed : ['monthly', 'yearly', 'club'],
+      basePrices: {
+        monthly: data.basePrices?.monthly != null ? String(data.basePrices.monthly) : '',
+        yearly: data.basePrices?.yearly != null ? String(data.basePrices.yearly) : '',
+        club: data.basePrices?.club != null ? String(data.basePrices.club) : '',
+      },
+      providerPrices: {
+        stripe: {
+          monthly: data.providerPrices?.stripe?.monthly != null ? String(data.providerPrices.stripe.monthly) : '',
+          yearly: data.providerPrices?.stripe?.yearly != null ? String(data.providerPrices.stripe.yearly) : '',
+          club: data.providerPrices?.stripe?.club != null ? String(data.providerPrices.stripe.club) : '',
+        },
+        gocardless: {
+          monthly: data.providerPrices?.gocardless?.monthly != null ? String(data.providerPrices.gocardless.monthly) : '',
+          yearly: data.providerPrices?.gocardless?.yearly != null ? String(data.providerPrices.gocardless.yearly) : '',
+          club: data.providerPrices?.gocardless?.club != null ? String(data.providerPrices.gocardless.club) : '',
+        },
+      },
+      stripePriceIds: {
+        monthly: data.stripePriceIds?.monthly != null ? String(data.stripePriceIds.monthly) : '',
+        yearly: data.stripePriceIds?.yearly != null ? String(data.stripePriceIds.yearly) : '',
+        club: data.stripePriceIds?.club != null ? String(data.stripePriceIds.club) : '',
+      },
+    }
+  } catch (e: any) {
+    paymentSettingsMessage.value = `Could not load payment settings: ${e.message}`
+    paymentSettingsMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  }
+}
+
+const savePaymentSettings = async () => {
+  if (!isAdmin.value) return
+  paymentSettingsSaving.value = true
+  paymentSettingsMessage.value = ''
+  try {
+    const ps = paymentSettings.value
+    const a = ps.providerOrder[0]
+    const b = ps.providerOrder[1]
+    let order: PaymentProvider[]
+    if (a === b) {
+      const enabled: PaymentProvider[] = ps.enabledProviders.length ? ps.enabledProviders : ['stripe']
+      if (enabled.includes('stripe') && enabled.includes('gocardless')) {
+        order = ['stripe', 'gocardless']
+      } else {
+        order = [...enabled]
+      }
+    } else {
+      order = [a, b]
+    }
+    const res = await fetch(`${config.public.apiUrl}/api/admin/payments/settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({
+        enabledProviders: ps.enabledProviders,
+        providerOrder: order,
+        allowedPlans: ps.allowedPlans,
+        basePrices: ps.basePrices,
+        providerPrices: ps.providerPrices,
+        stripePriceIds: ps.stripePriceIds,
+      }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    paymentSettingsMessage.value = 'Payment settings saved.'
+    paymentSettingsMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+    await loadPaymentSettings()
+  } catch (e: any) {
+    paymentSettingsMessage.value = e.message || 'Failed to save payment settings'
+    paymentSettingsMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    paymentSettingsSaving.value = false
+  }
+}
+
 const saveHomepageContent = async () => {
   if (!isAdmin.value) return
   const res = await fetch(`${config.public.apiUrl}/api/admin/homepage/content`, {
@@ -2445,6 +2705,7 @@ const reloadAll = async () => {
     await loadNewsletterSettings()
     await loadNewsletterTemplates()
     await loadHomepageContent()
+    await loadPaymentSettings()
     await loadUsers()
     await loadAnalytics()
     await loadAdminPills()

@@ -21,6 +21,7 @@ import {
 import { checkAnonymousRateLimit } from './rateLimit.js'
 import { sendPushNotification, sendPushToAllSubscribers } from './webpush.js'
 import {
+  handleAdminPaymentSettings,
   handleGetPricing,
   handleCheckout,
   handleWebhook,
@@ -28,7 +29,7 @@ import {
   handleGoCardlessComplete,
   handleGetSubscription,
   handlePortal,
-} from './stripe.js'
+} from './payments.js'
 import { isAdministrativeRole } from './roles.js'
 import { buildEntrypointCandidates, resolveMediaEntrypointUrl, buildProxyPlaylistUrl } from './mediaEntrypoints.js'
 import { handleThumbnailUpload, handleThumbnailDelete } from './thumbnails.js'
@@ -263,6 +264,9 @@ export default {
     }
     if (url.pathname === '/api/admin/newsletter/campaigns' && request.method === 'GET') {
       return handleAdminNewsletterCampaigns(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/payments/settings' && ['GET', 'PATCH'].includes(request.method)) {
+      return handleAdminPaymentSettings(request, env, corsHeaders)
     }
     {
       const templateById = url.pathname.match(/^\/api\/admin\/newsletter\/templates\/([^/]+)$/)

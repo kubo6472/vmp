@@ -1,10 +1,9 @@
 <template>
   <div
     v-if="show"
-    class="absolute inset-0 z-50 flex items-center justify-center bg-black bg-opacity-80 backdrop-blur-sm"
+    class="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-80 backdrop-blur-sm"
   >
     <div class="bg-gray-900 rounded-xl p-8 max-w-lg w-full mx-4 text-center shadow-2xl">
-      <!-- Lock icon -->
       <div class="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-yellow-400 to-yellow-600 rounded-full flex items-center justify-center">
         <svg class="w-8 h-8 text-gray-900" fill="currentColor" viewBox="0 0 20 20">
           <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
@@ -16,14 +15,11 @@
         Unlock the full video and all exclusive content.
       </p>
 
-      <!-- Loading skeleton -->
       <div v-if="loadingPrices" class="flex gap-3 mb-6">
         <div v-for="i in 3" :key="i" class="flex-1 h-28 bg-gray-800 rounded-lg animate-pulse" />
       </div>
 
-      <!-- Pricing cards -->
       <div v-else-if="!priceError" class="flex gap-3 mb-6">
-        <!-- Monthly (default / highlighted) -->
         <button
           class="flex-1 relative rounded-lg border-2 p-4 text-left transition-all cursor-pointer"
           :class="selectedPlan === 'monthly'
@@ -35,11 +31,10 @@
             Most popular
           </div>
           <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Monthly</p>
-          <p class="text-xl font-bold text-white">{{ formatPrice(prices.monthly) }}</p>
+          <p class="text-xl font-bold text-white">{{ formatPrice(primaryPlanPrice('monthly')) }}</p>
           <p class="text-xs text-gray-500 mt-0.5">per month</p>
         </button>
 
-        <!-- Yearly -->
         <button
           class="flex-1 rounded-lg border-2 p-4 text-left transition-all cursor-pointer"
           :class="selectedPlan === 'yearly'
@@ -48,11 +43,10 @@
           @click="selectedPlan = 'yearly'"
         >
           <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Yearly</p>
-          <p class="text-xl font-bold text-white">{{ formatPrice(prices.yearly) }}</p>
+          <p class="text-xl font-bold text-white">{{ formatPrice(primaryPlanPrice('yearly')) }}</p>
           <p class="text-xs text-gray-500 mt-0.5">per year</p>
         </button>
 
-        <!-- Club -->
         <button
           class="flex-1 rounded-lg border-2 p-4 text-left transition-all cursor-pointer"
           :class="selectedPlan === 'club'
@@ -61,56 +55,38 @@
           @click="selectedPlan = 'club'"
         >
           <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Club</p>
-          <p class="text-xl font-bold text-white">{{ formatPrice(prices.club) }}</p>
+          <p class="text-xl font-bold text-white">{{ formatPrice(primaryPlanPrice('club')) }}</p>
           <p class="text-xs text-gray-500 mt-0.5">per year</p>
         </button>
       </div>
 
-      <!-- Error loading prices -->
       <div v-if="priceError" class="text-red-400 text-sm mb-6">
         Could not load pricing. Please refresh the page.
       </div>
 
-      <!-- Checkout error -->
       <p v-if="checkoutError" class="text-red-400 text-sm mb-3">
         {{ checkoutError }}
       </p>
 
-      <div v-if="isLoggedIn && availableProviders.length > 1" class="mb-4 rounded-lg border border-gray-700 bg-gray-800 p-3 text-left">
-        <p class="text-xs uppercase tracking-wide text-gray-400 mb-2">Payment method</p>
-        <div class="grid gap-2 sm:grid-cols-2">
-          <label
-            v-for="provider in availableProviders"
-            :key="provider"
-            class="inline-flex items-center gap-2 text-sm text-gray-200"
-          >
-            <input
-              v-model="selectedProvider"
-              type="radio"
-              :value="provider"
-              class="accent-blue-500"
-            >
-            <span>{{ providerLabel(provider) }}</span>
-          </label>
-        </div>
+      <div class="space-y-2">
+        <button
+          v-for="provider in availableProviders"
+          :key="provider"
+          class="w-full text-white font-semibold py-3 px-6 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          :class="providerButtonClass(provider)"
+          :disabled="checkingOut || loadingPrices || !providerPlanPrice(provider, selectedPlan)"
+          @click="handleSubscribe(provider)"
+        >
+          <span v-if="checkingOut && selectedProvider === provider">Redirecting to checkout…</span>
+          <span v-else>{{ providerButtonLabel(provider) }}</span>
+        </button>
       </div>
 
-      <!-- CTA -->
-      <button
-        class="w-full bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold py-3 px-6 rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-        :disabled="checkingOut || loadingPrices"
-        @click="handleSubscribe"
-      >
-        <span v-if="checkingOut">Redirecting to checkout…</span>
-        <span v-else-if="isLoggedIn">Subscribe {{ planLabel }} — {{ formatPrice(prices[selectedPlan]) }}</span>
-        <span v-else>Sign in to subscribe</span>
-      </button>
-
-      <p v-if="isLoggedIn" class="text-xs text-gray-500 mt-3">
-        {{ providerBlurb }}
+      <p class="text-xs text-gray-500 mt-3">
+        {{ checkoutBlurb }}
       </p>
-      <p v-else class="text-sm text-gray-400 mt-3">
-        Already subscribed?
+      <p v-if="!isLoggedIn" class="text-sm text-gray-400 mt-2">
+        You will be asked to sign in before checkout.
         <NuxtLink :to="`/login?redirect=/watch/${videoId}`" class="text-blue-400 hover:underline">Sign in</NuxtLink>
       </p>
     </div>
@@ -125,64 +101,114 @@ const props = defineProps<{
 
 const config      = useRuntimeConfig()
 const apiUrl      = config.public.apiUrl as string
+const route       = useRoute()
 const { isLoggedIn, authHeader } = useAuth()
 
-interface Prices { monthly: number; yearly: number; club: number }
+type PlanType = 'monthly' | 'yearly' | 'club'
 type PaymentProvider = 'stripe' | 'gocardless'
 
-const prices        = ref<Prices>({ monthly: 6.90, yearly: 74.90, club: 109.00 })
+interface Prices { monthly: number; yearly: number; club: number }
+interface ProviderPriceMap { stripe: Prices; gocardless: Prices }
+
+const defaultPrices: Prices = { monthly: 6.90, yearly: 74.90, club: 109.00 }
+const pricesByProvider = ref<ProviderPriceMap>({
+  stripe: { ...defaultPrices },
+  gocardless: { ...defaultPrices },
+})
 const loadingPrices = ref(false)
-const priceError    = ref(false)
-const selectedPlan  = ref<'monthly' | 'yearly' | 'club'>('monthly')
+const priceError = ref(false)
+const selectedPlan = ref<PlanType>('monthly')
 const availableProviders = ref<PaymentProvider[]>(['stripe'])
 const selectedProvider = ref<PaymentProvider>('stripe')
-const checkingOut   = ref(false)
+const checkingOut = ref(false)
 const checkoutError = ref<string | null>(null)
 
-const planLabel = computed(() => {
-  const labels: Record<string, string> = { monthly: 'monthly', yearly: 'yearly', club: 'club' }
-  return labels[selectedPlan.value] ?? selectedPlan.value
-})
-
-function formatPrice(amount: number | undefined): string {
-  if (amount === undefined) return '…'
+function formatPrice(amount: number | null | undefined): string {
+  if (amount == null || !Number.isFinite(amount)) return '…'
   return `€${amount.toFixed(2)}`
 }
 
-function providerLabel(provider: PaymentProvider) {
-  return provider === 'gocardless' ? 'GoCardless (bank debit)' : 'Stripe (card)'
+function providerPlanPrice(provider: PaymentProvider, plan: PlanType): number | null {
+  const value = pricesByProvider.value[provider]?.[plan]
+  return Number.isFinite(value) ? Number(value) : null
 }
 
-const providerBlurb = computed(() =>
-  selectedProvider.value === 'gocardless'
-    ? 'Bank debit checkout via GoCardless. Clearing can take a few business days.'
-    : 'Secure checkout via Stripe. Cancel any time.'
-)
+function primaryPlanPrice(plan: PlanType): number | null {
+  const first = availableProviders.value[0] ?? 'stripe'
+  return providerPlanPrice(first, plan)
+}
+
+function providerButtonLabel(provider: PaymentProvider): string {
+  const amount = providerPlanPrice(provider, selectedPlan.value)
+  const priceText = formatPrice(amount)
+  if (provider === 'gocardless') return `Pay ${priceText} with your bank account`
+  return `Pay ${priceText} with your card`
+}
+
+function providerButtonClass(provider: PaymentProvider): string {
+  if (provider === 'gocardless') {
+    return 'bg-emerald-600 hover:bg-emerald-700'
+  }
+  return 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700'
+}
+
+const checkoutBlurb = computed(() => {
+  if (!availableProviders.value.length) {
+    return 'Secure checkout. Cancel any time.'
+  }
+  if (availableProviders.value.length === 1) {
+    const provider = availableProviders.value[0]
+    return provider === 'gocardless'
+      ? 'Secure checkout via GoCardless. Cancel any time.'
+      : 'Secure checkout via Stripe. Cancel any time.'
+  }
+  return 'Secure checkout via Stripe or GoCardless. Cancel any time.'
+})
 
 async function loadPrices() {
   loadingPrices.value = true
   priceError.value = false
   try {
     const res = await fetch(`${apiUrl}/api/account/pricing`)
-    if (res.ok) {
-      const data = await res.json()
-      if (data?.pricing_not_configured) {
-        priceError.value = true
-        return
-      }
-      prices.value = {
-        monthly: Number(data.monthly),
-        yearly: Number(data.yearly),
-        club: Number(data.club),
-      }
-      const providers = Array.isArray(data.enabledProviders)
-        ? data.enabledProviders.filter((p: string) => p === 'stripe' || p === 'gocardless')
-        : []
-      availableProviders.value = providers.length ? providers : ['stripe']
-      if (!availableProviders.value.includes(selectedProvider.value)) {
-        selectedProvider.value = availableProviders.value[0] ?? 'stripe'
-      }
-    } else {
+    if (!res.ok) {
+      priceError.value = true
+      return
+    }
+
+    const data = await res.json()
+    const providers = Array.isArray(data.enabledProviders)
+      ? data.enabledProviders.filter((p: string) => p === 'stripe' || p === 'gocardless')
+      : []
+    availableProviders.value = providers.length ? providers : ['stripe']
+
+    const fallback: Prices = {
+      monthly: Number(data.monthly ?? defaultPrices.monthly),
+      yearly: Number(data.yearly ?? defaultPrices.yearly),
+      club: Number(data.club ?? defaultPrices.club),
+    }
+
+    const stripeRaw = data?.pricesByProvider?.stripe ?? {}
+    const gocardlessRaw = data?.pricesByProvider?.gocardless ?? {}
+
+    pricesByProvider.value = {
+      stripe: {
+        monthly: Number(stripeRaw.monthly ?? fallback.monthly),
+        yearly: Number(stripeRaw.yearly ?? fallback.yearly),
+        club: Number(stripeRaw.club ?? fallback.club),
+      },
+      gocardless: {
+        monthly: Number(gocardlessRaw.monthly ?? fallback.monthly),
+        yearly: Number(gocardlessRaw.yearly ?? fallback.yearly),
+        club: Number(gocardlessRaw.club ?? fallback.club),
+      },
+    }
+
+    if (!availableProviders.value.includes(selectedProvider.value)) {
+      selectedProvider.value = availableProviders.value[0] ?? 'stripe'
+    }
+
+    const hasVisiblePrice = availableProviders.value.some((provider) => providerPlanPrice(provider, selectedPlan.value) != null)
+    if (!hasVisiblePrice) {
       priceError.value = true
     }
   } catch {
@@ -192,11 +218,16 @@ async function loadPrices() {
   }
 }
 
-async function handleSubscribe() {
+async function handleSubscribe(provider?: PaymentProvider) {
   if (!isLoggedIn.value) {
-    await navigateTo(`/login?redirect=/watch/${props.videoId}`)
+    const selected = provider ?? availableProviders.value[0] ?? 'stripe'
+    const redirect = `/watch/${encodeURIComponent(props.videoId)}?showPremium=1&checkout_plan=${selectedPlan.value}&checkout_provider=${selected}`
+    await navigateTo(`/login?redirect=${encodeURIComponent(redirect)}`)
     return
   }
+
+  const selected = provider ?? availableProviders.value[0] ?? 'stripe'
+  selectedProvider.value = selected
   checkingOut.value = true
   checkoutError.value = null
   try {
@@ -204,7 +235,7 @@ async function handleSubscribe() {
       method:      'POST',
       credentials: 'include',
       headers:     { 'Content-Type': 'application/json', ...authHeader() },
-      body:        JSON.stringify({ planType: selectedPlan.value, provider: selectedProvider.value }),
+      body:        JSON.stringify({ planType: selectedPlan.value, provider: selected }),
     })
     const data = await res.json()
     if (!res.ok || !data.checkoutUrl) {
@@ -219,8 +250,26 @@ async function handleSubscribe() {
   }
 }
 
-// Load prices whenever the overlay becomes visible
+function applyCheckoutIntentFromRoute() {
+  const q = route.query
+  const plan = q.checkout_plan
+  if (plan === 'monthly' || plan === 'yearly' || plan === 'club') {
+    selectedPlan.value = plan
+  }
+  const prov = q.checkout_provider
+  if (prov === 'stripe' || prov === 'gocardless') {
+    selectedProvider.value = prov
+  }
+}
+
 watch(() => props.show, (visible) => {
-  if (visible) loadPrices()
+  if (visible) {
+    applyCheckoutIntentFromRoute()
+    loadPrices()
+  }
 }, { immediate: true })
+
+watch(() => route.fullPath, () => {
+  if (props.show) applyCheckoutIntentFromRoute()
+})
 </script>

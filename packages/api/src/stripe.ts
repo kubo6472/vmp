@@ -2,225 +2,98 @@
  * Provider-agnostic payments orchestration (Stripe + GoCardless).
  */
 
-import { requireAuth } from './auth.js'
+import { requireAuth, requireRole } from './auth.js'
 import { isAdministrativeRole } from './roles.js'
-import { getSetting } from './settingsStore.js'
+import { getSetting, setSettings } from './settingsStore.js'
 import {
   removeSubscriberFromNewsletter,
   syncNewsletterForStripeSubscription,
 } from './brevo.js'
+import { normalizeStripeStatus, stripeGet, stripePost, verifyStripeWebhook } from './stripeClient.js'
+export { normalizeStripeStatus } from './stripeClient.js'
+import {
+  gocardlessGet,
+  gocardlessPost,
+  getGoCardlessInterval,
+  normalizeGoCardlessStatus,
+  verifyGoCardlessWebhook,
+} from './gocardless.js'
+export { normalizeGoCardlessStatus } from './gocardless.js'
 
 type PlanType = 'monthly' | 'yearly' | 'club'
 type PaymentProvider = 'stripe' | 'gocardless'
 type SubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'cancelled'
 
-// ─── Stripe API helpers ───────────────────────────────────────────────────────
-
-/**
- * Recursively URL-encode an object into Stripe's expected format.
- * Nested objects become bracket notation: { a: { b: 1 } } → "a[b]=1"
- * Arrays become indexed: { a: [1,2] } → "a[0]=1&a[1]=2"
- */
-// @ts-expect-error TS(7023): 'encodeStripeBody' implicitly has return type 'any... Remove this comment to see the full error message
-function encodeStripeBody(obj: any, prefix = '') {
-  const parts = []
-  for (const [key, value] of Object.entries(obj)) {
-    if (value === undefined || value === null) continue
-    const fullKey = prefix ? `${prefix}[${key}]` : key
-    if (typeof value === 'object' && !Array.isArray(value)) {
-      parts.push(encodeStripeBody(value, fullKey))
-    } else if (Array.isArray(value)) {
-      value.forEach((item, i) => {
-        if (typeof item === 'object') {
-          parts.push(encodeStripeBody(item, `${fullKey}[${i}]`))
-        } else {
-          parts.push(`${encodeURIComponent(`${fullKey}[${i}]`)}=${encodeURIComponent(item)}`)
-        }
-      })
-    } else {
-      // @ts-expect-error TS(2345): Argument of type 'unknown' is not assignable to pa... Remove this comment to see the full error message
-      parts.push(`${encodeURIComponent(fullKey)}=${encodeURIComponent(value)}`)
-    }
-  }
-  return parts.join('&')
+async function getAllowedPlans(env: any): Promise<PlanType[]> {
+  const raw = String(await getSetting(env, 'allowed_plans', { defaultValue: 'monthly,yearly,club' }) ?? 'monthly,yearly,club')
+  const plans = raw
+    .split(',')
+    .map((v: string) => v.trim().toLowerCase())
+    .filter((v: string): v is PlanType => v === 'monthly' || v === 'yearly' || v === 'club')
+  return plans.length > 0 ? plans : ['monthly', 'yearly', 'club']
 }
 
-async function stripePost(path: any, body: any, env: any): Promise<any> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 10_000)
-  try {
-    const res = await fetch(`https://api.stripe.com/v1${path}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: encodeStripeBody(body),
-      signal: controller.signal,
-    })
-    return (await res.json()) as any
-  } catch (error: unknown) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      const err = new Error('Stripe request timed out')
-      Object.assign(err, { status: 504, code: 'stripe_timeout' })
-      throw err
-    }
-    throw error
-  } finally {
-    clearTimeout(timeout)
-  }
+async function getPaymentProviderOrder(env: any): Promise<PaymentProvider[]> {
+  const stored = await getSetting(env, 'payment_provider_order', { defaultValue: 'stripe,gocardless' })
+  const raw = String(stored ?? 'stripe,gocardless').trim()
+  const providers = (raw ? raw : 'stripe,gocardless')
+    .split(',')
+    .map((v: string) => v.trim().toLowerCase())
+    .filter((v: string): v is PaymentProvider => v === 'stripe' || v === 'gocardless')
+  return providers.length > 0 ? providers : ['stripe', 'gocardless']
 }
 
-async function stripeGet(path: any, env: any): Promise<any> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 10_000)
-  try {
-    const res = await fetch(`https://api.stripe.com/v1${path}`, {
-      headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
-      signal: controller.signal,
-    })
-    return (await res.json()) as any
-  } catch (error: unknown) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      const err = new Error('Stripe request timed out')
-      Object.assign(err, { status: 504, code: 'stripe_timeout' })
-      throw err
-    }
-    throw error
-  } finally {
-    clearTimeout(timeout)
+/** Gateways enabled in admin_settings (used for public pricing + UI). */
+async function getConfiguredProviders(env: any): Promise<PaymentProvider[]> {
+  const stored = await getSetting(env, 'payments_enabled_providers', { defaultValue: 'stripe' })
+  const raw = String(stored ?? 'stripe').trim()
+  let configured = (raw ? raw : 'stripe')
+    .split(',')
+    .map((v: string) => v.trim().toLowerCase())
+    .filter((v: string): v is PaymentProvider => v === 'stripe' || v === 'gocardless')
+  if (configured.length === 0) configured = ['stripe']
+  return configured
+}
+
+/** Gateways that can actually run checkout in this environment (requires provider credentials). */
+async function getRunnableProviders(env: any): Promise<PaymentProvider[]> {
+  const configured = await getConfiguredProviders(env)
+  const available = configured.filter((provider) => {
+    if (provider === 'stripe') return Boolean(env.STRIPE_SECRET_KEY)
+    return Boolean(env.GOCARDLESS_ACCESS_TOKEN && env.GOCARDLESS_CREDITOR_ID)
+  })
+  if (available.length > 0) return available
+  return Boolean(env.STRIPE_SECRET_KEY) ? ['stripe'] : []
+}
+
+async function getPricingSettings(env: any, provider?: PaymentProvider) {
+  const prefix = provider ? `${provider}_` : ''
+  const [monthly, yearly, club] = await Promise.all([
+    getSetting(env, `${prefix}monthly_price_eur`, { ttlSeconds: 300 }),
+    getSetting(env, `${prefix}yearly_price_eur`, { ttlSeconds: 300 }),
+    getSetting(env, `${prefix}club_price_eur`, { ttlSeconds: 300 }),
+  ])
+  return {
+    monthly: monthly == null ? null : Number(monthly),
+    yearly: yearly == null ? null : Number(yearly),
+    club: club == null ? null : Number(club),
   }
 }
 
-// ─── GoCardless API helpers ───────────────────────────────────────────────────
-
-async function gocardlessFetch(
-  path: string,
-  method: string,
-  payload: unknown,
-  env: any,
-  extraHeaders?: Record<string, string>,
-): Promise<any> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 10_000)
-  try {
-    const res = await fetch(`https://api.gocardless.com${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${env.GOCARDLESS_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-        'GoCardless-Version': '2015-07-06',
-        ...(extraHeaders ?? {}),
-      },
-      body: payload == null ? null : JSON.stringify(payload),
-      signal: controller.signal,
-    })
-    const json = await res.json().catch(() => ({}))
-    return { ok: res.ok, status: res.status, data: json }
-  } catch (error: unknown) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      const err = new Error('GoCardless request timed out')
-      Object.assign(err, { status: 504, code: 'gocardless_timeout' })
-      throw err
-    }
-    throw error
-  } finally {
-    clearTimeout(timeout)
+async function getEffectivePricingSettings(env: any, provider: PaymentProvider) {
+  const [providerPricing, fallbackPricing] = await Promise.all([
+    getPricingSettings(env, provider),
+    getPricingSettings(env),
+  ])
+  return {
+    monthly: providerPricing.monthly ?? fallbackPricing.monthly,
+    yearly: providerPricing.yearly ?? fallbackPricing.yearly,
+    club: providerPricing.club ?? fallbackPricing.club,
   }
 }
 
-async function gocardlessPost(
-  path: string,
-  payload: unknown,
-  env: any,
-  extraHeaders?: Record<string, string>,
-): Promise<any> {
-  return gocardlessFetch(path, 'POST', payload, env, extraHeaders)
-}
-
-async function gocardlessGet(path: string, env: any): Promise<any> {
-  return gocardlessFetch(path, 'GET', null, env)
-}
-
-// ─── Webhook verification ─────────────────────────────────────────────────────
-
-/**
- * Verify a Stripe webhook signature.
- *
- * Stripe sends: Stripe-Signature: t=<timestamp>,v1=<hex_sig>
- * Signed payload: "<timestamp>.<rawBody>"
- * Algorithm: HMAC-SHA256 keyed with STRIPE_WEBHOOK_SECRET
- */
-async function verifyStripeWebhook(rawBody: any, sigHeader: any, secret: any) {
-  if (!sigHeader || !secret) return false
-
-  // Parse "t=<timestamp>,v1=<sig1>,v1=<sig2>" — multiple v1= values are valid
-  // when Stripe rotates webhook signing secrets.
-  let ts = null
-  const v1s = []
-  for (const segment of sigHeader.split(',')) {
-    const eq = segment.indexOf('=')
-    if (eq === -1) continue
-    const k = segment.slice(0, eq)
-    const v = segment.slice(eq + 1)
-    if (k === 't') ts = Number(v)
-    else if (k === 'v1') v1s.push(v)
-  }
-  if (!ts || v1s.length === 0) return false
-
-  // Reject events older than 5 minutes to prevent replay attacks
-  if (Math.abs(Date.now() / 1000 - ts) > 300) return false
-
-  const signedPayload = `${ts}.${rawBody}`
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-  const sigBytes = await crypto.subtle.sign(
-    'HMAC', key, new TextEncoder().encode(signedPayload),
-  )
-  const expected = [...new Uint8Array(sigBytes)]
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-
-  // Constant-time comparison against each signature in the header
-  for (const candidate of v1s) {
-    if (expected.length !== candidate.length) continue
-    let diff = 0
-    for (let i = 0; i < expected.length; i++) {
-      diff |= expected.charCodeAt(i) ^ candidate.charCodeAt(i)
-    }
-    if (diff === 0) return true
-  }
-  return false
-}
-
-function constantTimeEqual(a: string, b: string) {
-  if (a.length !== b.length) return false
-  let diff = 0
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
-  return diff === 0
-}
-
-async function verifyGoCardlessWebhook(rawBody: string, sigHeader: string, secret: string) {
-  if (!sigHeader || !secret) return false
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-  const digest = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(rawBody))
-  const bytes = new Uint8Array(digest)
-  const expectedHex = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('')
-  const expectedBase64 = btoa(String.fromCharCode(...bytes))
-  const candidate = sigHeader.trim()
-  return constantTimeEqual(candidate, expectedHex) || constantTimeEqual(candidate, expectedBase64)
+function moneyToMinorUnits(amount: number) {
+  return Math.max(0, Math.round(amount * 100))
 }
 
 // ─── D1 / admin_settings helpers ─────────────────────────────────────────────
@@ -324,93 +197,6 @@ async function upsertStripeSubscription(db: any, userId: string, stripeSub: any,
   })
 }
 
-/** Map Stripe subscription statuses to our internal values. */
-export function normalizeStripeStatus(stripeStatus: string): SubscriptionStatus {
-  const statusMap: Record<string, SubscriptionStatus> = {
-    active: 'active',
-    trialing: 'trialing',
-    past_due: 'past_due',
-    canceled: 'cancelled',
-    cancelled: 'cancelled',
-    unpaid: 'past_due',
-    incomplete: 'past_due',
-    incomplete_expired: 'cancelled',
-    paused: 'cancelled',
-  }
-  return statusMap[stripeStatus] ?? 'cancelled'
-}
-
-export function normalizeGoCardlessStatus(status: string): SubscriptionStatus {
-  const normalized = String(status ?? '').trim().toLowerCase()
-  const statusMap: Record<string, SubscriptionStatus> = {
-    active: 'active',
-    customer_approval_granted: 'active',
-    pending_customer_approval: 'trialing',
-    submitted: 'trialing',
-    cancelled: 'cancelled',
-    canceled: 'cancelled',
-    finished: 'cancelled',
-    failed: 'past_due',
-    late_failure_settled: 'past_due',
-  }
-  return statusMap[normalized] ?? 'cancelled'
-}
-
-async function getAllowedPlans(env: any): Promise<PlanType[]> {
-  const raw = String(await getSetting(env, 'allowed_plans', { defaultValue: 'monthly,yearly,club' }) ?? 'monthly,yearly,club')
-  const plans = raw
-    .split(',')
-    .map((v: string) => v.trim().toLowerCase())
-    .filter((v: string): v is PlanType => v === 'monthly' || v === 'yearly' || v === 'club')
-  return plans.length > 0 ? plans : ['monthly', 'yearly', 'club']
-}
-
-async function getPaymentProviderOrder(env: any): Promise<PaymentProvider[]> {
-  const raw = String(await getSetting(env, 'payment_provider_order', { defaultValue: 'stripe,gocardless' }) ?? 'stripe,gocardless')
-  const providers = raw
-    .split(',')
-    .map((v: string) => v.trim().toLowerCase())
-    .filter((v: string): v is PaymentProvider => v === 'stripe' || v === 'gocardless')
-  return providers.length > 0 ? providers : ['stripe', 'gocardless']
-}
-
-async function getEnabledProviders(env: any): Promise<PaymentProvider[]> {
-  const raw = String(await getSetting(env, 'payments_enabled_providers', { defaultValue: 'stripe' }) ?? 'stripe')
-  const configured = raw
-    .split(',')
-    .map((v: string) => v.trim().toLowerCase())
-    .filter((v: string): v is PaymentProvider => v === 'stripe' || v === 'gocardless')
-
-  const available = configured.filter((provider) => {
-    if (provider === 'stripe') return Boolean(env.STRIPE_SECRET_KEY)
-    return Boolean(env.GOCARDLESS_ACCESS_TOKEN && env.GOCARDLESS_CREDITOR_ID)
-  })
-  if (available.length > 0) return available
-  return Boolean(env.STRIPE_SECRET_KEY) ? ['stripe'] : []
-}
-
-async function getPricingSettings(env: any) {
-  const [monthly, yearly, club] = await Promise.all([
-    getSetting(env, 'monthly_price_eur', { ttlSeconds: 300 }),
-    getSetting(env, 'yearly_price_eur', { ttlSeconds: 300 }),
-    getSetting(env, 'club_price_eur', { ttlSeconds: 300 }),
-  ])
-  return {
-    monthly: monthly == null ? null : Number(monthly),
-    yearly: yearly == null ? null : Number(yearly),
-    club: club == null ? null : Number(club),
-  }
-}
-
-function getGoCardlessInterval(planType: PlanType): { interval: number, intervalUnit: 'monthly' | 'yearly' } {
-  if (planType === 'monthly') return { interval: 1, intervalUnit: 'monthly' }
-  return { interval: 1, intervalUnit: 'yearly' }
-}
-
-function moneyToMinorUnits(amount: number) {
-  return Math.max(0, Math.round(amount * 100))
-}
-
 // ─── Route handlers ───────────────────────────────────────────────────────────
 
 /**
@@ -419,26 +205,170 @@ function moneyToMinorUnits(amount: number) {
  */
 export async function handleGetPricing(request: any, env: any, corsHeaders: any) {
   try {
-    const pricing = await getPricingSettings(env)
-    const enabledProviders = await getEnabledProviders(env)
-    if (pricing.monthly == null || pricing.yearly == null || pricing.club == null) {
+    const configuredProviders = await getConfiguredProviders(env)
+    const providerOrder = await getPaymentProviderOrder(env)
+    const orderedEnabled = [
+      ...providerOrder.filter((p) => configuredProviders.includes(p)),
+      ...configuredProviders.filter((p) => !providerOrder.includes(p)),
+    ]
+    const enabledProviders = orderedEnabled
+    const [stripePricing, gocardlessPricing] = await Promise.all([
+      getEffectivePricingSettings(env, 'stripe'),
+      getEffectivePricingSettings(env, 'gocardless'),
+    ])
+    const primary = enabledProviders[0] ?? 'stripe'
+    const activePricing = primary === 'gocardless' ? gocardlessPricing : stripePricing
+    const pricingNotConfigured = configuredProviders.some((provider) => {
+      const pricing = provider === 'gocardless' ? gocardlessPricing : stripePricing
+      return pricing.monthly == null || pricing.yearly == null || pricing.club == null
+    })
+    if (pricingNotConfigured) {
       return jsonResponse({
-        monthly: null,
-        yearly: null,
-        club: null,
+        monthly: activePricing.monthly,
+        yearly: activePricing.yearly,
+        club: activePricing.club,
+        pricesByProvider: {
+          stripe: stripePricing,
+          gocardless: gocardlessPricing,
+        },
         pricing_not_configured: true,
         enabledProviders,
       }, 200, corsHeaders)
     }
     return jsonResponse({
-      monthly: pricing.monthly,
-      yearly: pricing.yearly,
-      club: pricing.club,
+      monthly: activePricing.monthly,
+      yearly: activePricing.yearly,
+      club: activePricing.club,
+      pricesByProvider: {
+        stripe: stripePricing,
+        gocardless: gocardlessPricing,
+      },
       enabledProviders,
     }, 200, corsHeaders)
   } catch (err) {
     console.error('handleGetPricing error:', err)
     return jsonResponse({ error: 'Internal server error' }, 500, corsHeaders)
+  }
+}
+
+function parseCsvList(input: unknown, allowValues: string[]) {
+  if (Array.isArray(input)) {
+    return input.map((v) => String(v).trim().toLowerCase()).filter((v) => allowValues.includes(v))
+  }
+  return String(input ?? '')
+    .split(',')
+    .map((v) => v.trim().toLowerCase())
+    .filter((v) => allowValues.includes(v))
+}
+
+function parseOptionalPositiveNumber(input: unknown) {
+  if (input === '' || input == null) return ''
+  const numeric = Number(input)
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    throw new Error('Prices must be positive numbers')
+  }
+  return String(numeric)
+}
+
+export async function handleAdminPaymentSettings(request: any, env: any, corsHeaders: any) {
+  try {
+    await requireRole(request, env, 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+
+  if (request.method === 'GET') {
+    const keys = [
+      'payments_enabled_providers',
+      'payment_provider_order',
+      'allowed_plans',
+      'monthly_price_eur',
+      'yearly_price_eur',
+      'club_price_eur',
+      'stripe_monthly_price_eur',
+      'stripe_yearly_price_eur',
+      'stripe_club_price_eur',
+      'gocardless_monthly_price_eur',
+      'gocardless_yearly_price_eur',
+      'gocardless_club_price_eur',
+      'stripe_price_monthly',
+      'stripe_price_yearly',
+      'stripe_price_club',
+    ] as const
+    const values = await Promise.all(keys.map((key) => getSetting(env, key)))
+    const valueByKey = Object.fromEntries(keys.map((key, index) => [key, values[index]]))
+    return jsonResponse({
+      enabledProviders: parseCsvList(valueByKey.payments_enabled_providers ?? 'stripe', ['stripe', 'gocardless']),
+      providerOrder: parseCsvList(valueByKey.payment_provider_order ?? 'stripe,gocardless', ['stripe', 'gocardless']),
+      allowedPlans: parseCsvList(valueByKey.allowed_plans ?? 'monthly,yearly,club', ['monthly', 'yearly', 'club']),
+      basePrices: {
+        monthly: valueByKey.monthly_price_eur ?? '',
+        yearly: valueByKey.yearly_price_eur ?? '',
+        club: valueByKey.club_price_eur ?? '',
+      },
+      providerPrices: {
+        stripe: {
+          monthly: valueByKey.stripe_monthly_price_eur ?? '',
+          yearly: valueByKey.stripe_yearly_price_eur ?? '',
+          club: valueByKey.stripe_club_price_eur ?? '',
+        },
+        gocardless: {
+          monthly: valueByKey.gocardless_monthly_price_eur ?? '',
+          yearly: valueByKey.gocardless_yearly_price_eur ?? '',
+          club: valueByKey.gocardless_club_price_eur ?? '',
+        },
+      },
+      stripePriceIds: {
+        monthly: valueByKey.stripe_price_monthly ?? '',
+        yearly: valueByKey.stripe_price_yearly ?? '',
+        club: valueByKey.stripe_price_club ?? '',
+      },
+    }, 200, corsHeaders)
+  }
+
+  if (request.method !== 'PATCH') {
+    return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
+  }
+
+  const body = await request.json().catch(() => null)
+  if (!body || typeof body !== 'object') {
+    return jsonResponse({ error: 'Request body is required' }, 400, corsHeaders)
+  }
+
+  try {
+    const enabledProviders = parseCsvList(body.enabledProviders ?? 'stripe', ['stripe', 'gocardless'])
+    if (!enabledProviders.length) {
+      return jsonResponse({ error: 'At least one payment provider must be enabled' }, 400, corsHeaders)
+    }
+    const providerOrder = parseCsvList(body.providerOrder ?? enabledProviders, ['stripe', 'gocardless'])
+    const allowedPlans = parseCsvList(body.allowedPlans ?? 'monthly,yearly,club', ['monthly', 'yearly', 'club'])
+    const basePrices = body.basePrices ?? {}
+    const providerPrices = body.providerPrices ?? {}
+    const stripePriceIds = body.stripePriceIds ?? {}
+
+    const updates: [string, string][] = [
+      ['payments_enabled_providers', enabledProviders.join(',')],
+      ['payment_provider_order', providerOrder.join(',')],
+      ['allowed_plans', (allowedPlans.length ? allowedPlans : ['monthly', 'yearly', 'club']).join(',')],
+      ['monthly_price_eur', parseOptionalPositiveNumber(basePrices.monthly)],
+      ['yearly_price_eur', parseOptionalPositiveNumber(basePrices.yearly)],
+      ['club_price_eur', parseOptionalPositiveNumber(basePrices.club)],
+      ['stripe_monthly_price_eur', parseOptionalPositiveNumber(providerPrices?.stripe?.monthly)],
+      ['stripe_yearly_price_eur', parseOptionalPositiveNumber(providerPrices?.stripe?.yearly)],
+      ['stripe_club_price_eur', parseOptionalPositiveNumber(providerPrices?.stripe?.club)],
+      ['gocardless_monthly_price_eur', parseOptionalPositiveNumber(providerPrices?.gocardless?.monthly)],
+      ['gocardless_yearly_price_eur', parseOptionalPositiveNumber(providerPrices?.gocardless?.yearly)],
+      ['gocardless_club_price_eur', parseOptionalPositiveNumber(providerPrices?.gocardless?.club)],
+      ['stripe_price_monthly', String(stripePriceIds.monthly ?? '').trim()],
+      ['stripe_price_yearly', String(stripePriceIds.yearly ?? '').trim()],
+      ['stripe_price_club', String(stripePriceIds.club ?? '').trim()],
+    ]
+
+    await setSettings(env, updates)
+    return jsonResponse({ ok: true }, 200, corsHeaders)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Invalid settings'
+    return jsonResponse({ error: message }, 400, corsHeaders)
   }
 }
 
@@ -464,18 +394,30 @@ export async function handleCheckout(request: any, env: any, corsHeaders: any) {
 
   try {
     const db = getDb(env)
-    const enabledProviders = await getEnabledProviders(env)
+    const configuredProviders = await getConfiguredProviders(env)
+    const runnableProviders = await getRunnableProviders(env)
     const providerOrder = await getPaymentProviderOrder(env)
+    const orderedRunnable = [
+      ...providerOrder.filter((p) => runnableProviders.includes(p)),
+      ...runnableProviders.filter((p) => !providerOrder.includes(p)),
+    ]
+    const defaultProvider: PaymentProvider = orderedRunnable[0] ?? 'stripe'
     const selectedProvider = String(body?.provider ?? '').trim().toLowerCase() as PaymentProvider
     const provider: PaymentProvider = selectedProvider && providerOrder.includes(selectedProvider)
       ? selectedProvider
-      : (enabledProviders[0] ?? 'stripe')
+      : defaultProvider
 
-    if (!enabledProviders.includes(provider)) {
+    if (!configuredProviders.includes(provider)) {
       return jsonResponse({
         error: 'Requested payment provider is not enabled.',
         code: 'provider_not_enabled',
       }, 400, corsHeaders)
+    }
+    if (!runnableProviders.includes(provider)) {
+      return jsonResponse({
+        error: 'This payment provider is enabled in settings but is not configured on the server (missing API credentials).',
+        code: 'provider_not_configured',
+      }, 503, corsHeaders)
     }
 
     // Guard: don't create a new checkout session if the user already has an
@@ -838,7 +780,7 @@ export async function handleGoCardlessComplete(request: any, env: any, corsHeade
       return jsonResponse({ error: 'Failed to complete GoCardless authorization' }, 502, corsHeaders)
     }
 
-    const pricing = await getPricingSettings(env)
+    const pricing = await getEffectivePricingSettings(env, 'gocardless')
     const planType = normalizePlanType(String(checkoutSession.plan_type || 'monthly'))
     const amountEur = pricing[planType]
     if (amountEur == null || !Number.isFinite(amountEur)) {

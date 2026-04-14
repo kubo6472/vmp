@@ -2,6 +2,8 @@
   <div class="min-h-screen overflow-x-hidden bg-gray-50 dark:bg-gray-950">
     <AppHeader />
 
+    <PremiumOverlay :show="showPremiumOverlay" :video-id="videoId" />
+
     <div class="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <!-- Loading State -->
       <div v-if="loading" class="flex items-center justify-center min-h-[60vh]">
@@ -121,9 +123,6 @@
               ></videojs-video>
 
               <media-loading-indicator slot="centered-chrome"></media-loading-indicator>
-
-              <!-- Premium Overlay -->
-              <PremiumOverlay :show="showPremiumOverlay" :video-id="videoId" />
 
               <!-- Custom Control Bar -->
               <media-control-bar class="watch-media-control-bar relative" noautohide>
@@ -558,7 +557,6 @@ const loadVideoForRoute = async (targetVideoId: string, options: LoadVideoForRou
     loading.value = false
     await nextTick()
     ensureCurrent()
-
     const playlistUrl = videoData.value?.video?.playlistUrl
     if (playlistUrl && !rateLimited.value) {
       error.value = null
