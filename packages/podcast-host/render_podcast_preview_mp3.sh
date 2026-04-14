@@ -1,9 +1,9 @@
 #!/bin/bash
-# Generate videos/<VIDEO_ID>/podcast_preview.mp3 from full podcast.mp3 (or source) for RSS preview length.
-# Requires: ffmpeg, rclone (same bucket layout as video_pipeline_watch.sh).
+# Generate videos/<VIDEO_ID>/podcast_preview.mp3 from full podcast.mp3 for RSS preview length.
+# Requires: ffmpeg, rclone (same bucket layout as scripts/video_pipeline_watch.sh).
 #
-# Usage:
-#   R2_BUCKET=vmp-videos ./scripts/render_podcast_preview_mp3.sh <video_id> <preview_seconds>
+# Usage (from repo root):
+#   R2_BUCKET=vmp-videos npm run render --workspace=@vmp/podcast-host -- <video_id> <preview_seconds>
 #
 set -euo pipefail
 

@@ -1,0 +1,15 @@
+{
+  "name": "@vmp/podcast-host",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Host-side tools for VMP podcast preview rebuild (webhook listener + ffmpeg/rclone)",
+  "type": "module",
+  "scripts": {
+    "start": "node ./podcast-preview-rebuild-listener.mjs",
+    "listen": "node ./podcast-preview-rebuild-listener.mjs",
+    "render": "bash ./render_podcast_preview_mp3.sh"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

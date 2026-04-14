@@ -3,17 +3,17 @@
  * Local HTTP webhook receiver for POST /api/admin/rss/podcast-preview-rebuild notifications.
  *
  * Verifies HMAC-SHA256 of the raw body (header X-VMP-Signature: sha256=<hex>).
- * Runs scripts/render_podcast_preview_mp3.sh per video (async, best-effort).
+ * Runs render_podcast_preview_mp3.sh per video (async, best-effort).
  *
  * Environment:
  *   VMP_WEBHOOK_SECRET   — same secret stored in admin_settings (required)
  *   LISTEN_HOST          — default 127.0.0.1
  *   LISTEN_PORT          — default 8788
- *   RENDER_SCRIPT        — path to render_podcast_preview_mp3.sh (default: ../scripts relative to cwd)
+ *   RENDER_SCRIPT        — path to render_podcast_preview_mp3.sh (default: alongside this file)
  *   R2_BUCKET            — passed to the shell script
  *
- * Example:
- *   VMP_WEBHOOK_SECRET='...' node scripts/podcast-preview-rebuild-listener.mjs
+ * Run continuously (from repo root):
+ *   VMP_WEBHOOK_SECRET='...' npm run start --workspace=@vmp/podcast-host
  *
  * Replace later with a proper service (queue, retries, metrics) without changing the Worker contract.
  */
