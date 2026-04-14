@@ -66,6 +66,25 @@ function inferEnclosureContentType(enclosureUrl: unknown) {
   if (pathname.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl'
   return 'application/octet-stream'
 }
+
+function buildSquareCoverImageUrl(imageUrl: unknown) {
+  const normalized = String(imageUrl ?? '').trim()
+  if (!normalized) return null
+  try {
+    const source = new URL(normalized)
+    // Use Cloudflare Image Resizing syntax to force a square podcast-art result.
+    // Podcast apps often require 1:1 cover images on both channel and item level.
+    return `${source.origin}/cdn-cgi/image/fit=cover,width=1400,height=1400/${source.pathname.replace(/^\/+/, '')}`
+  } catch {
+    return normalized
+  }
+}
+
+function buildFeedFaviconUrl(request: any, env: any) {
+  const requestOrigin = new URL(request.url).origin
+  const frontendOrigin = (env.FRONTEND_URL || requestOrigin).replace(/\/+$/, '')
+  return `${frontendOrigin}/favicon.ico`
+}
  
 function buildRssXml({
   channel,
@@ -88,6 +107,7 @@ function buildRssXml({
       `<guid isPermaLink="false">${xmlEscape(item.guid)}</guid>`,
       `<pubDate>${xmlEscape(item.pubDate)}</pubDate>`,
       `<enclosure url="${xmlEscape(item.enclosureUrl)}" type="${xmlEscape(item.enclosureType)}" />`,
+      item.imageUrl ? `<itunes:image href="${xmlEscape(item.imageUrl)}" />` : '',
       `<itunes:duration>${xmlEscape(item.itunesDuration)}</itunes:duration>`,
       '<itunes:explicit>false</itunes:explicit>',
       '</item>',
@@ -102,7 +122,7 @@ async function listPublishedVideos(db: any) {
   // Some local dev D1 states may not have the newer publish_status column yet.
   try {
     const byPublishStatus = await db.prepare(`
-      SELECT id, title, description, full_duration, preview_duration, published_at
+      SELECT id, title, description, thumbnail_url, full_duration, preview_duration, published_at
       FROM videos
       WHERE publish_status = 'published'
       ORDER BY datetime(published_at) DESC, datetime(upload_date) DESC
@@ -112,7 +132,7 @@ async function listPublishedVideos(db: any) {
     // Fall back to the legacy visibility column.
   }
   const rows = await db.prepare(`
-    SELECT id, title, description, full_duration, preview_duration, published_at
+    SELECT id, title, description, thumbnail_url, full_duration, preview_duration, published_at
     FROM videos
     WHERE visibility = 'public'
     ORDER BY datetime(published_at) DESC, datetime(upload_date) DESC
@@ -212,10 +232,9 @@ export async function handlePublicFeed(request: any, env: any, corsHeaders: any)
     }
     const origin = new URL(request.url).origin
 
-    const [titleSetting, descSetting, imageSetting] = await Promise.all([
+    const [titleSetting, descSetting] = await Promise.all([
       getSetting(env, 'podcast_title', { defaultValue: null }),
       getSetting(env, 'podcast_description', { defaultValue: null }),
-      getSetting(env, 'podcast_image_url', { defaultValue: null }),
     ])
 
     const channel = {
@@ -223,7 +242,7 @@ export async function handlePublicFeed(request: any, env: any, corsHeaders: any)
       description: descSetting || 'Preview episodes from VMP. Subscribe to unlock full access in your personal feed.',
       link: env.FRONTEND_URL || origin,
       language: 'en',
-      imageUrl: imageSetting,
+      imageUrl: buildFeedFaviconUrl(request, env),
     }
 
     const videos = await listPublishedVideos(session)
@@ -255,6 +274,7 @@ export async function handlePublicFeed(request: any, env: any, corsHeaders: any)
         pubDate: toRfc2822Date(v.published_at),
         enclosureUrl,
         enclosureType: inferEnclosureContentType(entrypointUrl),
+        imageUrl: buildSquareCoverImageUrl(v.thumbnail_url),
         itunesDuration: secondsToItunesDuration(v.full_duration ?? previewDuration ?? 0),
       })
     }
@@ -342,10 +362,9 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
     }
 
     const origin = new URL(request.url).origin
-    const [titleSetting, descSetting, imageSetting] = await Promise.all([
+    const [titleSetting, descSetting] = await Promise.all([
       getSetting(env, 'podcast_title', { defaultValue: null }),
       getSetting(env, 'podcast_description', { defaultValue: null }),
-      getSetting(env, 'podcast_image_url', { defaultValue: null }),
     ])
 
     const channel = {
@@ -353,7 +372,7 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
       description: descSetting || 'Your VMP podcast feed.',
       link: env.FRONTEND_URL || origin,
       language: 'en',
-      imageUrl: imageSetting,
+      imageUrl: buildFeedFaviconUrl(request, env),
     }
 
     const videos = await listPublishedVideos(session)
@@ -388,6 +407,7 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
         pubDate: toRfc2822Date(v.published_at),
         enclosureUrl,
         enclosureType: inferEnclosureContentType(entrypointUrl),
+        imageUrl: buildSquareCoverImageUrl(v.thumbnail_url),
         itunesDuration: secondsToItunesDuration(v.full_duration ?? previewDuration ?? 0),
       })
     }
