@@ -135,3 +135,11 @@ Use the smallest rollback that restores service:
 - If staging deploy is unstable, pause merges to `main` until smoke checks are green.
 - If production deploy is unstable, disable further production tags and roll back first, then investigate.
 
+## Livestream provider notes (RealtimeKit)
+
+- Livestream entries are stored as standard `videos` rows plus `livestreams` metadata rows.
+- RealtimeKit playback URLs are consumed directly on the watch page for premium/staff viewers while the stream is active.
+- Direct provider playback currently does not support the same proxy tokenization and preview truncation controls used for VOD HLS in `/api/video-proxy`.
+- Rewind/time-shift capability depends on provider playlist configuration; this integration assumes live-edge playback first, with explicit VOD handoff through admin swap.
+- To preserve durable playback and existing proxy protections, finalize streams by swapping in an uploaded VOD (`/api/admin/videos/:id/swap`) once recording is available.
+
