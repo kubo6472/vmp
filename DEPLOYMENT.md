@@ -25,7 +25,7 @@ Deploy each domain with its own Wrangler environment and secret set.
 
 Canonical deploy workflow: `.github/workflows/deploy.yml`.
 
-Other `cd-*` workflows are manual-only (`workflow_dispatch`) to avoid duplicate auto-deploys and secret mismatches.
+`deploy.yml` is the only supported deployment workflow.
 
 The canonical workflow uses:
 
@@ -72,8 +72,7 @@ Use this when staging/production D1, KV, and/or R2 were intentionally reset.
 
 1) Freeze auto-deploys
 
-- Confirm only `.github/workflows/deploy.yml` auto-deploys from `main`/tags.
-- Keep `cd-api.yml` and `cd-web.yml` manual-only.
+- Confirm `.github/workflows/deploy.yml` is the only active deployment workflow.
 
 1. Recreate bindings/resources (per environment)
 
@@ -119,19 +118,11 @@ Use this when staging/production D1, KV, and/or R2 were intentionally reset.
 
 Use the smallest rollback that restores service:
 
-1. API rollback
-- Redeploy the previously known-good commit using `.github/workflows/cd-api.yml` with the same target environment.
-- Confirm `GET /api/health` and `GET /api/auth/me` smoke checks pass.
-
-2. Web rollback
-- Redeploy the previously known-good commit using `.github/workflows/cd-web.yml` with the same target environment.
-- Confirm the frontend root route responds with `200`.
-
-3. Full rollback
+1. Full rollback
 - Re-run `.github/workflows/deploy.yml` from a known-good commit/tag (`workflow_dispatch`) targeting the affected environment.
 - Validate health, CORS, admin auth smoke checks, and homepage/watch rendering.
 
-4. Emergency containment
+2. Emergency containment
 - If staging deploy is unstable, pause merges to `main` until smoke checks are green.
 - If production deploy is unstable, disable further production tags and roll back first, then investigate.
 
