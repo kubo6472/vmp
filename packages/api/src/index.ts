@@ -619,7 +619,7 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any) {
     // Sign the playlist URL with a short-lived video token so the proxy can
     // authenticate every subsequent manifest and segment request.
     const effectiveUserId = authUser?.sub ?? userId ?? 'anonymous'
-    let playlistUrl = basePlaylistUrl
+    let playlistUrl: string | null = basePlaylistUrl
     if (isLivestream) {
       if (livestreamPlaybackUrl && hasPremiumAccess) {
         playlistUrl = livestreamPlaybackUrl
@@ -629,7 +629,7 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any) {
     }
     if (env.JWT_SECRET) {
       const shouldSignProxyUrl = typeof playlistUrl === 'string' && playlistUrl.startsWith(new URL(request.url).origin)
-      if (shouldSignProxyUrl) {
+      if (shouldSignProxyUrl && playlistUrl) {
         const vt = await signVideoToken(effectiveUserId, resolvedVideoId, env.JWT_SECRET, hasPremiumAccess ? null : previewDuration)
         playlistUrl = playlistUrl.includes('?')
           ? `${playlistUrl}&vt=${vt}`
@@ -656,6 +656,9 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any) {
         livestreamProvider: livestream?.provider ?? null,
         livestreamPlaybackUrl,
         livestreamRecordingVideoId: livestreamRecordingId,
+        livestreamUnavailableReason: isLivestream && !playlistUrl
+          ? 'Live stream is not yet attached. Add a playback URL or swap in the recorded VOD.'
+          : null,
       },
       chapters: [
         { title: 'Preview', startTime: 0, endTime: previewDuration, accessible: true },
@@ -1184,7 +1187,7 @@ async function handleAdminLivestreamCreate(request: any, env: any, corsHeaders: 
       return jsonResponse({ error: 'playbackUrl must be a valid http(s) URL' }, 400, corsHeaders)
     }
   }
-  const livestreamStatus = normalizeLivestreamStatus(body.status, 'scheduled')
+  const livestreamStatus = normalizeLivestreamStatus(body.status, 'planned')
 
   const categoryId = typeof body.categoryId === 'string' && body.categoryId.trim() ? body.categoryId.trim() : null
   const db = getDatabaseBinding(env)
