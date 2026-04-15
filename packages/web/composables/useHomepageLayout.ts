@@ -47,8 +47,12 @@ export function buildHomepageRenderModel({
     if (video?.category_id) categoryAssignedIds.add(video.id)
   }
 
-  const featuredVideos = (placement?.featured ?? [])
-    .map((ref) => videoById.get(ref.id))
+  const featuredIdList = Array.isArray(placement?.featured)
+    ? placement.featured.map((ref) => ref?.id).filter(Boolean)
+    : []
+  const featuredVideos = featuredIdList
+    .slice(0, 4)
+    .map((id) => videoById.get(id))
     .filter(Boolean)
   const recentTwoByTwoVideos = (placement?.recentGrid ?? [])
     .map((slot) => (slot ? videoById.get(slot.id) : null))

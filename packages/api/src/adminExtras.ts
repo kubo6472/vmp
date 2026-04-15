@@ -67,7 +67,8 @@ export async function handleHomepageContent(request: any, env: any, corsHeaders:
           ORDER BY
             CASE WHEN vc.sort_order <= 0 THEN 0 ELSE 1 END ASC,
             vc.sort_order ASC,
-            vc.name ASC
+            vc.name ASC,
+            vc.id ASC
         `).all(),
       ])
       const homepageConfig = normalizeHomepageConfigForResponse(safeJsonParse(homepageRow?.value, null))
@@ -107,12 +108,20 @@ export async function handleHomepageContent(request: any, env: any, corsHeaders:
     if (configUpdate) {
       writes.push(['homepage', JSON.stringify(configUpdate)])
     }
-    if (writes.length) {
-      await setSettings(env, writes)
-    }
-    if (categoryOrderUpdates.length) {
-      const updateStmt = db.prepare(`UPDATE video_categories SET sort_order = ? WHERE id = ?`)
-      await db.batch(categoryOrderUpdates.map((entry: any) => updateStmt.bind(entry.sortOrder, entry.id)))
+
+    try {
+      await db.exec('BEGIN')
+      if (categoryOrderUpdates.length) {
+        const updateStmt = db.prepare(`UPDATE video_categories SET sort_order = ? WHERE id = ?`)
+        await db.batch(categoryOrderUpdates.map((entry: any) => updateStmt.bind(entry.sortOrder, entry.id)))
+      }
+      if (writes.length) {
+        await setSettings(env, writes)
+      }
+      await db.exec('COMMIT')
+    } catch (error) {
+      await db.exec('ROLLBACK')
+      throw error
     }
 
     return jsonResponse({

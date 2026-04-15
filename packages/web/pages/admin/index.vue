@@ -128,8 +128,8 @@
           </div>
           <div class="rounded-xl border border-gray-200 dark:border-gray-800 p-5 space-y-8 bg-gray-50/50 dark:bg-gray-950/50">
             <div>
-              <h3 class="text-3xl font-bold text-gray-900 dark:text-white mb-3">{{ homepagePreviewModel.heroBlock?.title || 'Discover Premium Video Content' }}</h3>
-              <p class="text-gray-600 dark:text-gray-400">{{ homepagePreviewModel.heroBlock?.body || 'Watch free previews or unlock full access with a premium subscription' }}</p>
+              <h3 class="text-3xl font-bold text-gray-900 dark:text-white mb-3">{{ homepageHeroTitle || 'Discover Premium Video Content' }}</h3>
+              <p class="text-gray-600 dark:text-gray-400">{{ homepageHeroSubtitle || 'Watch free previews or unlock full access with a premium subscription' }}</p>
               <div v-if="adminPills.length" class="mt-4 flex flex-wrap gap-2">
                 <div
                   v-for="pill in adminPills"
@@ -1847,11 +1847,23 @@ const featuredVideos = computed(() =>
 )
 
 const homepagePlacement = ref<HomepagePlacementResponse | null>(null)
+const mergedHomepagePlacement = computed(() => {
+  const base = homepagePlacement.value || { featured: [], recentGrid: [], categoryBlocks: [] }
+  const featuredIds = featuredSlots.value.map((v) => v?.id).filter((v): v is string => Boolean(v))
+  return {
+    ...base,
+    featured: featuredIds.map((id) => ({ id })),
+    categoryBlocks: categories.value.map((cat) => {
+      const existing = base.categoryBlocks?.find((b) => b.category.id === cat.id)
+      return existing || { category: cat, visible: [], overflow: [] }
+    }),
+  }
+})
 const homepagePreviewModel = computed(() =>
   buildHomepageRenderModel({
     videos: chronologicallySortedUploads.value,
     layoutBlocks: layoutBlocks.value,
-    placement: homepagePlacement.value,
+    placement: mergedHomepagePlacement.value,
   }),
 )
 const homepageDirty = computed(() => serializeHomepageState() !== homepageBaseline.value)
@@ -1936,10 +1948,13 @@ const nudgeCategoryOrder = (idx: number, direction: -1 | 1) => {
   const moved = next.splice(idx, 1)[0]
   if (!moved) return
   next.splice(swapIdx, 0, moved)
-  categories.value = next.map((category, index) => ({
-    ...category,
-    sort_order: index <= 2 ? index - 2 : index + 1,
-  }))
+  const itemAtIdx = next[idx]
+  const itemAtSwapIdx = next[swapIdx]
+  if (!itemAtIdx || !itemAtSwapIdx) return
+  const temp = itemAtIdx.sort_order
+  next[idx] = { ...itemAtIdx, sort_order: itemAtSwapIdx.sort_order }
+  next[swapIdx] = { ...itemAtSwapIdx, sort_order: temp }
+  categories.value = next
 }
 
 const focusCategoryFromPreview = (categoryId: string) => {
@@ -2171,11 +2186,6 @@ const loadHomepageState = async () => {
     headers: Object.keys(auth).length ? auth : undefined,
   })
   if (!res.ok) {
-    layoutBlocks.value = getDefaultBlocks()
-    featuredSlots.value = [...chronologicallySortedUploads.value.slice(0, 4)]
-    homepageHeroTitle.value = 'Discover Premium Video Content'
-    homepageHeroSubtitle.value = 'Watch free previews or unlock full access with a premium subscription'
-    applyHomepageBaseline()
     return
   }
   const data = await res.json()

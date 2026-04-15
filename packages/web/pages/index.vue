@@ -42,10 +42,10 @@
       <!-- Hero Section -->
       <div class="mb-12">
         <h1 class="text-4xl font-bold text-gray-900 dark:text-white mb-4">
-          {{ heroBlock?.title || 'Discover Premium Video Content' }}
+          {{ homepageHeroTitle }}
         </h1>
         <p class="text-lg text-gray-600 dark:text-gray-400">
-          {{ heroBlock?.body || 'Watch free previews or unlock full access with a premium subscription' }}
+          {{ homepageHeroSubtitle }}
         </p>
         <div v-if="pills.length" class="mt-5 flex flex-wrap gap-2">
           <div
@@ -254,6 +254,8 @@ const featuredMode = ref<'latest' | 'specific'>('latest')
 const featuredVideoId = ref<string | null>(null)
 const categories = ref<VideoCategory[]>([])
 const pills = ref<Array<{ id: string; label: string; value: number; color: string }>>([])
+const homepageHeroTitle = ref<string>('Discover Premium Video Content')
+const homepageHeroSubtitle = ref<string>('Watch free previews or unlock full access with a premium subscription')
 
 const blockLabelMap: Record<HomepageLayoutBlock['type'], string> = {
   hero:                'Hero',
@@ -286,15 +288,18 @@ const recentTwoByTwoVideos = computed(() => homepageRenderModel.value.recentTwoB
 const categorySections = computed(() => homepageRenderModel.value.categorySections)
 
 const loadAdminConfig = async () => {
-  const res = await fetch(`${config.public.apiUrl}/api/admin/config`, {
+  const res = await fetch(`${config.public.apiUrl}/api/admin/homepage/content`, {
     headers: authHeader(),
   })
   if (!res.ok) return
   const data = await res.json()
-  layoutBlocks.value     = Array.isArray(data?.config?.layoutBlocks)    ? data.config.layoutBlocks    : []
-  featuredVideoIds.value = Array.isArray(data?.config?.featuredVideoIds) ? data.config.featuredVideoIds : []
-  featuredMode.value = data?.config?.featuredMode === 'specific' ? 'specific' : 'latest'
-  featuredVideoId.value = typeof data?.config?.featuredVideoId === 'string' ? data.config.featuredVideoId : null
+  homepageHeroTitle.value = data.title || 'Discover Premium Video Content'
+  homepageHeroSubtitle.value = data.subtitle || 'Watch free previews or unlock full access with a premium subscription'
+  const homepageConfig = data?.homepageConfig ?? {}
+  layoutBlocks.value     = Array.isArray(homepageConfig?.layoutBlocks)    ? homepageConfig.layoutBlocks    : []
+  featuredVideoIds.value = Array.isArray(homepageConfig?.featuredVideoIds) ? homepageConfig.featuredVideoIds : []
+  featuredMode.value = homepageConfig?.featuredMode === 'specific' ? 'specific' : 'latest'
+  featuredVideoId.value = typeof homepageConfig?.featuredVideoId === 'string' ? homepageConfig.featuredVideoId : null
 }
 
 const loadCategories = async () => {
