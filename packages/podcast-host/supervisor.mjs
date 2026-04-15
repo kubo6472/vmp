@@ -37,6 +37,7 @@ const uiHost = process.env.VMP_UI_HOST || '127.0.0.1'
 const uiPort = Number.parseInt(process.env.VMP_UI_PORT || '8788', 10)
 const runPipeline = process.env.VMP_RUN_PIPELINE !== '0'
 const previewConcurrency = Math.max(1, Number.parseInt(process.env.VMP_PREVIEW_CONCURRENCY || '1', 10) || 1)
+const MAX_BODY_SIZE = 10 * 1024 * 1024 // 10 MB
 
 /** @type {{ id: string, type: string, videoId?: string, status: string, detail?: string, startedAt?: string, finishedAt?: string }[]} */
 const jobs = []
@@ -100,11 +101,17 @@ function startPipeline() {
     pushLog(`Pipeline exited code=${code} signal=${signal ?? ''}`)
     pipelineChild = null
     pipelineState.pid = null
+    if (runPipeline) {
+      pushLog('Pipeline process exited; supervisor exiting for systemd restart')
+      process.exit(1)
+    }
   })
 }
 
 let previewRunning = 0
 const previewQueue = []
+/** @type {Set<import('node:child_process').ChildProcess>} */
+const previewChildren = new Set()
 
 function enqueuePreview(videoId, previewSeconds, source = 'webhook') {
   const id = crypto.randomUUID()
@@ -142,9 +149,11 @@ function drainPreviewQueue() {
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    previewChildren.add(child)
     let err = ''
     child.stderr.on('data', (d) => { err += d.toString() })
     child.on('close', (code) => {
+      previewChildren.delete(child)
       previewRunning--
       const r = jobs.find((j) => j.id === task.id)
       if (r) {
@@ -158,6 +167,9 @@ function drainPreviewQueue() {
           : `Preview MP3 FAILED: ${task.videoId} (${task.previewSeconds}s) ${err.slice(-200)}`,
       )
       drainPreviewQueue()
+    })
+    child.on('error', () => {
+      previewChildren.delete(child)
     })
   }
 }
@@ -291,7 +303,17 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/api/podcast-preview-rebuild') {
     const chunks = []
-    for await (const c of req) chunks.push(c)
+    let byteCount = 0
+    for await (const c of req) {
+      byteCount += c.length
+      if (byteCount > MAX_BODY_SIZE) {
+        res.writeHead(413, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Request body too large' }))
+        req.destroy()
+        return
+      }
+      chunks.push(c)
+    }
     const rawBody = Buffer.concat(chunks)
 
     if (secret) {
@@ -341,6 +363,16 @@ const server = http.createServer(async (req, res) => {
       const id = v?.id
       const sec = Number(v?.previewDurationSeconds)
       if (!id || !Number.isFinite(sec) || sec <= 0) continue
+      // Reject path-like IDs to prevent directory traversal
+      if (typeof id !== 'string' || id.includes('/') || id.includes('\\') || id.includes('..')) {
+        pushLog(`Rejected invalid video ID: ${id}`)
+        continue
+      }
+      // Stricter validation: allow only alphanumerics, dash, dot, underscore
+      if (!/^[a-zA-Z0-9._-]+$/.test(id)) {
+        pushLog(`Rejected invalid video ID: ${id}`)
+        continue
+      }
       accepted.push({ jobId: enqueuePreview(id, Math.floor(sec), 'webhook'), videoId: id, previewSeconds: Math.floor(sec) })
     }
 
@@ -362,11 +394,23 @@ server.listen(uiPort, uiHost, () => {
   startPipeline()
 })
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   pushLog('SIGTERM — stopping')
   if (pipelineChild && !pipelineState.exited) {
     try {
       pipelineChild.kill('SIGTERM')
+    } catch {}
+  }
+  for (const child of previewChildren) {
+    try {
+      child.kill('SIGTERM')
+    } catch {}
+  }
+  // Give children a moment to exit gracefully
+  await new Promise((resolve) => setTimeout(resolve, 1000))
+  for (const child of previewChildren) {
+    try {
+      child.kill('SIGKILL')
     } catch {}
   }
   server.close(() => process.exit(0))
