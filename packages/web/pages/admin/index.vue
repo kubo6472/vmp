@@ -1131,7 +1131,7 @@
                   <input
                     v-model="rssPodcastWebhookUrl"
                     type="url"
-                    placeholder="https://media.example.internal:8788/vmp/podcast-preview-rebuild"
+                    placeholder="https://media.example.internal:8788/vmp/api/podcast-preview-rebuild"
                     class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-xs"
                   >
                 </label>
@@ -2309,7 +2309,12 @@ const notifyPodcastPreviewRebuild = async () => {
       body: JSON.stringify({}),
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`)
+    if (!res.ok) {
+      const base = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`
+      const detail = typeof data.detail === 'string' && data.detail.trim() ? ` — ${data.detail.trim()}` : ''
+      const status = data.status ? ` (upstream ${data.status})` : ''
+      throw new Error(`${base}${status}${detail}`)
+    }
     rssPodcastMessage.value = `Host notified (${data.videoCount ?? 0} published videos in payload).`
     rssPodcastMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
   } catch (e: any) {

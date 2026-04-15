@@ -38,7 +38,7 @@ Expose the HTTP port to the Worker only (VPN, SSH tunnel, or reverse proxy with 
 
 `https://your-media-host/vmp/api/podcast-preview-rebuild`
 
-(path must match; adjust proxy path as needed).
+(supervisor also accepts `/api/podcast-preview-rebuild` and legacy `/vmp/podcast-preview-rebuild`).
 
 ### Environment
 

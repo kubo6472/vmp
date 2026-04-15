@@ -273,6 +273,12 @@ function dashboardHtml() {
 </html>`
 }
 
+const REBUILD_WEBHOOK_PATHS = new Set([
+  '/api/podcast-preview-rebuild',
+  '/vmp/api/podcast-preview-rebuild',
+  '/vmp/podcast-preview-rebuild',
+])
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${uiHost}:${uiPort}`)
 
@@ -301,7 +307,16 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  if (req.method === 'POST' && url.pathname === '/api/podcast-preview-rebuild') {
+  if (REBUILD_WEBHOOK_PATHS.has(url.pathname) && req.method !== 'POST') {
+    json(res, {
+      error: 'Method not allowed',
+      expectedMethod: 'POST',
+      endpoint: '/api/podcast-preview-rebuild',
+    }, 405)
+    return
+  }
+
+  if (req.method === 'POST' && REBUILD_WEBHOOK_PATHS.has(url.pathname)) {
     const chunks = []
     let byteCount = 0
     for await (const c of req) {
@@ -390,7 +405,9 @@ const server = http.createServer(async (req, res) => {
 })
 
 server.listen(uiPort, uiHost, () => {
-  pushLog(`Dashboard http://${uiHost}:${uiPort}/  (webhook POST /api/podcast-preview-rebuild)`)
+  pushLog(
+    `Dashboard http://${uiHost}:${uiPort}/  (webhook POST /api/podcast-preview-rebuild or /vmp/api/podcast-preview-rebuild)`,
+  )
   startPipeline()
 })
 
