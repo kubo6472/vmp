@@ -99,7 +99,7 @@ if table_exists "video_segment_events" \
   && column_exists "video_segment_events" "source_host" \
   && column_exists "video_segment_events" "created_at"; then
   run_sql "UPDATE video_segment_events
-           SET session_key = video_id || ':' ||
+           SET session_key = COALESCE(video_id, 'unknown') || ':' ||
              CASE
                WHEN user_id IS NOT NULL AND trim(user_id) <> '' THEN 'u:' || user_id
                WHEN ip_hash IS NOT NULL AND trim(ip_hash) <> '' THEN 'i:' || ip_hash
