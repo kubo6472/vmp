@@ -14,8 +14,32 @@ MP3_ONLY="${MP3_ONLY:-0}"
 PREVIEW_MP3_SECONDS="${PREVIEW_MP3_SECONDS:-180}"
 PREVIEW_MP3_LOCK_SECONDS="${PREVIEW_MP3_LOCK_SECONDS:-60}"
 PREVIEW_MP3_ENABLED="${PREVIEW_MP3_ENABLED:-1}"
+# VAAPI_DEVICE: GPU device node for hardware video encoding (default /dev/dri/renderD128).
+# Supervisors/operators: when using VAAPI, ensure this device exists and the process
+# has read/write permissions. Typically requires adding the user to the 'video' or 'render' group.
+VAAPI_DEVICE="${VAAPI_DEVICE:-/dev/dri/renderD128}"
+
+# Preflight check: verify VAAPI device exists and is accessible
+if [ ! -e "$VAAPI_DEVICE" ]; then
+    echo "ERROR: VAAPI device not found: $VAAPI_DEVICE" >&2
+    echo "Please ensure the GPU device exists or set VAAPI_DEVICE to the correct path." >&2
+    exit 1
+fi
+
+if [ ! -r "$VAAPI_DEVICE" ] || [ ! -w "$VAAPI_DEVICE" ]; then
+    echo "ERROR: VAAPI device not accessible: $VAAPI_DEVICE" >&2
+    echo "Please ensure read/write permissions (typically requires 'video' or 'render' group membership)." >&2
+    exit 1
+fi
 
 MAX_JOBS=2
+
+# FFMPEG_VAAPI_BASE: Software decode + VAAPI encode pipeline
+# Uses software decode (compatible with any input codec) then uploads to GPU for scaling/encoding
+FFMPEG_VAAPI_BASE=(
+    ffmpeg -hide_banner -y
+    -init_hw_device vaapi=vaapi0:"$VAAPI_DEVICE"
+)
 
 mkdir -p "$TMP_DIR_BASE"
 SLOT_DIR="$TMP_DIR_BASE/.slots"
@@ -249,19 +273,19 @@ process_video() {
             emit_pipeline_event "$VIDEO_ID" "encode" "active" "start"
 
             emit_pipeline_event "$VIDEO_ID" "encode" "active" "1/3 1080p"
-            ffmpeg -hide_banner -y -i "$INPUT_PATH" \
-                -vf "scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2" \
-                -map 0:v:0 -map 0:a? -c:v libx264 -b:v 5M -preset fast -c:a aac -b:a 128k -f mp4 "$TMP_DIR/1080p.mp4.tmp.$$"
+            "${FFMPEG_VAAPI_BASE[@]}" -i "$INPUT_PATH" \
+                -vf "format=nv12,hwupload,scale_vaapi=w=1920:h=1080:force_original_aspect_ratio=decrease" \
+                -map 0:v:0 -map 0:a? -c:v h264_vaapi -b:v 5M -maxrate 5M -bufsize 10M -c:a aac -b:a 128k -f mp4 "$TMP_DIR/1080p.mp4.tmp.$$"
             mv "$TMP_DIR/1080p.mp4.tmp.$$" "$TMP_DIR/1080p.mp4"
             emit_pipeline_event "$VIDEO_ID" "encode" "active" "2/3 720p"
-            ffmpeg -hide_banner -y -i "$INPUT_PATH" \
-                -vf "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2" \
-                -map 0:v:0 -map 0:a? -c:v libx264 -b:v 3M -preset fast -c:a aac -b:a 128k -f mp4 "$TMP_DIR/720p.mp4.tmp.$$"
+            "${FFMPEG_VAAPI_BASE[@]}" -i "$INPUT_PATH" \
+                -vf "format=nv12,hwupload,scale_vaapi=w=1280:h=720:force_original_aspect_ratio=decrease" \
+                -map 0:v:0 -map 0:a? -c:v h264_vaapi -b:v 3M -maxrate 3M -bufsize 6M -c:a aac -b:a 128k -f mp4 "$TMP_DIR/720p.mp4.tmp.$$"
             mv "$TMP_DIR/720p.mp4.tmp.$$" "$TMP_DIR/720p.mp4"
             emit_pipeline_event "$VIDEO_ID" "encode" "active" "3/3 480p"
-            ffmpeg -hide_banner -y -i "$INPUT_PATH" \
-                -vf "scale=854:480:force_original_aspect_ratio=decrease:force_divisible_by=2" \
-                -map 0:v:0 -map 0:a? -c:v libx264 -b:v 1.5M -preset fast -c:a aac -b:a 96k -f mp4 "$TMP_DIR/480p.mp4.tmp.$$"
+            "${FFMPEG_VAAPI_BASE[@]}" -i "$INPUT_PATH" \
+                -vf "format=nv12,hwupload,scale_vaapi=w=854:h=480:force_original_aspect_ratio=decrease" \
+                -map 0:v:0 -map 0:a? -c:v h264_vaapi -b:v 1500k -maxrate 1500k -bufsize 3000k -c:a aac -b:a 96k -f mp4 "$TMP_DIR/480p.mp4.tmp.$$"
             mv "$TMP_DIR/480p.mp4.tmp.$$" "$TMP_DIR/480p.mp4"
 
             log "✅ Encoding done"

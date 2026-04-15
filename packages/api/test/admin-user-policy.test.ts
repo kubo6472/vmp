@@ -16,6 +16,7 @@ describe('canActorAssignRole', () => {
     assert.equal(canActorAssignRole('super_admin', 'super_admin'), true)
     assert.equal(canActorAssignRole('admin', 'super_admin'), false)
     assert.equal(canActorAssignRole('admin', 'editor'), true)
+    assert.equal(canActorAssignRole('viewer', 'editor'), false)
   })
 })
 
@@ -64,6 +65,11 @@ describe('evaluateSelfRoleChange', () => {
 })
 
 describe('evaluateSubscriptionStatusChange', () => {
+  it('normalizes blank and null next values to none', () => {
+    assert.equal(evaluateSubscriptionStatusChange('active', '').ok, true)
+    assert.equal(evaluateSubscriptionStatusChange('active', null).ok, true)
+  })
+
   it('allows any known status from active', () => {
     const r = evaluateSubscriptionStatusChange('active', 'past_due')
     assert.equal(r.ok, true)

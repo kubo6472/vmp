@@ -105,6 +105,45 @@ Use this when staging/production D1, KV, and/or R2 were intentionally reset.
 - Run all SQL files in `packages/api/migrations/` in ascending order.
 - Do not edit historical migration files; add new numbered migrations as needed.
 
+### Migration safety closure + regression gates
+
+Run these commands after migrations and before promoting traffic:
+
+1) Idempotent backfill/mapping script
+
+- Local dry-run style check:
+  - `npm run db:migration-backfill --workspace=@vmp/api`
+- Remote target:
+  - `DB_NAME=video-subscription-db npm run db:migration-backfill --workspace=@vmp/api -- --remote`
+- Expected success signal:
+  - Output includes `[backfill] Completed successfully.`
+  - Re-running should produce the same success output with no errors.
+- Failure interpretation:
+  - Any non-zero exit means schema drift (missing columns/tables) or DB connectivity issues.
+  - Resolve schema mismatch first, then rerun migrations and this backfill.
+
+2) Integrity verification script (hard PASS/FAIL gate)
+
+- Local:
+  - `npm run db:migration-verify --workspace=@vmp/api`
+- Remote:
+  - `DB_NAME=video-subscription-db npm run db:migration-verify --workspace=@vmp/api -- --remote`
+- Expected PASS output:
+  - Row counts emitted for key tables.
+  - Final line: `[verify] PASS: all integrity checks are zero.`
+- Expected FAIL output:
+  - Integrity failures: Final line `[verify] FAIL: <n> integrity check(s) are non-zero.` — command exits `1`; deployment should stop until non-zero checks are fixed.
+  - Schema failures: Final line `[verify] FAIL: <n> required schema check(s) missing.` — command exits `1`; deployment should stop until schema drift is resolved.
+  - Operators should look for either failure message when triaging verification issues.
+
+3) Targeted deterministic regression suite (Task 12)
+
+- `npm test --workspace=@vmp/api -- --test-name-pattern="clampNewsletterPollIntervalMs|isNewsletterSendFinished|fetchBrevoEmailCampaignsWithRetry|evaluateRoleChange|evaluateSelfRoleChange|evaluateSubscriptionStatusChange|segment analytics|normalizeLivestreamStatus|normalizeStripeStatus|normalizeGoCardlessStatus|placeHomepageVideos matrix|sortCategoriesForHomepage|placementTimestampMs"`
+- Expected PASS signal:
+  - Node test runner summary reports all listed suites passing, zero failed tests.
+- Failure interpretation:
+  - Any failing suite blocks deployment; fix regression and rerun full targeted command.
+
 1. Seed data policy
 
 - Staging: seed freely for smoke testing.
@@ -142,4 +181,3 @@ Use the smallest rollback that restores service:
 - Direct provider playback currently does not support the same proxy tokenization and preview truncation controls used for VOD HLS in `/api/video-proxy`.
 - Rewind/time-shift capability depends on provider playlist configuration; this integration assumes live-edge playback first, with explicit VOD handoff through admin swap.
 - To preserve durable playback and existing proxy protections, finalize streams by swapping in an uploaded VOD (`/api/admin/videos/:id/swap`) once recording is available.
-

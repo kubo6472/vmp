@@ -21,6 +21,11 @@ describe('normalizeStripeStatus', () => {
     assert.equal(normalizeStripeStatus('unpaid'), 'past_due')
     assert.equal(normalizeStripeStatus('incomplete'), 'past_due')
   })
+
+  it('falls back unknown or non-normalized values to cancelled', () => {
+    assert.equal(normalizeStripeStatus('ACTIVE'), 'cancelled')
+    assert.equal(normalizeStripeStatus('unexpected_state'), 'cancelled')
+  })
 })
 
 describe('normalizeGoCardlessStatus', () => {
@@ -43,5 +48,6 @@ describe('normalizeGoCardlessStatus', () => {
     assert.equal(normalizeGoCardlessStatus('cancelled'), 'cancelled')
     assert.equal(normalizeGoCardlessStatus('finished'), 'cancelled')
     assert.equal(normalizeGoCardlessStatus('unknown_state'), 'cancelled')
+    assert.equal(normalizeGoCardlessStatus('  CANCELED '), 'cancelled')
   })
 })
