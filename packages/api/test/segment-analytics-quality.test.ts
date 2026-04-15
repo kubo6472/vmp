@@ -25,12 +25,21 @@ describe('segment analytics source classification', () => {
     assert.equal(classifySegmentSource({ referer: 'https://partner.example.net/article' }).category, 'referral')
     assert.equal(classifySegmentSource({ referer: '' }).category, 'direct')
   })
+
+  it('falls back to direct for malformed referer values', () => {
+    assert.equal(classifySegmentSource({ referer: 'not a url' }).category, 'direct')
+  })
 })
 
 describe('segment playback + session derivation', () => {
   it('derives playback position from segment index and duration', () => {
     const playback = derivePlaybackPositionSeconds({ segmentIndex: 5, segmentDurationSeconds: 6.2 })
     assert.equal(playback, 31)
+  })
+
+  it('falls back to segment index when duration is unavailable', () => {
+    const playback = derivePlaybackPositionSeconds({ segmentIndex: 8, segmentDurationSeconds: null })
+    assert.equal(playback, 8)
   })
 
   it('builds stable session keys in 30-minute buckets', () => {

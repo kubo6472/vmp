@@ -20,4 +20,8 @@ describe('normalizeLivestreamStatus', () => {
     assert.equal(normalizeLivestreamStatus('unknown', 'ended'), 'ended')
     assert.equal(normalizeLivestreamStatus(null, 'scheduled'), 'scheduled')
   })
+
+  it('uses custom fallback for non-string statuses', () => {
+    assert.equal(normalizeLivestreamStatus(undefined, 'vod_attached'), 'vod_attached')
+  })
 })

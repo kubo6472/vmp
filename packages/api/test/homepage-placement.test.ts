@@ -27,6 +27,16 @@ describe('placementTimestampMs', () => {
     })
     assert.equal(ms, Date.parse('2026-06-01T00:00:00.000Z'))
   })
+
+  it('sorts deterministic tie-breaker by id when timestamps match', () => {
+    const homepage = { featuredMode: 'latest', featuredVideoId: null, featuredVideoIds: [] }
+    const videos = [
+      { id: 'b', published_at: T.t1, upload_date: T.t1, category_id: null },
+      { id: 'a', published_at: T.t1, upload_date: T.t1, category_id: null },
+    ]
+    const out = placeHomepageVideos({ videos, categories: [], homepage })
+    assert.deepEqual(out.recentGrid, [{ id: 'b' }, { id: 'a' }, null, null])
+  })
 })
 
 describe('placeHomepageVideos matrix', () => {
