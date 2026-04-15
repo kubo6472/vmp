@@ -40,7 +40,7 @@ export async function signVideoToken(
   userId: string,
   videoId: string,
   secret: string,
-  previewUntil = null,
+  previewUntil: number | null = null,
   opts: SignVideoTokenOptions = {},
 ) {
   const ttlSeconds = Number.isFinite(opts.ttlSeconds) ? Math.max(60, Math.floor(opts.ttlSeconds as number)) : 7200

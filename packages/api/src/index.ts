@@ -44,6 +44,7 @@ import {
 import { signVideoToken, verifyVideoToken } from './videoTokens.js'
 import { handlePublicFeed, handlePersonalFeed } from './feed.js'
 import { handleGetAccountRss } from './rssAccount.js'
+import { handleRssPodcastPreviewRebuildNotify, handleRssPodcastWebhookConfig } from './rssPodcastAdmin.js'
 import {
   handleHomepageContent,
   handlePillsPublic,
@@ -279,6 +280,12 @@ export default {
     }
     if (url.pathname === '/api/admin/newsletter/sync' && request.method === 'POST') {
       return handleAdminNewsletterSync(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/rss/podcast-rebuild-webhook' && ['GET', 'PATCH'].includes(request.method)) {
+      return handleRssPodcastWebhookConfig(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/rss/podcast-preview-rebuild' && request.method === 'POST') {
+      return handleRssPodcastPreviewRebuildNotify(request, env, corsHeaders)
     }
     if (url.pathname === '/api/admin/homepage/content' && (request.method === 'GET' || request.method === 'PATCH')) {
       return handleHomepageContent(request, env, corsHeaders)

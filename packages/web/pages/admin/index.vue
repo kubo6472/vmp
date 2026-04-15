@@ -1112,6 +1112,61 @@
                 </button>
               </div>
             </div>
+
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-4">
+              <div>
+                <h3 class="font-semibold text-gray-900 dark:text-white">Podcast preview (RSS)</h3>
+                <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                  The public feed prefers HLS or a pre-cut
+                  <code class="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-1 rounded">podcast_preview.mp3</code>
+                  so preview length tracks your preview duration without waiting on ffmpeg. After you change preview durations, notify your media host to re-encode preview MP3s if you use them.
+                </p>
+              </div>
+
+              <div v-if="rssPodcastMessage" class="rounded-lg border px-4 py-3 text-sm" :class="rssPodcastMessageClass">{{ rssPodcastMessage }}</div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label class="block text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
+                  Rebuild webhook URL (your host / tunnel)
+                  <input
+                    v-model="rssPodcastWebhookUrl"
+                    type="url"
+                    placeholder="https://media.example.internal:8788/vmp/podcast-preview-rebuild"
+                    class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-xs"
+                  >
+                </label>
+                <label class="block text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
+                  Shared secret (HMAC-SHA256 of JSON body; min 16 chars)
+                  <input
+                    v-model="rssPodcastWebhookSecretInput"
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder="Leave blank to keep current secret"
+                    class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-xs"
+                  >
+                </label>
+              </div>
+
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="px-4 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm font-semibold disabled:opacity-50"
+                  :disabled="rssPodcastWebhookSaving"
+                  @click="saveRssPodcastWebhookSettings"
+                >
+                  {{ rssPodcastWebhookSaving ? 'Saving…' : 'Save webhook settings' }}
+                </button>
+                <button
+                  type="button"
+                  class="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold disabled:opacity-50"
+                  :disabled="rssPodcastNotifySending"
+                  @click="notifyPodcastPreviewRebuild"
+                >
+                  {{ rssPodcastNotifySending ? 'Notifying…' : 'Notify host to re-render preview podcasts' }}
+                </button>
+              </div>
+              <p v-if="rssPodcastSecretConfigured" class="text-xs text-gray-500 dark:text-gray-400">A webhook secret is configured on the server.</p>
+            </div>
           </template>
         </div>
       </section>
@@ -1537,6 +1592,13 @@ const paymentSettings = ref<{
 const paymentSettingsSaving = ref(false)
 const paymentSettingsMessage = ref('')
 const paymentSettingsMessageClass = ref('')
+const rssPodcastWebhookUrl = ref('')
+const rssPodcastWebhookSecretInput = ref('')
+const rssPodcastSecretConfigured = ref(false)
+const rssPodcastWebhookSaving = ref(false)
+const rssPodcastNotifySending = ref(false)
+const rssPodcastMessage = ref('')
+const rssPodcastMessageClass = ref('')
 
 let usersLoadRequestId = 0
 const users = ref<AdminUserRow[]>([])
@@ -2190,6 +2252,74 @@ const loadPaymentSettings = async () => {
   }
 }
 
+const loadRssPodcastWebhookSettings = async () => {
+  if (!isAdmin.value) return
+  rssPodcastMessage.value = ''
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/rss/podcast-rebuild-webhook`, { headers: authHeader() })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    rssPodcastWebhookUrl.value = typeof data.webhookUrl === 'string' ? data.webhookUrl : ''
+    rssPodcastSecretConfigured.value = Boolean(data.secretConfigured)
+    rssPodcastWebhookSecretInput.value = ''
+  } catch (e: any) {
+    rssPodcastMessage.value = `Could not load podcast webhook settings: ${e.message}`
+    rssPodcastMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  }
+}
+
+const saveRssPodcastWebhookSettings = async () => {
+  if (!isAdmin.value) return
+  rssPodcastWebhookSaving.value = true
+  rssPodcastMessage.value = ''
+  try {
+    const body: Record<string, string> = { webhookUrl: rssPodcastWebhookUrl.value.trim() }
+    const sec = rssPodcastWebhookSecretInput.value.trim()
+    if (sec) body.webhookSecret = sec
+    const res = await fetch(`${config.public.apiUrl}/api/admin/rss/podcast-rebuild-webhook`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`)
+    rssPodcastMessage.value = 'Podcast webhook settings saved.'
+    rssPodcastMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+    rssPodcastWebhookSecretInput.value = ''
+    rssPodcastSecretConfigured.value = Boolean(data.secretConfigured)
+  } catch (e: any) {
+    rssPodcastMessage.value = e.message || 'Failed to save podcast webhook settings'
+    rssPodcastMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    rssPodcastWebhookSaving.value = false
+  }
+}
+
+const notifyPodcastPreviewRebuild = async () => {
+  if (!isAdmin.value) return
+  rssPodcastNotifySending.value = true
+  rssPodcastMessage.value = ''
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/rss/podcast-preview-rebuild`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({}),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`)
+    rssPodcastMessage.value = `Host notified (${data.videoCount ?? 0} published videos in payload).`
+    rssPodcastMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+  } catch (e: any) {
+    rssPodcastMessage.value = e.message || 'Notify failed'
+    rssPodcastMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    rssPodcastNotifySending.value = false
+  }
+}
+
 const savePaymentSettings = async () => {
   if (!isAdmin.value) return
   paymentSettingsSaving.value = true
@@ -2706,6 +2836,7 @@ const reloadAll = async () => {
     await loadNewsletterTemplates()
     await loadHomepageContent()
     await loadPaymentSettings()
+    await loadRssPodcastWebhookSettings()
     await loadUsers()
     await loadAnalytics()
     await loadAdminPills()

@@ -1,0 +1,16 @@
+{
+  "name": "@vmp/podcast-host",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VM media host: HLS/podcast pipeline (watchfolder), preview MP3 webhook, local dashboard",
+  "type": "module",
+  "scripts": {
+    "start": "node ./supervisor.mjs",
+    "supervisor": "node ./supervisor.mjs",
+    "pipeline": "bash ./bin/video_pipeline_watch.sh",
+    "render": "bash ./render_podcast_preview_mp3.sh"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
