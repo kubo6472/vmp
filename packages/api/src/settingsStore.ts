@@ -88,6 +88,20 @@ export async function setSetting(env: any, key: any, value: any, options: Settin
   }
 }
 
+export function buildSettingsStatements(env: any, entries: any) {
+  const db = getDb(env)
+  if (!Array.isArray(entries) || entries.length === 0) return []
+
+  const upsert = db.prepare(`
+    INSERT INTO admin_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `)
+  return entries.map(([key, value]) => {
+    const normalized = value == null ? '' : String(value)
+    return upsert.bind(key, normalized)
+  })
+}
+
 export async function setSettings(env: any, entries: any, options: SettingsOptions = {}) {
   const { ttlSeconds = 300 } = options
   const db = getDb(env)
@@ -96,14 +110,7 @@ export async function setSettings(env: any, entries: any, options: SettingsOptio
   if (!Array.isArray(entries) || entries.length === 0) return
 
   // D1 does not support SQL BEGIN/COMMIT via db.exec(); use batch() for atomic multi-row writes.
-  const upsert = db.prepare(`
-    INSERT INTO admin_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-  `)
-  const statements = entries.map(([key, value]) => {
-    const normalized = value == null ? '' : String(value)
-    return upsert.bind(key, normalized)
-  })
+  const statements = buildSettingsStatements(env, entries)
   await db.batch(statements)
 
   if (kv) {

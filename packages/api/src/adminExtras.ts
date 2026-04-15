@@ -1,6 +1,6 @@
 import { requireAuth, requireRole } from './auth.js'
 import { ensureAdminSettingsTable } from './adminSettingsTable.js'
-import { getSetting, setSetting, setSettings } from './settingsStore.js'
+import { getSetting, setSetting, setSettings, buildSettingsStatements } from './settingsStore.js'
 import {
   evaluateRoleChange,
   evaluateSelfRoleChange,
@@ -109,19 +109,36 @@ export async function handleHomepageContent(request: any, env: any, corsHeaders:
       writes.push(['homepage', JSON.stringify(configUpdate)])
     }
 
-    try {
-      await db.exec('BEGIN')
-      if (categoryOrderUpdates.length) {
-        const updateStmt = db.prepare(`UPDATE video_categories SET sort_order = ? WHERE id = ?`)
-        await db.batch(categoryOrderUpdates.map((entry: any) => updateStmt.bind(entry.sortOrder, entry.id)))
+    // Consolidate all writes into a single atomic batch operation for D1.
+    // D1 does not support BEGIN/COMMIT via db.exec(); db.batch() provides atomicity.
+    const allStatements = []
+    if (categoryOrderUpdates.length) {
+      const updateStmt = db.prepare(`UPDATE video_categories SET sort_order = ? WHERE id = ?`)
+      const categoryStatements = categoryOrderUpdates.map((entry: any) => updateStmt.bind(entry.sortOrder, entry.id))
+      allStatements.push(...categoryStatements)
+    }
+    if (writes.length) {
+      const settingsStatements = buildSettingsStatements(env, writes)
+      allStatements.push(...settingsStatements)
+    }
+    if (allStatements.length) {
+      await db.batch(allStatements)
+    }
+
+    // Update KV cache for settings after D1 batch completes.
+    if (writes.length) {
+      const kv = env.SETTINGS_KV || env.RATE_LIMIT_KV || null
+      if (kv) {
+        for (const [key, value] of writes) {
+          try {
+            const normalized = value == null ? '' : String(value)
+            const kvKey = `settings:${key}`
+            await kv.put(kvKey, normalized, { expirationTtl: 300 })
+          } catch {
+            // D1 batch already committed; cache can self-heal on read.
+          }
+        }
       }
-      if (writes.length) {
-        await setSettings(env, writes)
-      }
-      await db.exec('COMMIT')
-    } catch (error) {
-      await db.exec('ROLLBACK')
-      throw error
     }
 
     return jsonResponse({
