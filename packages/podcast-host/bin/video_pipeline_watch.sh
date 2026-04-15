@@ -36,7 +36,6 @@ emit_pipeline_event() {
     local detail="${4:-}"
     printf 'VMP_PIPELINE_EVENT\t%s\t%s\t%s\t%s\n' "$video_id" "$stage" "$status" "$detail"
 }
-
 r2_root() {
     if [ -n "$RCLONE_REMOTE" ]; then
         if [ -n "$R2_BUCKET_NAME" ]; then
