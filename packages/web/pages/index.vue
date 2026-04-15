@@ -42,10 +42,10 @@
       <!-- Hero Section -->
       <div class="mb-12">
         <h1 class="text-4xl font-bold text-gray-900 dark:text-white mb-4">
-          {{ heroBlock?.title || 'Discover Premium Video Content' }}
+          {{ homepageHeroTitle }}
         </h1>
         <p class="text-lg text-gray-600 dark:text-gray-400">
-          {{ heroBlock?.body || 'Watch free previews or unlock full access with a premium subscription' }}
+          {{ homepageHeroSubtitle }}
         </p>
         <div v-if="pills.length" class="mt-5 flex flex-wrap gap-2">
           <div
@@ -219,6 +219,9 @@
 </template>
 
 <script setup lang="ts">
+import type { HomepageLayoutBlock, HomepagePlacementResponse } from '~/composables/useHomepageLayout'
+import { buildHomepageRenderModel } from '~/composables/useHomepageLayout'
+
 // ── PWA install banner ────────────────────────────────────────────────────────
 const { $pwa } = useNuxtApp()
 const pwaBannerDismissed = ref(false)
@@ -233,13 +236,6 @@ function dismissPwaBanner() {
   pwaBannerDismissed.value = true
 }
 
-interface LayoutBlock {
-  id: string
-  type: 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid' | 'video_grid_legacy'
-  title: string
-  body: string
-}
-
 interface VideoCategory {
   id: string
   slug: string
@@ -252,14 +248,16 @@ const { authHeader } = useAuth()
 const loading = ref(true)
 const error   = ref<string | null>(null)
 const videos  = ref<any[]>([])
-const layoutBlocks       = ref<LayoutBlock[]>([])
+const layoutBlocks       = ref<HomepageLayoutBlock[]>([])
 const featuredVideoIds   = ref<string[]>([])
 const featuredMode = ref<'latest' | 'specific'>('latest')
 const featuredVideoId = ref<string | null>(null)
 const categories = ref<VideoCategory[]>([])
 const pills = ref<Array<{ id: string; label: string; value: number; color: string }>>([])
+const homepageHeroTitle = ref<string>('Discover Premium Video Content')
+const homepageHeroSubtitle = ref<string>('Watch free previews or unlock full access with a premium subscription')
 
-const blockLabelMap: Record<LayoutBlock['type'], string> = {
+const blockLabelMap: Record<HomepageLayoutBlock['type'], string> = {
   hero:                'Hero',
   featured_row:        'Featured videos',
   cta:                 'Call to action',
@@ -268,82 +266,40 @@ const blockLabelMap: Record<LayoutBlock['type'], string> = {
   video_grid_legacy:   'Available videos',
 }
 
-const renderedBlocks = computed(() =>
-  layoutBlocks.value.length
-    ? layoutBlocks.value
-    : [{ id: 'fallback-grid', type: 'video_grid', title: 'Available Videos', body: '' } as LayoutBlock]
+const homepageRenderModel = computed(() =>
+  buildHomepageRenderModel({
+    videos: videos.value,
+    layoutBlocks: layoutBlocks.value,
+    placement: placement.value,
+  }),
 )
-const heroBlock = computed(() =>
-  renderedBlocks.value.find(b => b.type === 'hero')
-)
-const hasVideoGridBlock = computed(() =>
-  renderedBlocks.value.some(b => b.type === 'video_grid' || b.type === 'video_grid_legacy')
-)
-const videoById = computed(() => new Map(videos.value.map(v => [v.id, v])))
-
-const categoryAssignedIds = computed(() => {
-  const assigned = new Set<string>()
-  for (const v of videos.value) {
-    if (v.category_id) assigned.add(v.id)
-  }
-  return assigned
-})
+const renderedBlocks = computed(() => homepageRenderModel.value.renderedBlocks)
+const heroBlock = computed(() => homepageRenderModel.value.heroBlock)
+const hasVideoGridBlock = computed(() => homepageRenderModel.value.hasVideoGridBlock)
+const categoryAssignedIds = computed(() => homepageRenderModel.value.categoryAssignedIds)
 
 const sortedByUpload = computed(() =>
   [...videos.value].sort((a, b) => new Date(b.upload_date).getTime() - new Date(a.upload_date).getTime())
 )
 
-type PlacementResponse = {
-  featured: Array<{ id: string }>
-  recentGrid: Array<{ id: string } | null>
-  categoryBlocks: Array<{
-    category: VideoCategory
-    visible: Array<{ id: string }>
-    overflow: Array<{ id: string }>
-  }>
-}
-
-const placement = ref<PlacementResponse | null>(null)
-
-const featuredVideos = computed(() => {
-  const ids = placement.value?.featured?.map(v => v.id) ?? []
-  return ids.map(id => videoById.value.get(id)).filter(Boolean)
-})
-
-const recentTwoByTwoVideos = computed(() => {
-  const ids = (placement.value?.recentGrid ?? [])
-    .map(v => v?.id ?? null)
-    .filter((v): v is string => typeof v === 'string')
-  return ids.map(id => videoById.value.get(id)).filter(Boolean)
-})
-
-const categorySections = computed(() =>
-  (placement.value?.categoryBlocks ?? []).map((block) => {
-    const combinedIds = [...block.visible, ...block.overflow].map(v => v.id)
-    const allVideos = combinedIds.map(id => videoById.value.get(id)).filter(Boolean)
-    const variantPool = ['featured_hero', 'two_by_two', 'side_mini', 'three_by_one'] as const
-    const variant = variantPool[Math.abs(block.category.slug.split('').reduce((n, ch) => n + ch.charCodeAt(0), 0)) % variantPool.length]
-    const visibleCount = variant === 'two_by_two' || variant === 'side_mini' ? 4 : 3
-    return {
-      category: block.category,
-      allVideos,
-      visible: allVideos.slice(0, visibleCount),
-      overflowCount: Math.max(0, allVideos.length - visibleCount),
-      variant,
-    }
-  }).filter(section => section.allVideos.length > 0)
-)
+const placement = ref<HomepagePlacementResponse | null>(null)
+const featuredVideos = computed(() => homepageRenderModel.value.featuredVideos)
+const recentTwoByTwoVideos = computed(() => homepageRenderModel.value.recentTwoByTwoVideos)
+const categorySections = computed(() => homepageRenderModel.value.categorySections)
 
 const loadAdminConfig = async () => {
-  const res = await fetch(`${config.public.apiUrl}/api/admin/config`, {
+  const res = await fetch(`${config.public.apiUrl}/api/admin/homepage/content`, {
     headers: authHeader(),
   })
   if (!res.ok) return
   const data = await res.json()
-  layoutBlocks.value     = Array.isArray(data?.config?.layoutBlocks)    ? data.config.layoutBlocks    : []
-  featuredVideoIds.value = Array.isArray(data?.config?.featuredVideoIds) ? data.config.featuredVideoIds : []
-  featuredMode.value = data?.config?.featuredMode === 'specific' ? 'specific' : 'latest'
-  featuredVideoId.value = typeof data?.config?.featuredVideoId === 'string' ? data.config.featuredVideoId : null
+  homepageHeroTitle.value = data.title || 'Discover Premium Video Content'
+  homepageHeroSubtitle.value = data.subtitle || 'Watch free previews or unlock full access with a premium subscription'
+  const homepageConfig = data?.homepageConfig ?? {}
+  layoutBlocks.value     = Array.isArray(homepageConfig?.layoutBlocks)    ? homepageConfig.layoutBlocks    : []
+  featuredVideoIds.value = Array.isArray(homepageConfig?.featuredVideoIds) ? homepageConfig.featuredVideoIds : []
+  featuredMode.value = homepageConfig?.featuredMode === 'specific' ? 'specific' : 'latest'
+  featuredVideoId.value = typeof homepageConfig?.featuredVideoId === 'string' ? homepageConfig.featuredVideoId : null
 }
 
 const loadCategories = async () => {

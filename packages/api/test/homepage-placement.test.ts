@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { placeHomepageVideos, placementTimestampMs } from '../src/homepagePlacement.js'
+import { placeHomepageVideos, placementTimestampMs, sortCategoriesForHomepage } from '../src/homepagePlacement.js'
 
 const T = {
   t1: '2026-01-01T12:00:00.000Z',
@@ -168,5 +168,18 @@ describe('placeHomepageVideos matrix', () => {
     const categories = [cat('c1', 'One', 0)]
     const out = placeHomepageVideos({ videos, categories, homepage })
     assert.deepEqual(out.featured, [{ id: 'pin' }])
+  })
+
+  it('category ordering prioritizes P0 buckets before standard', () => {
+    const ordered = sortCategoriesForHomepage([
+      cat('std-2', 'Zeta', 2),
+      cat('p0-1', 'Alpha', 0),
+      cat('p0-2', 'Beta', -2),
+      cat('std-1', 'Delta', 1),
+    ])
+    assert.deepEqual(
+      ordered.map((c: any) => `${c.id}:${c.priority_bucket}`),
+      ['p0-2:p0', 'p0-1:p0', 'std-1:standard', 'std-2:standard'],
+    )
   })
 })

@@ -1,6 +1,6 @@
 import { requireAuth, requireRole } from './auth.js'
 import { ensureAdminSettingsTable } from './adminSettingsTable.js'
-import { getSetting, setSetting, setSettings } from './settingsStore.js'
+import { getSetting, setSetting, setSettings, buildSettingsStatements } from './settingsStore.js'
 import {
   evaluateRoleChange,
   evaluateSelfRoleChange,
@@ -55,29 +55,156 @@ export async function handleHomepageContent(request: any, env: any, corsHeaders:
     await ensureAdminSettingsTable(db)
 
     if (request.method === 'GET') {
-      const [title, subtitle] = await Promise.all([
+      const [title, subtitle, homepageRow, categoryRows] = await Promise.all([
         getSetting(env, 'homepage_hero_title'),
         getSetting(env, 'homepage_hero_subtitle'),
+        db.prepare('SELECT value FROM admin_settings WHERE key = ? LIMIT 1').bind('homepage').first(),
+        db.prepare(`
+          SELECT id, slug, name, sort_order, direction, COUNT(vca.video_id) AS video_count
+          FROM video_categories vc
+          LEFT JOIN video_category_assignments vca ON vca.category_id = vc.id
+          GROUP BY vc.id
+          ORDER BY
+            CASE WHEN vc.sort_order <= 0 THEN 0 ELSE 1 END ASC,
+            vc.sort_order ASC,
+            vc.name ASC,
+            vc.id ASC
+        `).all(),
       ])
+      const homepageConfig = normalizeHomepageConfigForResponse(safeJsonParse(homepageRow?.value, null))
       return jsonResponse({
         title: title ?? 'Discover Premium Video Content',
         subtitle: subtitle ?? 'Watch free previews or unlock full access with a premium subscription',
+        homepageConfig,
+        categories: (categoryRows?.results ?? []).map((row: any) => ({
+          ...row,
+          priority_bucket: Number(row?.sort_order ?? 0) <= 0 ? 'p0' : 'standard',
+        })),
+        precedence: {
+          summary: 'featured → uncategorized recent grid → category sections (P0 categories before standard categories).',
+          categoryOrderRule: 'Categories with sort_order <= 0 are treated as P0 and rendered before all standard categories.',
+          overflowRule: 'Categories with overflow remain in section order and expose remaining videos in overflow metadata.',
+        },
       }, 200, corsHeaders)
     }
     if (request.method !== 'PATCH') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
     const body = await request.json().catch(() => null)
     const title = typeof body?.title === 'string' ? body.title.trim() : ''
     const subtitle = typeof body?.subtitle === 'string' ? body.subtitle.trim() : ''
-    if (!title || !subtitle) return jsonResponse({ error: 'title and subtitle are required' }, 400, corsHeaders)
-    await setSettings(env, [
-      ['homepage_hero_title', title],
-      ['homepage_hero_subtitle', subtitle],
-    ])
-    return jsonResponse({ ok: true, title, subtitle }, 200, corsHeaders)
+    const hasHeroUpdate = Boolean(title && subtitle)
+    const configUpdate = normalizeHomepageConfigForPatch(body?.homepageConfig)
+    const categoryOrderUpdates = normalizeCategoryOrderUpdates(body?.categoryOrder)
+    if (!hasHeroUpdate && !configUpdate && !categoryOrderUpdates.length) {
+      return jsonResponse({ error: 'Provide title/subtitle, homepageConfig, or categoryOrder updates.' }, 400, corsHeaders)
+    }
+
+    const writes = []
+    if (hasHeroUpdate) {
+      writes.push(
+        ['homepage_hero_title', title],
+        ['homepage_hero_subtitle', subtitle],
+      )
+    }
+    if (configUpdate) {
+      writes.push(['homepage', JSON.stringify(configUpdate)])
+    }
+
+    // Consolidate all writes into a single atomic batch operation for D1.
+    // D1 does not support BEGIN/COMMIT via db.exec(); db.batch() provides atomicity.
+    const allStatements = []
+    if (categoryOrderUpdates.length) {
+      const updateStmt = db.prepare(`UPDATE video_categories SET sort_order = ? WHERE id = ?`)
+      const categoryStatements = categoryOrderUpdates.map((entry: any) => updateStmt.bind(entry.sortOrder, entry.id))
+      allStatements.push(...categoryStatements)
+    }
+    if (writes.length) {
+      const settingsStatements = buildSettingsStatements(env, writes)
+      allStatements.push(...settingsStatements)
+    }
+    if (allStatements.length) {
+      await db.batch(allStatements)
+    }
+
+    // Update KV cache for settings after D1 batch completes.
+    if (writes.length) {
+      const kv = env.SETTINGS_KV || env.RATE_LIMIT_KV || null
+      if (kv) {
+        for (const [key, value] of writes) {
+          try {
+            const normalized = value == null ? '' : String(value)
+            const kvKey = `settings:${key}`
+            await kv.put(kvKey, normalized, { expirationTtl: 300 })
+          } catch {
+            // D1 batch already committed; cache can self-heal on read.
+          }
+        }
+      }
+    }
+
+    return jsonResponse({
+      ok: true,
+      updated: {
+        hero: hasHeroUpdate,
+        homepageConfig: Boolean(configUpdate),
+        categoryOrder: categoryOrderUpdates.length,
+      },
+    }, 200, corsHeaders)
   } catch (error) {
     console.error('handleHomepageContent:', error)
     return jsonResponse({ error: 'Internal server error', code: 'internal_error' }, 500, corsHeaders)
   }
+}
+
+function normalizeHomepageConfigForResponse(config: any) {
+  const input = config && typeof config === 'object' ? config : {}
+  const featuredVideoIds = Array.isArray(input.featuredVideoIds)
+    ? input.featuredVideoIds.filter((id: any) => typeof id === 'string').slice(0, 4)
+    : []
+  const featuredMode = input.featuredMode === 'specific' ? 'specific' : 'latest'
+  const featuredVideoId = typeof input.featuredVideoId === 'string' ? input.featuredVideoId : null
+  const layoutBlocks = Array.isArray(input.layoutBlocks)
+    ? input.layoutBlocks.filter((block: any) => block && typeof block === 'object').map((block: any) => ({
+      id: typeof block.id === 'string' ? block.id : crypto.randomUUID(),
+      type: normalizeLayoutBlockType(block.type),
+      title: typeof block.title === 'string' ? block.title : '',
+      body: typeof block.body === 'string' ? block.body : '',
+    }))
+    : []
+  return {
+    featuredVideoIds,
+    featuredMode,
+    featuredVideoId,
+    layoutBlocks,
+  }
+}
+
+function normalizeHomepageConfigForPatch(raw: any) {
+  if (!raw || typeof raw !== 'object') return null
+  return normalizeHomepageConfigForResponse(raw)
+}
+
+function normalizeLayoutBlockType(type: any) {
+  if (type === 'featured') return 'featured_row'
+  const allowedTypes = new Set(['hero', 'featured_row', 'cta', 'text_split', 'video_grid', 'video_grid_legacy'])
+  return allowedTypes.has(type) ? type : 'hero'
+}
+
+function normalizeCategoryOrderUpdates(raw: any) {
+  if (!Array.isArray(raw)) return []
+  const out = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue
+    const id = typeof entry.id === 'string' ? entry.id.trim() : ''
+    const sortOrder = Number(entry.sortOrder)
+    if (!id || !Number.isInteger(sortOrder)) continue
+    out.push({ id, sortOrder })
+  }
+  return out
+}
+
+function safeJsonParse(v: any, fallback: any) {
+  if (!v) return fallback
+  try { return JSON.parse(v) } catch { return fallback }
 }
 
 export async function handlePillsPublic(request: any, env: any, corsHeaders: any) {

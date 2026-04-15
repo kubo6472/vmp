@@ -41,6 +41,9 @@ type CategoryInput = {
   sort_order: number
   direction: 'asc' | 'desc'
 }
+type NormalizedCategory = CategoryInput & {
+  priority_bucket: 'p0' | 'standard'
+}
 interface HomepageConfigInput {
   featuredMode?: unknown
   featuredVideoId?: unknown
@@ -172,20 +175,12 @@ export function placeHomepageVideos(input: any) {
     }
   }
 
-  categories.sort((a, b) => {
-    const so = (a.sort_order ?? 0) - (b.sort_order ?? 0)
-    if (so !== 0) return so
-    const an = typeof a.name === 'string' ? a.name : ''
-    const bn = typeof b.name === 'string' ? b.name : ''
-    if (an < bn) return -1
-    if (an > bn) return 1
-    return 0
-  })
+  const orderedCategories = sortCategoriesForHomepage(categories)
 
   /** @type {Array<{ category: { id: string, slug: string, name: string, direction: 'asc' | 'desc' }, visible: VideoRef[], overflow: VideoRef[] }>} */
   const categoryBlocks = []
 
-  for (const cat of categories) {
+  for (const cat of orderedCategories) {
     if (!cat || typeof cat.id !== 'string') continue
     const direction = cat.direction === 'asc' ? 'asc' : 'desc'
     const inCat = sortedAll
@@ -207,6 +202,8 @@ export function placeHomepageVideos(input: any) {
         slug: typeof cat.slug === 'string' ? cat.slug : '',
         name: typeof cat.name === 'string' ? cat.name : '',
         direction,
+        sort_order: Number.isInteger(cat.sort_order) ? cat.sort_order : 0,
+        priority_bucket: cat.priority_bucket,
       },
       visible,
       overflow,
@@ -214,6 +211,42 @@ export function placeHomepageVideos(input: any) {
   }
 
   return { featured, recentGrid, categoryBlocks }
+}
+
+/**
+ * Canonical category ordering for homepage rendering:
+ *   1) P0 categories first (`sort_order <= 0`)
+ *   2) then ascending `sort_order`
+ *   3) then name/id for stable ties
+ */
+export function sortCategoriesForHomepage(categories: any[]) {
+  const normalized = categories
+    .filter((cat) => cat && typeof cat.id === 'string')
+    .map((cat) => {
+      const sortOrder = Number.isInteger(cat.sort_order) ? cat.sort_order : 0
+      return {
+        ...cat,
+        sort_order: sortOrder,
+        priority_bucket: sortOrder <= 0 ? 'p0' : 'standard',
+      } as NormalizedCategory
+    })
+
+  normalized.sort((a, b) => {
+    const aTier = a.priority_bucket === 'p0' ? 0 : 1
+    const bTier = b.priority_bucket === 'p0' ? 0 : 1
+    if (aTier !== bTier) return aTier - bTier
+    const so = a.sort_order - b.sort_order
+    if (so !== 0) return so
+    const an = typeof a.name === 'string' ? a.name : ''
+    const bn = typeof b.name === 'string' ? b.name : ''
+    if (an < bn) return -1
+    if (an > bn) return 1
+    if (a.id < b.id) return -1
+    if (a.id > b.id) return 1
+    return 0
+  })
+
+  return normalized
 }
 
 /**

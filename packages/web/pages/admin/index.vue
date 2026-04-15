@@ -16,6 +16,13 @@
           <p class="text-gray-600 dark:text-gray-400">Homepage curation + uploader controls in one place.</p>
         </div>
         <div class="flex items-center gap-2">
+          <span
+            v-if="activeAdminTab === 'homepage'"
+            class="px-2 py-1 rounded-full text-xs font-semibold"
+            :class="homepageDirty ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'"
+          >
+            {{ homepageDirty ? 'Unsaved homepage changes' : 'Homepage synced' }}
+          </span>
           <button
             class="px-4 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-gray-100"
             @click="reloadAll"
@@ -112,6 +119,71 @@
           <h2 class="text-xl font-bold text-gray-900 dark:text-white">Homepage hero copy</h2>
           <input v-model="homepageHeroTitle" type="text" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
           <textarea v-model="homepageHeroSubtitle" rows="2" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"></textarea>
+        </div>
+
+        <div v-if="activeAdminTab === 'homepage'" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-6">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xl font-bold text-gray-900 dark:text-white">Live homepage preview</h2>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Matches public rendering. Save applies changes.</p>
+          </div>
+          <div class="rounded-xl border border-gray-200 dark:border-gray-800 p-5 space-y-8 bg-gray-50/50 dark:bg-gray-950/50">
+            <div>
+              <h3 class="text-3xl font-bold text-gray-900 dark:text-white mb-3">{{ homepageHeroTitle || 'Discover Premium Video Content' }}</h3>
+              <p class="text-gray-600 dark:text-gray-400">{{ homepageHeroSubtitle || 'Watch free previews or unlock full access with a premium subscription' }}</p>
+              <div v-if="adminPills.length" class="mt-4 flex flex-wrap gap-2">
+                <div
+                  v-for="pill in adminPills"
+                  :key="`preview-pill-${pill.id}`"
+                  class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold text-white"
+                  :style="{ backgroundColor: pill.color || '#2563eb' }"
+                >
+                  <span>{{ pill.label }}</span>
+                  <span class="rounded-full bg-black/20 px-2 py-0.5">{{ pill.value }}</span>
+                </div>
+              </div>
+            </div>
+
+            <section
+              v-for="block in homepagePreviewModel.renderedBlocks"
+              :key="`preview-block-${block.id}`"
+              class="space-y-3"
+            >
+              <div v-if="block.type !== 'hero'">
+                <h3 class="text-xl font-semibold text-gray-900 dark:text-white">{{ block.title || block.type }}</h3>
+                <p v-if="block.body" class="text-sm text-gray-600 dark:text-gray-400">{{ block.body }}</p>
+              </div>
+
+              <div v-if="block.type === 'featured_row'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <VideoCard v-for="video in homepagePreviewModel.featuredVideos" :key="`preview-featured-${video.id}`" :video="video" />
+              </div>
+
+              <div v-else-if="block.type === 'video_grid'" class="space-y-6">
+                <div>
+                  <h4 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Recent videos</h4>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <VideoCard v-for="video in homepagePreviewModel.recentTwoByTwoVideos" :key="`preview-recent-${video.id}`" :video="video" />
+                  </div>
+                </div>
+                <div v-for="section in homepagePreviewModel.categorySections" :key="`preview-category-${section.category.id}`" class="space-y-2">
+                  <button
+                    type="button"
+                    class="text-left text-lg font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                    @click="focusCategoryFromPreview(section.category.id)"
+                  >
+                    {{ section.category.name }} · {{ section.category.priority_bucket === 'p0' ? 'P0' : 'Standard' }}
+                  </button>
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <VideoCard
+                      v-for="video in section.allVideos.slice(0, 3)"
+                      :key="`preview-category-video-${section.category.id}-${video.id}`"
+                      :video="video"
+                    />
+                  </div>
+                  <p v-if="section.overflowCount > 0" class="text-xs text-gray-500 dark:text-gray-400">+{{ section.overflowCount }} overflow videos</p>
+                </div>
+              </div>
+            </section>
+          </div>
         </div>
 
         <!-- Video Management -->
@@ -408,10 +480,14 @@
               <button class="px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold" @click="createCategory">Create category</button>
             </div>
 
+            <p class="text-xs text-gray-500 dark:text-gray-400">Ordering rule: categories with <code>sort_order &lt;= 0</code> are P0 and render before all standard categories.</p>
+
             <div class="space-y-2">
               <div
-                v-for="category in categories"
+                v-for="(category, categoryIndex) in categories"
                 :key="category.id"
+                :data-category-id="category.id"
+                tabindex="-1"
                 class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 md:grid-cols-[1fr_1fr_120px_120px_auto_auto] gap-2 items-center"
               >
                 <input v-model="category.name" type="text" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
@@ -421,8 +497,14 @@
                   <option value="desc">desc</option>
                   <option value="asc">asc</option>
                 </select>
-                <button class="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium" @click="updateCategory(category)">Save</button>
-                <button class="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs font-medium" @click="confirmDeleteCategory(category)">Delete</button>
+                <div class="flex gap-2">
+                  <button class="px-2 py-1 rounded border text-xs" :disabled="categoryIndex === 0" @click="nudgeCategoryOrder(categoryIndex, -1)">↑</button>
+                  <button class="px-2 py-1 rounded border text-xs" :disabled="categoryIndex === categories.length - 1" @click="nudgeCategoryOrder(categoryIndex, 1)">↓</button>
+                </div>
+                <div class="flex gap-2">
+                  <button class="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium" @click="updateCategory(category)">Save</button>
+                  <button class="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs font-medium" @click="confirmDeleteCategory(category)">Delete</button>
+                </div>
               </div>
             </div>
           </template>
@@ -1368,6 +1450,8 @@
 import { resolvePlaylistDuration } from '~/composables/useHlsDuration'
 import { sizeUrl } from '~/composables/useThumbnail'
 import { useAdminNewsletterPolling } from '~/composables/useAdminNewsletterPolling'
+import { buildHomepageRenderModel } from '~/composables/useHomepageLayout'
+import type { HomepageLayoutBlock, HomepagePlacementResponse } from '~/composables/useHomepageLayout'
 
 // ── Route guard ───────────────────────────────────────────────────────────────
 // This single line is the only meaningful addition to this file.
@@ -1422,12 +1506,7 @@ interface AdminUserRow {
 }
 
 type BlockType = 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid' | 'video_grid_legacy'
-interface LayoutBlock {
-  id: string
-  type: BlockType
-  title: string
-  body: string
-}
+type LayoutBlock = HomepageLayoutBlock
 
 type AnalyticsRange = '7d' | '30d' | '90d' | '180d' | '365d'
 type AnalyticsGranularity = 'day' | 'week' | 'month'
@@ -1543,6 +1622,7 @@ const livestreamModal = ref({
 })
 const componentTypes: BlockType[] = ['hero', 'featured_row', 'cta', 'text_split', 'video_grid', 'video_grid_legacy']
 const layoutBlocks = ref<LayoutBlock[]>([])
+const homepageBaseline = ref<string>('')
 
 const newsletterListId = ref('')
 const newsletterSenderEmail = ref('')
@@ -1766,6 +1846,28 @@ const featuredVideos = computed(() =>
   featuredSlots.value.length ? featuredSlots.value : [...chronologicallySortedUploads.value.slice(0, 4)]
 )
 
+const homepagePlacement = ref<HomepagePlacementResponse | null>(null)
+const mergedHomepagePlacement = computed(() => {
+  const base = homepagePlacement.value || { featured: [], recentGrid: [], categoryBlocks: [] }
+  const featuredIds = featuredSlots.value.map((v) => v?.id).filter((v): v is string => Boolean(v))
+  return {
+    ...base,
+    featured: featuredIds.map((id) => ({ id })),
+    categoryBlocks: categories.value.map((cat) => {
+      const existing = base.categoryBlocks?.find((b) => b.category.id === cat.id)
+      return existing || { category: cat, visible: [], overflow: [] }
+    }),
+  }
+})
+const homepagePreviewModel = computed(() =>
+  buildHomepageRenderModel({
+    videos: chronologicallySortedUploads.value,
+    layoutBlocks: layoutBlocks.value,
+    placement: mergedHomepagePlacement.value,
+  }),
+)
+const homepageDirty = computed(() => serializeHomepageState() !== homepageBaseline.value)
+
 const openPicker  = (slotIndex: number) => { activeSlotIndex.value = slotIndex; pickerOpen.value = true }
 const closePicker = () => { pickerOpen.value = false }
 
@@ -1821,6 +1923,49 @@ const getDefaultBlocks = (): LayoutBlock[] => ([
   { id: crypto.randomUUID(), type: 'hero',         title: 'Hero section',         body: 'Feature your main value proposition here.' },
   { id: crypto.randomUUID(), type: 'featured_row', title: 'Featured videos row',  body: 'Drag this block to position featured content on the page.' },
 ])
+
+const serializeHomepageState = () => JSON.stringify({
+  title: homepageHeroTitle.value,
+  subtitle: homepageHeroSubtitle.value,
+  featuredVideoIds: featuredSlots.value.map((v) => v?.id).filter((v): v is string => Boolean(v)),
+  layoutBlocks: layoutBlocks.value.map((block) => ({
+    id: block.id,
+    type: block.type,
+    title: block.title,
+    body: block.body,
+  })),
+  categoryOrder: categories.value.map((category) => ({ id: category.id, sortOrder: category.sort_order })),
+})
+
+const applyHomepageBaseline = () => {
+  homepageBaseline.value = serializeHomepageState()
+}
+
+const nudgeCategoryOrder = (idx: number, direction: -1 | 1) => {
+  const swapIdx = idx + direction
+  if (swapIdx < 0 || swapIdx >= categories.value.length) return
+  const next = [...categories.value]
+  const moved = next.splice(idx, 1)[0]
+  if (!moved) return
+  next.splice(swapIdx, 0, moved)
+  const itemAtIdx = next[idx]
+  const itemAtSwapIdx = next[swapIdx]
+  if (!itemAtIdx || !itemAtSwapIdx) return
+  const temp = itemAtIdx.sort_order
+  next[idx] = { ...itemAtIdx, sort_order: itemAtSwapIdx.sort_order }
+  next[swapIdx] = { ...itemAtSwapIdx, sort_order: temp }
+  categories.value = next
+}
+
+const focusCategoryFromPreview = (categoryId: string) => {
+  if (!categoryId) return
+  setAdminTab('categories')
+  nextTick(() => {
+    const element = document.querySelector(`[data-category-id="${categoryId}"]`) as HTMLElement | null
+    element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    element?.focus()
+  })
+}
 
 const resetLivestreamModal = () => {
   livestreamModal.value = {
@@ -2029,27 +2174,37 @@ const confirmDeleteCategory = async (category: Category) => {
   await deleteCategory(category)
 }
 
-const loadConfig = async () => {
+const loadHomepagePlacement = async () => {
+  const res = await fetch(`${config.public.apiUrl}/api/homepage/placement`)
+  if (!res.ok) return
+  homepagePlacement.value = await res.json()
+}
+
+const loadHomepageState = async () => {
   const auth = authHeader()
-  const res = await fetch(`${config.public.apiUrl}/api/admin/config`, {
+  const res = await fetch(`${config.public.apiUrl}/api/admin/homepage/content`, {
     headers: Object.keys(auth).length ? auth : undefined,
   })
   if (!res.ok) {
-    layoutBlocks.value  = getDefaultBlocks()
-    featuredSlots.value = [...chronologicallySortedUploads.value.slice(0, 4)]
     return
   }
-  const data         = await res.json()
-  const featuredIds: string[] = data?.config?.featuredVideoIds || []
-  layoutBlocks.value = Array.isArray(data?.config?.layoutBlocks) && data.config.layoutBlocks.length
-    ? data.config.layoutBlocks
+  const data = await res.json()
+  homepageHeroTitle.value = data.title || 'Discover Premium Video Content'
+  homepageHeroSubtitle.value = data.subtitle || 'Watch free previews or unlock full access with a premium subscription'
+  const homepageConfig = data?.homepageConfig ?? {}
+  const featuredIds: string[] = Array.isArray(homepageConfig.featuredVideoIds) ? homepageConfig.featuredVideoIds : []
+  layoutBlocks.value = Array.isArray(homepageConfig.layoutBlocks) && homepageConfig.layoutBlocks.length
+    ? homepageConfig.layoutBlocks
     : getDefaultBlocks()
-
+  if (Array.isArray(data?.categories) && data.categories.length) {
+    categories.value = data.categories
+  }
   const nextSlots = featuredIds
-    .map(id => chronologicallySortedUploads.value.find(v => v.id === id) || null)
+    .map((id) => chronologicallySortedUploads.value.find((v) => v.id === id) || null)
     .slice(0, 4)
   while (nextSlots.length < 4) nextSlots.push(chronologicallySortedUploads.value[nextSlots.length] || null)
   featuredSlots.value = nextSlots
+  applyHomepageBaseline()
 }
 
 const loadNewsletterSettings = async () => {
@@ -2197,11 +2352,7 @@ const deleteNewsletterTemplate = async (id: string, name: string) => {
 
 const loadHomepageContent = async () => {
   if (!isAdmin.value) return
-  const res = await fetch(`${config.public.apiUrl}/api/admin/homepage/content`, { headers: authHeader() })
-  if (!res.ok) return
-  const data = await res.json()
-  homepageHeroTitle.value = data.title || ''
-  homepageHeroSubtitle.value = data.subtitle || ''
+  await loadHomepageState()
 }
 
 const loadPaymentSettings = async () => {
@@ -2368,19 +2519,6 @@ const savePaymentSettings = async () => {
     paymentSettingsMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
   } finally {
     paymentSettingsSaving.value = false
-  }
-}
-
-const saveHomepageContent = async () => {
-  if (!isAdmin.value) return
-  const res = await fetch(`${config.public.apiUrl}/api/admin/homepage/content`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ title: homepageHeroTitle.value, subtitle: homepageHeroSubtitle.value }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.error || `HTTP ${res.status}`)
   }
 }
 
@@ -2804,12 +2942,22 @@ const saveAll = async () => {
   saveMessage.value = ''
   try {
     const featuredVideoIds = featuredSlots.value.map(v => v?.id).filter(Boolean)
-    await saveHomepageContent()
-    const [configRes, locksRes] = await Promise.all([
-      fetch(`${config.public.apiUrl}/api/admin/config`, {
-        method: 'POST',
+    const [homepageRes, locksRes] = await Promise.all([
+      fetch(`${config.public.apiUrl}/api/admin/homepage/content`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({ config: { featuredVideoIds, layoutBlocks: layoutBlocks.value } }),
+        body: JSON.stringify({
+          title: homepageHeroTitle.value,
+          subtitle: homepageHeroSubtitle.value,
+          homepageConfig: {
+            featuredVideoIds,
+            layoutBlocks: layoutBlocks.value,
+          },
+          categoryOrder: categories.value.map((category) => ({
+            id: category.id,
+            sortOrder: category.sort_order,
+          })),
+        }),
       }),
       fetch(`${config.public.apiUrl}/api/admin/preview-locks`, {
         method: 'POST',
@@ -2819,7 +2967,14 @@ const saveAll = async () => {
         }),
       }),
     ])
-    if (!configRes.ok || !locksRes.ok) throw new Error('One or more save operations failed')
+    if (!homepageRes.ok) {
+      const err = await homepageRes.json().catch(() => ({ error: `HTTP ${homepageRes.status}` }))
+      throw new Error(err.error || `Homepage save failed (HTTP ${homepageRes.status})`)
+    }
+    if (!locksRes.ok) {
+      const err = await locksRes.json().catch(() => ({ error: `HTTP ${locksRes.status}` }))
+      throw new Error(err.error || `Preview locks save failed (HTTP ${locksRes.status})`)
+    }
     saveMessage.value      = 'Changes saved to API database settings and preview lock durations.'
     saveMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
     await reloadAll()
@@ -2836,10 +2991,10 @@ const reloadAll = async () => {
   try {
     await loadVideos()
     await loadCategories()
-    await loadConfig()
+    await loadHomepageState()
+    await loadHomepagePlacement()
     await loadNewsletterSettings()
     await loadNewsletterTemplates()
-    await loadHomepageContent()
     await loadPaymentSettings()
     await loadRssPodcastWebhookSettings()
     await loadUsers()
