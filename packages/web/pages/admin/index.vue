@@ -391,7 +391,7 @@
                           key: {{ video.livestream_stream_key }}
                         </span>
                         <button
-                          v-if="video.livestream_provider && video.livestream_status === 'failed'"
+                          v-if="video.livestream_provider && video.livestream_status === 'failed' && !retryingLivestreamProvision[video.id]"
                           class="block text-[11px] text-red-600 dark:text-red-300 hover:underline"
                           @click="retryLivestreamProvision(video)"
                         >
@@ -1380,8 +1380,7 @@
         <div class="flex items-center justify-between mb-4">
           <div>
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Create livestream video</h3>
-            <p class="text-sm text-gray-600 dark:text-gray-400">Creates a standard video row backed by RealtimeKit metadata. Attach VOD later via swap.</p>
-            <p class="text-sm text-gray-600 dark:text-gray-400">Cloudflare Realtime provisioning runs automatically and returns ingest credentials.</p>
+            <p class="text-sm text-gray-600 dark:text-gray-400">Creates a standard video row. Cloudflare Realtime provisioning runs automatically and returns ingest credentials.</p>
           </div>
           <button class="text-sm text-gray-600 dark:text-gray-300 hover:underline" @click="closeLivestreamModal">Close</button>
         </div>
@@ -1656,6 +1655,7 @@ const actualDurationByVideoId = ref<Record<string, number>>({})
 const statusUpdating = ref<Record<string, boolean>>({})
 const notifying = ref<Record<string, boolean>>({})
 const trashing = ref<Record<string, boolean>>({})
+const retryingLivestreamProvision = ref<Record<string, boolean>>({})
 const uploadingFor = ref<string | null>(null)
 const activeAdminTab = ref<'videos' | 'categories' | 'homepage' | 'pills' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system'>('videos')
 const baseAdminTabs = [
@@ -2118,10 +2118,12 @@ const createLivestream = async () => {
 }
 
 const retryLivestreamProvision = async (video: Video) => {
+  if (retryingLivestreamProvision.value[video.id]) return
+  retryingLivestreamProvision.value[video.id] = true
   try {
     const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}/livestream/provision`, {
       method: 'POST',
-      headers: authHeader(),
+      headers: { ...authHeader() },
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
@@ -2129,6 +2131,8 @@ const retryLivestreamProvision = async (video: Video) => {
     await loadVideos()
   } catch (e: any) {
     showToast('error', e.message || 'Failed to retry livestream provisioning.')
+  } finally {
+    retryingLivestreamProvision.value[video.id] = false
   }
 }
 
