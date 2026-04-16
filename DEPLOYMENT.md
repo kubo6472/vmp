@@ -101,6 +101,7 @@ Use this when staging/production D1, KV, and/or R2 were intentionally reset.
 - `RSS_SECRET`
 - `CF_ACCOUNT_ID`
 - `CF_API_TOKEN`
+- `CF_STREAM_CUSTOMER_CODE`
 
 1. Re-apply database migrations in order
 
@@ -176,15 +177,16 @@ Use the smallest rollback that restores service:
 - If staging deploy is unstable, pause merges to `main` until smoke checks are green.
 - If production deploy is unstable, disable further production tags and roll back first, then investigate.
 
-## Livestream provider notes (Cloudflare Realtime)
+## Livestream provider notes (Cloudflare Stream Live)
 
 - Livestream entries are stored as standard `videos` rows plus `livestreams` metadata rows.
-- On livestream creation (`POST /api/admin/videos/livestreams`), the API provisions Cloudflare Realtime ingest via `POST /v2/livestreams` and stores:
+- On livestream creation (`POST /api/admin/videos/livestreams`), the API provisions Cloudflare Stream Live ingest via `POST /stream/live_inputs` and stores:
   - `stream_id` (Cloudflare `uid`)
-  - `ingest_url` (RTMP server URL)
+  - `ingest_url` (RTMPS ingest URL)
   - `stream_key`
-  - `playback_url` (HLS URL)
+  - `playback_url` (HLS URL, from `playback.hls` in the API response; if missing, the system falls back to constructing it from `CF_STREAM_CUSTOMER_CODE`)
 - If provisioning fails, the row remains in D1 with status `failed`. Admins can retry manually via `POST /api/admin/videos/:videoId/livestream/provision`.
+- Fresh environments must configure `CF_STREAM_CUSTOMER_CODE` to successfully provision livestreams and generate playback URLs when the Cloudflare API does not return `playback.hls`.
 - Cloudflare HLS playback URLs are consumed directly on the watch page for premium/staff viewers while live/ready.
 - Direct provider playback currently does not support the same proxy tokenization and preview truncation controls used for VOD HLS in `/api/video-proxy`.
 - Rewind/time-shift capability depends on provider playlist configuration; this integration assumes live-edge playback first, with explicit VOD handoff through admin swap once recording is available.
