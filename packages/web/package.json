@@ -40,5 +40,15 @@
   "overrides": {
     "serialize-javascript": ">=7.0.3",
     "brace-expansion": ">=5.0.5"
+  },
+  "nx": {
+    "targets": {
+      "deploy": {
+        "dependsOn": [
+          "build",
+          "^deploy"
+        ]
+      }
+    }
   }
 }

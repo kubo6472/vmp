@@ -84,7 +84,7 @@
         "^build"
       ],
       "outputs": [
-        "{projectRoot}/packages/web/dist"
+        "{projectRoot}/dist"
       ],
       "cache": true
     },
