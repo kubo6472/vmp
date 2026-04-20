@@ -1,0 +1,117 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "targetDefaults": {
+    "test": {
+      "dependsOn": [
+        "^test"
+      ],
+      "outputs": [
+        "{projectRoot}/packages/api/test"
+      ],
+      "cache": true
+    },
+    "typecheck": {
+      "dependsOn": [
+        "^typecheck"
+      ],
+      "outputs": [
+        "{projectRoot}/packages/web/.nuxt/types"
+      ],
+      "cache": true
+    },
+    "dev": {
+      "dependsOn": [
+        "^dev"
+      ]
+    },
+    "deploy": {
+      "dependsOn": [
+        "^deploy"
+      ]
+    },
+    "db:create": {
+      "dependsOn": [
+        "^db:create"
+      ]
+    },
+    "db:seed": {
+      "dependsOn": [
+        "^db:seed"
+      ]
+    },
+    "db:teardown": {
+      "dependsOn": [
+        "^db:teardown"
+      ]
+    },
+    "db:reset": {
+      "dependsOn": [
+        "^db:reset"
+      ]
+    },
+    "db:migration-backfill": {
+      "dependsOn": [
+        "^db:migration-backfill"
+      ]
+    },
+    "db:migration-verify": {
+      "dependsOn": [
+        "^db:migration-verify"
+      ]
+    },
+    "start": {
+      "dependsOn": [
+        "^start"
+      ]
+    },
+    "predev": {
+      "dependsOn": [
+        "^predev"
+      ]
+    },
+    "prebuild": {
+      "dependsOn": [
+        "^prebuild"
+      ]
+    },
+    "predeploy": {
+      "dependsOn": [
+        "^predeploy"
+      ]
+    },
+    "build": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "{projectRoot}/packages/web/dist"
+      ],
+      "cache": true
+    },
+    "generate": {
+      "dependsOn": [
+        "^generate"
+      ]
+    },
+    "preview": {
+      "dependsOn": [
+        "^preview"
+      ]
+    }
+  },
+  "analytics": true,
+  "plugins": [
+    {
+      "plugin": "@nx/nuxt/plugin",
+      "options": {
+        "buildTargetName": "nuxt:build",
+        "serveTargetName": "serve",
+        "buildDepsTargetName": "build-deps",
+        "watchDepsTargetName": "watch-deps",
+        "serveStaticTargetName": "serve-static",
+        "buildStaticTargetName": "build-static"
+      }
+    }
+  ],
+  "nxCloudId": "69e61787e9329501cd6b5354"
+}
