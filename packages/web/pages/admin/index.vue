@@ -2329,7 +2329,7 @@ const createCategory = async () => {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }))
       throw new Error(err.error || `HTTP ${res.status}`)
     }
-    categoryForm.value = { name: '', slug: '', sortOrder: 0, direction: 'desc' }
+    categoryForm.value = { name: '', slug: '', sortOrder: 0, direction: 'desc', homepageLayoutVariant: 'three_by_one' }
     showToast('success', 'Category created.')
     await loadCategories()
   } catch (e: any) {
