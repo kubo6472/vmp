@@ -211,7 +211,7 @@ export async function handlePillsPublic(request: any, env: any, corsHeaders: any
   if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   const db = getDb(env)
   const rows = await db.prepare(`
-    SELECT id, label, value, color, sort_order, updated_at
+    SELECT id, label, value, color, image_url, sort_order, updated_at
     FROM pills ORDER BY sort_order ASC, datetime(updated_at) DESC
   `).all()
   return jsonResponse({ pills: rows?.results ?? [] }, 200, corsHeaders)
@@ -267,12 +267,13 @@ export async function handlePillsUpdate(request: any, env: any, corsHeaders: any
   const body = await request.json().catch(() => null)
   if (!Array.isArray(body?.pills)) return jsonResponse({ error: 'pills[] is required' }, 400, corsHeaders)
   const upsert = db.prepare(`
-    INSERT INTO pills (id, label, value, color, sort_order, updated_at)
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT INTO pills (id, label, value, color, image_url, sort_order, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       label = excluded.label,
       value = excluded.value,
       color = excluded.color,
+      image_url = excluded.image_url,
       sort_order = excluded.sort_order,
       updated_at = CURRENT_TIMESTAMP
   `)
@@ -291,6 +292,7 @@ export async function handlePillsUpdate(request: any, env: any, corsHeaders: any
       pill.label.trim(),
       Number.isFinite(value) ? value : 0,
       typeof pill.color === 'string' && pill.color.trim() ? pill.color.trim() : '#2563eb',
+      typeof pill.imageUrl === 'string' ? pill.imageUrl.trim().slice(0, 2048) : null,
       Number.isInteger(pill.sortOrder) ? pill.sortOrder : i,
     ))
   }
@@ -349,7 +351,7 @@ export async function handleAdminPills(request: any, env: any, corsHeaders: any)
 
   if (request.method === 'GET') {
     const rows = await db.prepare(`
-      SELECT id, label, value, color, sort_order, updated_at
+      SELECT id, label, value, color, image_url, sort_order, updated_at
       FROM pills ORDER BY sort_order ASC, datetime(updated_at) DESC
     `).all()
     return jsonResponse({ pills: rows?.results ?? [] }, 200, corsHeaders)
@@ -363,12 +365,13 @@ export async function handleAdminPills(request: any, env: any, corsHeaders: any)
     const label = typeof body.label === 'string' ? body.label.trim() : ''
     const value = Number(body.value)
     const color = typeof body.color === 'string' && body.color.trim() ? body.color.trim() : '#2563eb'
+    const imageUrl = typeof body.imageUrl === 'string' ? body.imageUrl.trim().slice(0, 2048) : null
     const sortOrder = Number.isInteger(body.sortOrder) ? body.sortOrder : 0
     if (!label) return jsonResponse({ error: 'label is required' }, 400, corsHeaders)
     await db.prepare(`
-      INSERT INTO pills (id, label, value, color, sort_order, updated_at)
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `).bind(id, label, Number.isFinite(value) ? value : 0, color, sortOrder).run()
+      INSERT INTO pills (id, label, value, color, image_url, sort_order, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).bind(id, label, Number.isFinite(value) ? value : 0, color, imageUrl, sortOrder).run()
     return jsonResponse({ ok: true, id }, 201, corsHeaders)
   }
 
@@ -406,6 +409,11 @@ export async function handleAdminPills(request: any, env: any, corsHeaders: any)
       if (!next) return jsonResponse({ error: 'color must not be empty' }, 400, corsHeaders)
       updates.push('color = ?')
       values.push(next)
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'imageUrl')) {
+      const next = body.imageUrl == null ? null : String(body.imageUrl).trim().slice(0, 2048)
+      updates.push('image_url = ?')
+      values.push(next || null)
     }
     if (Object.prototype.hasOwnProperty.call(body, 'sortOrder')) {
       if (!Number.isInteger(body.sortOrder)) return jsonResponse({ error: 'sortOrder must be an integer' }, 400, corsHeaders)
@@ -886,6 +894,86 @@ export async function handleAdminUsers(request: any, env: any, corsHeaders: any)
   }
 
   return jsonResponse({ error: 'role or subscriptionStatus is required' }, 400, corsHeaders)
+}
+
+function parseCsvEmails(csvText: string) {
+  const emails = new Set<string>()
+  if (!csvText) return emails
+  const rows = csvText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  for (const row of rows) {
+    const cols = row.split(',').map((col) => col.trim().replace(/^"|"$/g, ''))
+    for (const raw of cols) {
+      const lower = raw.toLowerCase()
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lower)) {
+        emails.add(lower)
+      }
+    }
+  }
+  return emails
+}
+
+export async function handleAdminUserImportCsv(request: any, env: any, corsHeaders: any) {
+  try {
+    await requireRole(request, env, 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
+  const db = getDb(env)
+  const body = await request.json().catch(() => null)
+  const csv = typeof body?.csv === 'string' ? body.csv : ''
+  const mailingListId = typeof body?.mailingListId === 'string' ? body.mailingListId.trim() : ''
+  if (!csv.trim()) return jsonResponse({ error: 'csv is required' }, 400, corsHeaders)
+  if (!mailingListId) return jsonResponse({ error: 'mailingListId is required' }, 400, corsHeaders)
+
+  const emails = parseCsvEmails(csv)
+  if (!emails.size) {
+    return jsonResponse({ error: 'No valid emails found in csv payload' }, 400, corsHeaders)
+  }
+
+  const nowIso = new Date().toISOString()
+  const usersUpsert = db.prepare(`
+    INSERT INTO users (id, email, role, created_at)
+    VALUES (?, ?, 'viewer', CURRENT_TIMESTAMP)
+    ON CONFLICT(email) DO NOTHING
+  `)
+  const subUpsert = db.prepare(`
+    INSERT INTO subscriptions (
+      id, user_id, plan_type, status, stripe_subscription_id, stripe_customer_id, current_period_end, created_at, updated_at
+    )
+    VALUES (?, ?, 'monthly', 'needs_relink', NULL, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO NOTHING
+  `)
+
+  let imported = 0
+  let existing = 0
+  const statements = []
+  for (const email of emails) {
+    const existingUser = await db.prepare('SELECT id FROM users WHERE lower(email) = ? LIMIT 1').bind(email).first()
+    let userId = existingUser?.id
+    if (!userId) {
+      userId = crypto.randomUUID()
+      statements.push(usersUpsert.bind(userId, email))
+      imported += 1
+    } else {
+      existing += 1
+    }
+    const subscriptionId = `import-${mailingListId}-${userId}`
+    statements.push(subUpsert.bind(subscriptionId, userId, `import-list:${mailingListId}`))
+  }
+  if (statements.length) await db.batch(statements)
+
+  await setSetting(env, 'users_relink_mailing_list_id', mailingListId)
+  await setSetting(env, 'users_relink_imported_at', nowIso)
+
+  return jsonResponse({
+    ok: true,
+    mailingListId,
+    imported,
+    existing,
+    totalEmails: emails.size,
+    requiresRelinkStatus: 'needs_relink',
+  }, 200, corsHeaders)
 }
 
 export async function handleAdminAnalytics(request: any, env: any, corsHeaders: any) {

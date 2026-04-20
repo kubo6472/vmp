@@ -434,9 +434,8 @@
                       {{ formatDate(video.upload_date) }}
                     </td>
                     <td class="py-3 pr-4">
-                      <!-- Notify button for published videos -->
                       <button
-                        v-if="video.publish_status === 'published'"
+                        v-if="video.publish_status === 'published' && !isVideoNotified(video)"
                         class="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:opacity-50 whitespace-nowrap"
                         :disabled="notifying[video.id]"
                         :title="notifying[video.id] ? 'Sending…' : 'Send push notification to all subscribers'"
@@ -447,22 +446,39 @@
                         </svg>
                         {{ notifying[video.id] ? 'Sending…' : 'Notify' }}
                       </button>
-                      <!-- Not published — N/A -->
+                      <span
+                        v-else-if="video.publish_status === 'published' && isVideoNotified(video)"
+                        class="text-xs font-semibold text-emerald-600 dark:text-emerald-300"
+                      >Notified</span>
                       <span v-else class="text-xs text-gray-400 dark:text-gray-600">—</span>
                     </td>
                     <td class="py-3">
                       <div class="flex flex-wrap gap-2">
-                        <button
-                          v-if="video.publish_status !== 'published'"
-                          class="px-2 py-1 text-xs rounded bg-green-600 hover:bg-green-700 text-white font-medium disabled:opacity-50"
-                          :disabled="statusUpdating[video.id]"
-                          @click="updateVideoStatus(video, 'published')"
-                        >Publish</button>
+                        <div v-if="video.publish_status !== 'published'" class="flex flex-wrap items-center gap-2">
+                          <button
+                            class="px-2 py-1 text-xs rounded bg-green-600 hover:bg-green-700 text-white font-medium disabled:opacity-50"
+                            :disabled="statusUpdating[video.id]"
+                            @click="updateVideoStatus(video, 'published', null)"
+                          >Publish</button>
+                          <input
+                            :value="parseIsoForInput(video.scheduled_publish_at)"
+                            type="datetime-local"
+                            class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white"
+                            :disabled="statusUpdating[video.id]"
+                            @change="(e) => updateVideoStatus(video, 'draft', (e.target as HTMLInputElement).value || '')"
+                          />
+                          <button
+                            v-if="video.scheduled_publish_at"
+                            class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50"
+                            :disabled="statusUpdating[video.id]"
+                            @click="updateVideoStatus(video, 'draft', '')"
+                          >Clear schedule</button>
+                        </div>
                         <button
                           v-if="video.publish_status !== 'draft'"
                           class="px-2 py-1 text-xs rounded bg-amber-500 hover:bg-amber-600 text-white font-medium disabled:opacity-50"
                           :disabled="statusUpdating[video.id]"
-                          @click="updateVideoStatus(video, 'draft')"
+                          @click="updateVideoStatus(video, 'draft', null)"
                         >Revert to draft</button>
                         <button
                           v-if="video.publish_status !== 'archived'"
@@ -526,7 +542,7 @@
                 :key="category.id"
                 :data-category-id="category.id"
                 tabindex="-1"
-                class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 md:grid-cols-[1fr_1fr_120px_120px_auto_auto] gap-2 items-center"
+                class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 md:grid-cols-[1fr_1fr_120px_120px_170px_auto_auto] gap-2 items-center"
               >
                 <input v-model="category.name" type="text" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
                 <input v-model="category.slug" type="text" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
@@ -534,6 +550,10 @@
                 <select v-model="category.direction" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
                   <option value="desc">desc</option>
                   <option value="asc">asc</option>
+                </select>
+                <select v-model="category.homepage_layout_variant" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                  <option value="three_by_one">3×1 block</option>
+                  <option value="side_mini">2×1 small block</option>
                 </select>
                 <div class="flex gap-2">
                   <button class="px-2 py-1 rounded border text-xs" :disabled="categoryIndex === 0" @click="nudgeCategoryOrder(categoryIndex, -1)">↑</button>
@@ -565,19 +585,21 @@
 
           <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
             <h3 class="font-semibold text-gray-900 dark:text-white">Create pill</h3>
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-2">
               <input v-model="newPill.label" type="text" placeholder="Label" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
               <input v-model.number="newPill.value" type="number" placeholder="Value" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
               <input v-model="newPill.color" type="text" placeholder="#2563eb" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+              <input v-model="newPill.imageUrl" type="url" placeholder="Image URL (optional)" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
               <button class="px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold" @click="createPill">Create</button>
             </div>
           </div>
 
           <div class="space-y-2">
-            <div v-for="(pill, idx) in adminPills" :key="pill.id" class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 md:grid-cols-[1fr_140px_140px_auto_auto_auto] gap-2 items-center">
+            <div v-for="(pill, idx) in adminPills" :key="pill.id" class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 md:grid-cols-[1fr_140px_140px_1fr_auto_auto_auto] gap-2 items-center">
               <input v-model="pill.label" type="text" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
               <input v-model.number="pill.value" type="number" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
               <input v-model="pill.color" type="text" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+              <input v-model="pill.image_url" type="url" placeholder="Image URL (optional)" class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
               <button class="px-2 py-1 rounded border text-xs" :disabled="idx===0" @click="movePill(idx, -1)">↑</button>
               <button class="px-2 py-1 rounded border text-xs" :disabled="idx===adminPills.length-1" @click="movePill(idx, 1)">↓</button>
               <div class="flex gap-2">
@@ -590,11 +612,12 @@
 
         <div v-if="activeAdminTab === 'notifications'" id="notifications-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-3">
           <h2 class="text-xl font-bold text-gray-900 dark:text-white">Notifications</h2>
-          <p class="text-sm text-gray-600 dark:text-gray-400">Published videos without a push are listed below.</p>
-          <div v-for="video in chronologicallySortedUploads.filter(v => v.publish_status === 'published')" :key="`notify-${video.id}`" class="flex items-center justify-between rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2">
+          <p class="text-sm text-gray-600 dark:text-gray-400">Only published videos that have not been notified yet are listed below.</p>
+          <div v-for="video in pendingNotificationVideos" :key="`notify-${video.id}`" class="flex items-center justify-between rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2">
             <p class="text-sm text-gray-800 dark:text-gray-200 truncate pr-4">{{ video.title }}</p>
             <button class="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white" :disabled="notifying[video.id]" @click="sendNotification(video)">Notify</button>
           </div>
+          <p v-if="!pendingNotificationVideos.length" class="text-xs text-gray-500 dark:text-gray-400">No pending notifications.</p>
         </div>
 
         <div v-if="activeAdminTab === 'newsletter'" id="newsletter-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-6">
@@ -805,6 +828,34 @@
           <p class="text-sm text-gray-600 dark:text-gray-400">
             Search and filters apply to all accounts. Sensitive changes require confirmation. Subscription edits update the user's latest Stripe-linked row only.
           </p>
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+            <h3 class="font-semibold text-gray-900 dark:text-white">Mass import users from CSV</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Imports emails as viewer accounts and marks subscriptions as relink-required for gateway reattachment outreach.</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <input
+                v-model="usersImportMailingListId"
+                type="text"
+                placeholder="Dedicated relink mailing list ID"
+                class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"
+              />
+              <button
+                class="px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-50"
+                :disabled="usersImporting"
+                @click="importUsersFromCsv"
+              >
+                {{ usersImporting ? 'Importing…' : 'Import CSV users' }}
+              </button>
+            </div>
+            <textarea
+              v-model="usersImportCsv"
+              rows="6"
+              class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-xs"
+              placeholder="email\nuser@example.com\nsecond@example.com"
+            />
+            <p v-if="usersImportResult" class="text-xs text-emerald-700 dark:text-emerald-300">
+              Imported {{ usersImportResult.imported }}, existing {{ usersImportResult.existing }}, total parsed {{ usersImportResult.totalEmails }} · list {{ usersImportResult.mailingListId }}.
+            </p>
+          </div>
           <div class="flex flex-col lg:flex-row lg:flex-wrap gap-3 items-stretch lg:items-end">
             <div class="flex-1 min-w-[12rem]">
               <label for="users-search" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Search email or id</label>
@@ -1546,6 +1597,9 @@ interface Video {
   full_duration: number
   preview_duration: number
   publish_status: 'draft' | 'published' | 'archived' | null
+  published_at?: string | null
+  scheduled_publish_at?: string | null
+  notified_at?: string | null
   r2_exists: boolean | null
   slug?: string | null
   category_id?: string | null
@@ -1565,6 +1619,7 @@ interface Category {
   slug: string
   sort_order: number
   direction: 'asc' | 'desc'
+  homepage_layout_variant?: 'three_by_one' | 'side_mini'
   video_count?: number
 }
 
@@ -1713,7 +1768,13 @@ const newsletterSending = ref(false)
 const newsletterMessage = ref('')
 const newsletterMessageClass = ref('')
 const categories = ref<Category[]>([])
-const categoryForm = ref({ name: '', slug: '', sortOrder: 0, direction: 'desc' as 'asc' | 'desc' })
+const categoryForm = ref({
+  name: '',
+  slug: '',
+  sortOrder: 0,
+  direction: 'desc' as 'asc' | 'desc',
+  homepageLayoutVariant: 'three_by_one' as 'three_by_one' | 'side_mini',
+})
 const newsletterSyncing = ref(false)
 const newsletterTemplates = ref<any[]>([])
 const newsletterCampaigns = ref<any[]>([])
@@ -1781,6 +1842,10 @@ const usersSearchDebounced = ref('')
 const usersRoleFilter = ref('all')
 const usersSubscriptionFilter = ref('all')
 let usersSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+const usersImportCsv = ref('')
+const usersImportMailingListId = ref('')
+const usersImporting = ref(false)
+const usersImportResult = ref<{ imported: number; existing: number; totalEmails: number; mailingListId: string } | null>(null)
 
 const ROLE_ORDER = ['viewer', 'moderator', 'analyst', 'editor', 'admin', 'super_admin'] as const
 function roleRank(role: string): number {
@@ -1797,8 +1862,8 @@ function isSensitiveRoleChange(from: string, to: string): boolean {
   if (from === 'admin' || from === 'super_admin') return true
   return false
 }
-const adminPills = ref<Array<{ id: string; label: string; value: number; color: string; sort_order: number }>>([])
-const newPill = ref({ label: '', value: 0, color: '#2563eb' })
+const adminPills = ref<Array<{ id: string; label: string; value: number; color: string; image_url?: string | null; sort_order: number }>>([])
+const newPill = ref({ label: '', value: 0, color: '#2563eb', imageUrl: '' })
 const pillsApiKey = ref('')
 const pillsApiKeyMeta = ref<{ hasKey: boolean; managedByEnv: boolean; maskedKey: string }>({ hasKey: false, managedByEnv: false, maskedKey: '' })
 const analyticsRange = ref<AnalyticsRange>('30d')
@@ -1926,6 +1991,22 @@ const chronologicallySortedUploads = computed(() =>
   [...uploads.value].sort((a, b) => new Date(b.upload_date).getTime() - new Date(a.upload_date).getTime())
 )
 
+const notifiedVideoIds = computed(() => {
+  const ids = new Set<string>()
+  for (const video of uploads.value) {
+    if (video.notified_at) ids.add(video.id)
+  }
+  return ids
+})
+
+const pendingNotificationVideos = computed(() =>
+  chronologicallySortedUploads.value.filter((video) => video.publish_status === 'published' && !notifiedVideoIds.value.has(video.id))
+)
+
+function isVideoNotified(video: Video) {
+  return notifiedVideoIds.value.has(video.id)
+}
+
 const draftVideos      = computed(() => chronologicallySortedUploads.value.filter(v =>
   v.publish_status === 'draft' && v.r2_exists !== false && !v.livestream_provider
 ))
@@ -1944,7 +2025,14 @@ const mergedHomepagePlacement = computed(() => {
     featured: featuredIds.map((id) => ({ id })),
     categoryBlocks: categories.value.map((cat) => {
       const existing = base.categoryBlocks?.find((b) => b.category.id === cat.id)
-      return existing || { category: cat, visible: [], overflow: [] }
+      return existing || {
+        category: {
+          ...cat,
+          homepage_layout_variant: cat.homepage_layout_variant || 'three_by_one',
+        },
+        visible: [],
+        overflow: [],
+      }
     }),
   }
 })
@@ -1973,6 +2061,22 @@ const swapFeatured = (video: Video) => {
 const formatDate = (raw: string) => {
   const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z'
   return new Date(normalized).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+const parseIsoForInput = (raw?: string | null) => {
+  if (!raw) return ''
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z'
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) return ''
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 16)
+}
+
+const formatDateTime = (raw?: string | null) => {
+  if (!raw) return '—'
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z'
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 const getActualDuration = (video: Video) => actualDurationByVideoId.value[video.id] ?? video.full_duration
 
@@ -2166,7 +2270,11 @@ const loadCategories = async () => {
       throw new Error(err.error || `HTTP ${res.status}`)
     }
     const data = await res.json()
-    categories.value = Array.isArray(data.categories) ? data.categories : []
+    const loaded = Array.isArray(data.categories) ? data.categories : []
+    categories.value = loaded.map((cat: any) => ({
+      ...cat,
+      homepage_layout_variant: cat?.homepage_layout_variant === 'side_mini' ? 'side_mini' : 'three_by_one',
+    }))
   } catch (e: any) {
     saveMessage.value = `Failed to load categories: ${e.message}`
     saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
@@ -2210,6 +2318,7 @@ const createCategory = async () => {
       slug: categoryForm.value.slug.trim(),
       sortOrder: Number.parseInt(String(categoryForm.value.sortOrder), 10) || 0,
       direction: categoryForm.value.direction,
+      homepageLayoutVariant: 'three_by_one',
     }
     const res = await fetch(`${config.public.apiUrl}/api/admin/categories`, {
       method: 'POST',
@@ -2239,6 +2348,7 @@ const updateCategory = async (category: Category) => {
         slug: category.slug,
         sortOrder: category.sort_order,
         direction: category.direction,
+        homepageLayoutVariant: category.homepage_layout_variant || 'three_by_one',
       }),
     })
     if (!res.ok) {
@@ -2899,6 +3009,7 @@ const createPill = async () => {
     label: newPill.value.label.trim(),
     value: Number(newPill.value.value),
     color: newPill.value.color || '#2563eb',
+    imageUrl: newPill.value.imageUrl?.trim() || null,
     sortOrder: adminPills.value.length,
   }
   if (!payload.label) return
@@ -2912,7 +3023,7 @@ const createPill = async () => {
       await loadAdminPills()
       throw new Error(`Failed to create pill: HTTP ${res.status}`)
     }
-    newPill.value = { label: '', value: 0, color: '#2563eb' }
+    newPill.value = { label: '', value: 0, color: '#2563eb', imageUrl: '' }
     await loadAdminPills()
   } catch (error) {
     console.error('createPill failed', error)
@@ -2929,6 +3040,7 @@ const savePill = async (pill: any) => {
         label: pill.label,
         value: Number(pill.value),
         color: pill.color,
+        imageUrl: typeof pill.image_url === 'string' ? pill.image_url : null,
         sortOrder: Number(pill.sort_order),
       }),
     })
@@ -3211,13 +3323,15 @@ async function saveTitleEdit(video: Video) {
   }
 }
 
-async function updateVideoStatus(video: Video, newStatus: 'draft' | 'published' | 'archived') {
+async function updateVideoStatus(video: Video, newStatus: 'draft' | 'published' | 'archived', scheduledPublishAt: string | null = null) {
   statusUpdating.value[video.id] = true
   try {
+    const payload: Record<string, unknown> = { status: newStatus }
+    if (scheduledPublishAt !== null) payload.scheduledPublishAt = scheduledPublishAt
     const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({ status: newStatus }),
+      body: JSON.stringify(payload),
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }))
@@ -3250,6 +3364,10 @@ async function sendNotification(video: Video) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }))
       throw new Error(err.error || `HTTP ${res.status}`)
     }
+    const idx = uploads.value.findIndex((v) => v.id === video.id)
+    if (idx !== -1) {
+      uploads.value[idx] = { ...uploads.value[idx]!, notified_at: new Date().toISOString() }
+    }
     showToast('success', `Notification queued for ${video.title}.`)
   } catch (e: any) {
     saveMessage.value = `Failed to send notification for "${video.title}": ${e.message}`
@@ -3257,6 +3375,42 @@ async function sendNotification(video: Video) {
     saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
   } finally {
     notifying.value[video.id] = false
+  }
+}
+
+const importUsersFromCsv = async () => {
+  const csv = usersImportCsv.value.trim()
+  const mailingListId = usersImportMailingListId.value.trim()
+  if (!csv) {
+    showToast('error', 'CSV payload is required.')
+    return
+  }
+  if (!mailingListId) {
+    showToast('error', 'Relink mailing list ID is required.')
+    return
+  }
+  usersImporting.value = true
+  usersImportResult.value = null
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/users/import-csv`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ csv, mailingListId }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    usersImportResult.value = {
+      imported: Number(data.imported || 0),
+      existing: Number(data.existing || 0),
+      totalEmails: Number(data.totalEmails || 0),
+      mailingListId: String(data.mailingListId || mailingListId),
+    }
+    showToast('success', 'CSV users imported successfully.')
+    await loadUsers()
+  } catch (e: any) {
+    showToast('error', `CSV import failed: ${e.message}`)
+  } finally {
+    usersImporting.value = false
   }
 }
 

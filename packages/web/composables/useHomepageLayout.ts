@@ -14,6 +14,7 @@ export interface HomepageCategory {
   direction?: 'asc' | 'desc'
   sort_order?: number
   priority_bucket?: 'p0' | 'standard'
+  homepage_layout_variant?: 'three_by_one' | 'side_mini'
 }
 
 export interface HomepagePlacementResponse {
@@ -61,11 +62,8 @@ export function buildHomepageRenderModel({
   const categorySections = (placement?.categoryBlocks ?? []).map((block) => {
     const combinedIds = [...block.visible, ...block.overflow].map((ref) => ref.id)
     const allVideos = combinedIds.map((id) => videoById.get(id)).filter(Boolean)
-    const variantPool = ['featured_hero', 'two_by_two', 'side_mini', 'three_by_one'] as const
-    const slug = typeof block.category?.slug === 'string' ? block.category.slug : ''
-    const hash = slug.split('').reduce((n, ch) => n + ch.charCodeAt(0), 0)
-    const variant = variantPool[Math.abs(hash) % variantPool.length]
-    const visibleCount = variant === 'two_by_two' || variant === 'side_mini' ? 4 : 3
+    const variant = block.category?.homepage_layout_variant === 'side_mini' ? 'side_mini' : 'three_by_one'
+    const visibleCount = variant === 'side_mini' ? 4 : 3
     return {
       category: block.category,
       allVideos,

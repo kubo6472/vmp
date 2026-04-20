@@ -40,6 +40,7 @@ type CategoryInput = {
   name: string
   sort_order: number
   direction: 'asc' | 'desc'
+  homepage_layout_variant?: 'three_by_one' | 'side_mini'
 }
 type NormalizedCategory = CategoryInput & {
   priority_bucket: 'p0' | 'standard'
@@ -204,6 +205,7 @@ export function placeHomepageVideos(input: any) {
         direction,
         sort_order: Number.isInteger(cat.sort_order) ? cat.sort_order : 0,
         priority_bucket: cat.priority_bucket,
+        homepage_layout_variant: cat.homepage_layout_variant === 'side_mini' ? 'side_mini' : 'three_by_one',
       },
       visible,
       overflow,

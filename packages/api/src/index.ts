@@ -53,6 +53,7 @@ import {
   handleAdminPillsSettings,
   handleCategoryVideosBySlug,
   handleAdminUsers,
+  handleAdminUserImportCsv,
   handleAdminAnalytics,
   ensurePillsApiKeySetting,
   logSegmentEvent,
@@ -149,6 +150,7 @@ export class SegmentRateLimiterDO {
 export default {
   async fetch(request: Request, env: any, ctx: ExecutionContext) {
     const url = new URL(request.url)
+    await runScheduledPublishJobs(env)
     await maybeSyncPillsApiKey(env)
 
     // ── CORS ──────────────────────────────────────────────────────────────────
@@ -301,8 +303,11 @@ export default {
     if (url.pathname === '/api/admin/homepage/content' && (request.method === 'GET' || request.method === 'PATCH')) {
       return handleHomepageContent(request, env, corsHeaders)
     }
-    if (url.pathname === '/api/admin/users' && (request.method === 'GET' || request.method === 'PATCH')) {
+    if (url.pathname === '/api/admin/users' && (request.method === 'GET' || request.method === 'PATCH' || request.method === 'POST')) {
       return handleAdminUsers(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/users/import-csv' && request.method === 'POST') {
+      return handleAdminUserImportCsv(request, env, corsHeaders)
     }
     if (url.pathname === '/api/admin/analytics' && request.method === 'GET') {
       return handleAdminAnalytics(request, env, corsHeaders)
@@ -411,9 +416,10 @@ async function handleHomepagePlacement(request: any, env: any, corsHeaders: any)
         FROM videos v
         LEFT JOIN video_category_assignments vca ON vca.video_id = v.id
         WHERE v.publish_status = 'published'
+          AND (v.scheduled_publish_at IS NULL OR datetime(v.scheduled_publish_at) <= CURRENT_TIMESTAMP)
       `).all(),
       db.prepare(`
-        SELECT id, slug, name, sort_order, direction
+        SELECT id, slug, name, sort_order, direction, homepage_layout_variant
         FROM video_categories
       `).all(),
       db.prepare('SELECT value FROM admin_settings WHERE key = ? LIMIT 1').bind('homepage').first(),
@@ -446,6 +452,7 @@ async function handleVideosList(request: any, env: any, corsHeaders: any) {
 
     const query = isEditor
       ? `SELECT v.id, v.title, v.description, v.thumbnail_url, v.full_duration, v.preview_duration, v.upload_date, v.publish_status, v.slug,
+                v.published_at, v.scheduled_publish_at, v.notified_at,
                 vc.id AS category_id,
                 vc.name AS category_name,
                 vc.slug AS category_slug,
@@ -459,6 +466,7 @@ async function handleVideosList(request: any, env: any, corsHeaders: any) {
          LEFT JOIN livestreams ls ON ls.video_id = v.id
          ORDER BY v.upload_date DESC`
       : `SELECT v.id, v.title, v.description, v.thumbnail_url, v.full_duration, v.preview_duration, v.upload_date, v.publish_status, v.slug,
+                v.published_at, v.scheduled_publish_at, v.notified_at,
                 vc.id AS category_id,
                 vc.name AS category_name,
                 vc.slug AS category_slug,
@@ -471,6 +479,7 @@ async function handleVideosList(request: any, env: any, corsHeaders: any) {
          LEFT JOIN video_categories vc ON vc.id = vca.category_id
          LEFT JOIN livestreams ls ON ls.video_id = v.id
          WHERE v.publish_status = 'published'
+           AND (v.scheduled_publish_at IS NULL OR datetime(v.scheduled_publish_at) <= CURRENT_TIMESTAMP)
          ORDER BY v.upload_date DESC`
 
     const videos = await session.prepare(query).all()
@@ -975,7 +984,7 @@ async function handleAdminCategories(request: any, env: any, corsHeaders: any) {
         return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
       }
       const rows = await db.prepare(`
-        SELECT vc.id, vc.slug, vc.name, vc.sort_order, vc.direction, COUNT(vca.video_id) AS video_count
+        SELECT vc.id, vc.slug, vc.name, vc.sort_order, vc.direction, vc.homepage_layout_variant, COUNT(vca.video_id) AS video_count
         FROM video_categories vc
         LEFT JOIN video_category_assignments vca ON vca.category_id = vc.id
         GROUP BY vc.id
@@ -1000,13 +1009,14 @@ async function handleAdminCategories(request: any, env: any, corsHeaders: any) {
       const slug = typeof body.slug === 'string' ? body.slug.trim() : ''
       const sortOrder = Number.isInteger(body.sortOrder) ? body.sortOrder : 0
       const direction = body.direction === 'asc' ? 'asc' : 'desc'
+      const homepageLayoutVariant = normalizeHomepageLayoutVariant(body.homepageLayoutVariant)
       if (!name) return jsonResponse({ error: 'name is required' }, 400, corsHeaders)
       if (!isValidSlug(slug)) return jsonResponse({ error: 'slug must be lowercase alphanumeric words separated by hyphens' }, 400, corsHeaders)
       try {
         await db.prepare(`
-          INSERT INTO video_categories (id, slug, name, sort_order, direction)
-          VALUES (?, ?, ?, ?, ?)
-        `).bind(crypto.randomUUID(), slug, name, sortOrder, direction).run()
+          INSERT INTO video_categories (id, slug, name, sort_order, direction, homepage_layout_variant)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(crypto.randomUUID(), slug, name, sortOrder, direction, homepageLayoutVariant).run()
         return jsonResponse({ ok: true }, 201, corsHeaders)
       } catch (err) {
         if (getErrorMessage(err).includes('UNIQUE')) {
@@ -1042,6 +1052,10 @@ async function handleAdminCategories(request: any, env: any, corsHeaders: any) {
         if (!['asc', 'desc'].includes(body.direction)) return jsonResponse({ error: 'direction must be asc or desc' }, 400, corsHeaders)
         updates.push('direction = ?')
         values.push(body.direction)
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'homepageLayoutVariant')) {
+        updates.push('homepage_layout_variant = ?')
+        values.push(normalizeHomepageLayoutVariant(body.homepageLayoutVariant))
       }
       if (!updates.length) return jsonResponse({ error: 'No category fields to update' }, 400, corsHeaders)
       values.push(id)
@@ -1162,6 +1176,7 @@ async function handleAdminVideosList(request: any, env: any, corsHeaders: any) {
       )
       SELECT v.id, v.title, v.description, v.thumbnail_url, v.full_duration, v.preview_duration,
              v.upload_date, v.status, v.publish_status, v.published_at, v.updated_at, v.slug,
+             v.scheduled_publish_at, v.notified_at,
              vca.category_id, COALESCE(vc.total_views, 0) AS total_views,
              ls.provider AS livestream_provider,
              ls.status AS livestream_status,
@@ -1512,9 +1527,10 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   const hasSlug   = Object.prototype.hasOwnProperty.call(body, 'slug')
   const hasCategoryId = Object.prototype.hasOwnProperty.call(body, 'categoryId')
   const hasDescription = Object.prototype.hasOwnProperty.call(body, 'description')
+  const hasScheduledPublishAt = Object.prototype.hasOwnProperty.call(body, 'scheduledPublishAt')
 
-  if (!hasStatus && !hasTitle && !hasSlug && !hasCategoryId && !hasDescription) {
-    return jsonResponse({ error: 'At least one of status, title, slug, description, or categoryId must be provided' }, 400, corsHeaders)
+  if (!hasStatus && !hasTitle && !hasSlug && !hasCategoryId && !hasDescription && !hasScheduledPublishAt) {
+    return jsonResponse({ error: 'At least one of status, title, slug, description, categoryId, or scheduledPublishAt must be provided' }, 400, corsHeaders)
   }
   if (hasTitle && (typeof body.title !== 'string' || body.title.trim().length === 0)) {
     return jsonResponse({ error: 'title must not be empty' }, 400, corsHeaders)
@@ -1524,6 +1540,10 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   }
   if (hasSlug && body.slug !== null && (typeof body.slug !== 'string' || !isValidSlug(body.slug))) {
     return jsonResponse({ error: 'slug must be lowercase alphanumeric words separated by hyphens (e.g. my-video-title), or null to clear it' }, 400, corsHeaders)
+  }
+  const scheduledPublishAt = normalizeScheduledPublishAt(body.scheduledPublishAt, { allowNull: true })
+  if (hasScheduledPublishAt && scheduledPublishAt.invalid) {
+    return jsonResponse({ error: 'scheduledPublishAt must be a valid ISO timestamp in the future, or null to clear schedule' }, 400, corsHeaders)
   }
 
   const db = getDatabaseBinding(env)
@@ -1609,6 +1629,24 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
         `).bind(videoId, validatedCategoryId).run()
       }
     }
+    if (hasScheduledPublishAt) {
+      if (scheduledPublishAt.value) {
+        await db.prepare(`
+          UPDATE videos
+          SET scheduled_publish_at = ?,
+              publish_status = CASE WHEN publish_status = 'archived' THEN 'archived' ELSE 'draft' END,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(scheduledPublishAt.value, videoId).run()
+      } else {
+        await db.prepare(`
+          UPDATE videos
+          SET scheduled_publish_at = NULL,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(videoId).run()
+      }
+    }
 
     let transitionedToPublished = false
     if (hasStatus) {
@@ -1619,6 +1657,7 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
           UPDATE videos
           SET publish_status = 'published',
               published_at = COALESCE(published_at, CURRENT_TIMESTAMP),
+              scheduled_publish_at = NULL,
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND publish_status != 'published'
         `).bind(videoId).run()
@@ -1629,14 +1668,15 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
         await db.prepare(`
           UPDATE videos
           SET publish_status = ?,
+              scheduled_publish_at = CASE WHEN ? = 'published' THEN NULL ELSE scheduled_publish_at END,
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
-        `).bind(body.status, videoId).run()
+        `).bind(body.status, body.status, videoId).run()
       }
     }
 
     const video = await db.prepare(`
-      SELECT v.id, v.title, v.description, v.status, v.publish_status, v.published_at, v.updated_at, v.slug, vca.category_id,
+      SELECT v.id, v.title, v.description, v.status, v.publish_status, v.published_at, v.scheduled_publish_at, v.notified_at, v.updated_at, v.slug, vca.category_id,
              ls.provider AS livestream_provider,
              ls.status AS livestream_status,
              ls.stream_id AS livestream_stream_id,
@@ -1651,18 +1691,8 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
     `).bind(videoId).first()
     if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
 
-    // Fire push only when the UPDATE itself confirmed the transition (atomic guard)
-    if (transitionedToPublished) {
-      ctx.waitUntil(
-        sendPushToAllSubscribers(video.title || videoId, videoId, env, db)
-          .then((stats) => {
-            console.log(`Push notify [videoId:${videoId}] attempted=${stats.attempted} succeeded=${stats.succeeded} failed=${stats.failed} stale=${stats.stale}`)
-          })
-          .catch(err => {
-            console.error(`Push notify error [videoId:${videoId}]:`, err)
-          }),
-      )
-    }
+    // Automatic notifications on publish are intentionally disabled.
+    void transitionedToPublished
 
     return jsonResponse({ ok: true, video }, 200, corsHeaders)
   } catch (error) {
@@ -1792,7 +1822,40 @@ async function handleAdminVideoNotify(request: any, env: any, ctx: any, corsHead
       }),
   )
 
+  await db.prepare(`
+    UPDATE videos
+    SET notified_at = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(responseTimestamp, videoId).run()
+
   return jsonResponse({ ok: true, push_enqueued_at: responseTimestamp }, 200, corsHeaders)
+}
+
+async function handleAdminVideoPublishSweep(request: any, env: any, corsHeaders: any) {
+  try {
+    await requireRole(request, env, 'editor', 'admin', 'super_admin')
+  } catch {
+    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
+  }
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
+  const db = getDatabaseBinding(env)
+  const nowIso = new Date().toISOString()
+  const result = await db.prepare(`
+    UPDATE videos
+    SET publish_status = 'published',
+        published_at = COALESCE(published_at, CURRENT_TIMESTAMP),
+        scheduled_publish_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE publish_status != 'published'
+      AND scheduled_publish_at IS NOT NULL
+      AND datetime(scheduled_publish_at) <= CURRENT_TIMESTAMP
+  `).run()
+  const publishedCount = Number(result.meta?.changes ?? result.changes ?? 0)
+  return jsonResponse({
+    ok: true,
+    publishedCount,
+    executedAt: nowIso,
+  }, 200, corsHeaders)
 }
 
 async function handleVideoSwap(request: any, env: any, corsHeaders: any) {
@@ -2458,6 +2521,53 @@ async function resolveVideoByIdOrSlug(db: any, idOrSlug: any) {
 // Validate a vanity slug format: lowercase alphanumeric words separated by hyphens.
 function isValidSlug(slug: any) {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug);
+}
+
+const HOMEPAGE_LAYOUT_VARIANTS = new Set(['three_by_one', 'side_mini'])
+
+function normalizeHomepageLayoutVariant(raw: any) {
+  const value = typeof raw === 'string' ? raw.trim() : ''
+  return HOMEPAGE_LAYOUT_VARIANTS.has(value) ? value : 'three_by_one'
+}
+
+function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boolean } = {}) {
+  if (raw == null || raw === '') {
+    return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
+  }
+  if (typeof raw !== 'string') return { value: null, invalid: true }
+  const text = raw.trim()
+  if (!text) return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
+  const t = Date.parse(text)
+  if (!Number.isFinite(t)) return { value: null, invalid: true }
+  if (t <= Date.now()) return { value: null, invalid: true }
+  return { value: new Date(t).toISOString(), invalid: false }
+}
+
+async function runScheduledPublishJobs(env: any) {
+  const db = getDatabaseBinding(env)
+  const dueRows = await db.prepare(`
+    SELECT id
+    FROM videos
+    WHERE publish_status = 'draft'
+      AND scheduled_publish_at IS NOT NULL
+      AND datetime(scheduled_publish_at) <= CURRENT_TIMESTAMP
+  `).all()
+  const dueVideos = dueRows?.results ?? []
+  if (!dueVideos.length) return 0
+  const publishStmt = db.prepare(`
+    UPDATE videos
+    SET publish_status = 'published',
+        published_at = COALESCE(published_at, CURRENT_TIMESTAMP),
+        scheduled_publish_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND publish_status = 'draft'
+      AND scheduled_publish_at IS NOT NULL
+      AND datetime(scheduled_publish_at) <= CURRENT_TIMESTAMP
+  `)
+  const statements = dueVideos.map((row: any) => publishStmt.bind(row.id))
+  await db.batch(statements)
+  return statements.length
 }
 
 function safeJsonParse(v: any, fallback: any) {

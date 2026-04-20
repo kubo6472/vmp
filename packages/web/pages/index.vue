@@ -139,7 +139,7 @@
           </div>
         </section>
 
-        <!-- Category sections: rows of 3 -->
+        <!-- Category sections: rows of 3 or side mini 2x1 -->
         <section v-for="section in categorySections" :key="section.category.id" class="space-y-3">
           <div class="flex items-center justify-between">
             <h2 class="text-xl font-bold text-gray-900 dark:text-white">{{ section.category.name }}</h2>
@@ -147,9 +147,12 @@
               {{ strings.categoryMoreLink }}
             </NuxtLink>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div
+            class="grid grid-cols-1 sm:grid-cols-2 gap-5"
+            :class="section.variant === 'side_mini' ? 'lg:grid-cols-2' : 'lg:grid-cols-3'"
+          >
             <VideoCard
-              v-for="video in section.allVideos.slice(0, 3)"
+              v-for="video in section.allVideos.slice(0, section.variant === 'side_mini' ? 2 : 3)"
               :key="`cat-${section.category.id}-${video.id}`"
               :video="video"
             />
