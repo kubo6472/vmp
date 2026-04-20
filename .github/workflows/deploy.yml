@@ -44,9 +44,12 @@ jobs:
           
       - run: npm ci
       - name: Type check (fail fast)
-        run: npm run typecheck:deploy
+        run: |
+          npm exec nx -- run-many -t typecheck --projects=@vmp/shared,@vmp/api,@vmp/web
+          npm exec nx -- run @vmp/web:typecheck:scripts
+          npm exec nx -- run @vmp/web:build:sw-push
       
-      - run: npm run build --workspace=@vmp/web
+      - run: npm exec nx -- run @vmp/web:build
         env:
           API_URL: ${{ env.API_BASE_URL }}
 
@@ -60,7 +63,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_STAGING }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_STAGING }}
-        run: npm run deploy --workspace=@vmp/api
+        run: npm exec nx -- run @vmp/api:deploy
       
       - name: Deploy Web (staging)
         uses: cloudflare/wrangler-action@v3
@@ -129,9 +132,12 @@ jobs:
           
       - run: npm ci
       - name: Type check (fail fast)
-        run: npm run typecheck:deploy
+        run: |
+          npm exec nx -- run-many -t typecheck --projects=@vmp/shared,@vmp/api,@vmp/web
+          npm exec nx -- run @vmp/web:typecheck:scripts
+          npm exec nx -- run @vmp/web:build:sw-push
       
-      - run: npm run build --workspace=@vmp/web
+      - run: npm exec nx -- run @vmp/web:build
         env:
           API_URL: ${{ env.API_BASE_URL }}
 
@@ -145,7 +151,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_PROD }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_PROD }}
-        run: npm run deploy --workspace=@vmp/api
+        run: npm exec nx -- run @vmp/api:deploy
       
       - name: Deploy Web (production)
         uses: cloudflare/wrangler-action@v3
