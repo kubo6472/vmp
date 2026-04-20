@@ -936,13 +936,20 @@ export async function handleAdminUserImportCsv(request: any, env: any, corsHeade
 
   // Bulk lookup existing users
   const emailsArray = Array.from(emails)
-  const placeholders = emailsArray.map(() => '?').join(',')
-  const existingUsersRows = await db.prepare(`
-    SELECT id, lower(email) AS email_lower FROM users WHERE lower(email) IN (${placeholders})
-  `).bind(...emailsArray).all()
   const existingUsersMap = new Map<string, string>()
-  for (const row of (existingUsersRows?.results ?? [])) {
-    existingUsersMap.set(String(row.email_lower), String(row.id))
+
+  // Split emailsArray into chunks of 90 to avoid D1's 100-parameter limit
+  const EMAIL_CHUNK_SIZE = 90
+  for (let i = 0; i < emailsArray.length; i += EMAIL_CHUNK_SIZE) {
+    const chunk = emailsArray.slice(i, i + EMAIL_CHUNK_SIZE)
+    const placeholders = chunk.map(() => '?').join(',')
+    const existingUsersRows = await db.prepare(`
+      SELECT id, lower(email) AS email_lower FROM users WHERE lower(email) IN (${placeholders})
+    `).bind(...chunk).all()
+
+    for (const row of (existingUsersRows?.results ?? [])) {
+      existingUsersMap.set(String(row.email_lower), String(row.id))
+    }
   }
 
   const usersUpsert = db.prepare(`
@@ -984,7 +991,12 @@ export async function handleAdminUserImportCsv(request: any, env: any, corsHeade
     detail: { mailingListId, imported, existing, totalEmails: emails.size },
   }))
 
-  if (statements.length) await db.batch(statements)
+  // Execute statements in chunks to avoid D1 batch size and parameter limits
+  const BATCH_CHUNK_SIZE = 250
+  for (let i = 0; i < statements.length; i += BATCH_CHUNK_SIZE) {
+    const chunk = statements.slice(i, i + BATCH_CHUNK_SIZE)
+    if (chunk.length) await db.batch(chunk)
+  }
 
   await setSetting(env, 'users_relink_mailing_list_id', mailingListId)
   await setSetting(env, 'users_relink_imported_at', nowIso)
