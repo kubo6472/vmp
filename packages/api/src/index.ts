@@ -1404,8 +1404,7 @@ async function handleAdminLivestreamUpdate(request: any, env: any, corsHeaders: 
   }
 
   const url = new URL(request.url)
-  const pathParts = url.pathname.split('/').filter(Boolean)
-  const videoId = pathParts[3]
+  const videoId = getAdminVideoIdFromPath(url.pathname)
   if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
 
   const body = await request.json().catch(() => null)
@@ -1486,8 +1485,7 @@ async function handleAdminLivestreamProvision(request: any, env: any, corsHeader
     return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
   }
   const url = new URL(request.url)
-  const pathParts = url.pathname.split('/').filter(Boolean)
-  const videoId = pathParts[3]
+  const videoId = getAdminVideoIdFromPath(url.pathname)
   if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
 
   const db = getDatabaseBinding(env)
@@ -1522,8 +1520,7 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   }
 
   const url = new URL(request.url)
-  const pathParts = url.pathname.split('/').filter(Boolean)
-  const videoId = pathParts[3] // /api/admin/videos/{videoId}
+  const videoId = getAdminVideoIdFromPath(url.pathname)
   if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
 
   const body = await request.json().catch(() => null)
@@ -1723,8 +1720,7 @@ async function handleAdminVideoDelete(request: any, env: any, corsHeaders: any) 
   }
 
   const url = new URL(request.url)
-  const pathParts = url.pathname.split('/').filter(Boolean)
-  const videoId = pathParts[3] // /api/admin/videos/{videoId}
+  const videoId = getAdminVideoIdFromPath(url.pathname)
   if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
 
   try {
@@ -1788,9 +1784,7 @@ async function handleAdminVideoNotify(request: any, env: any, ctx: any, corsHead
   }
 
   const url = new URL(request.url)
-  const pathParts = url.pathname.split('/').filter(Boolean)
-  // /api/admin/videos/{videoId}/notify → index 3 is videoId
-  const videoId = pathParts[3]
+  const videoId = getAdminVideoIdFromPath(url.pathname)
   if (!videoId) return jsonResponse({ error: 'Missing videoId' }, 400, corsHeaders)
 
   const db = getDatabaseBinding(env)
@@ -1882,9 +1876,7 @@ async function handleVideoSwap(request: any, env: any, corsHeaders: any) {
   }
 
   const url = new URL(request.url)
-  const pathParts = url.pathname.split('/').filter(Boolean)
-  // /api/admin/videos/{publishedId}/swap → index 3 is the published video ID
-  const publishedId = pathParts[3]
+  const publishedId = getAdminVideoIdFromPath(url.pathname)
   if (!publishedId) return jsonResponse({ error: 'Missing video id' }, 400, corsHeaders)
 
   const body = await request.json().catch(() => null)
@@ -2524,6 +2516,24 @@ function normalizeVideoId(input: any) {
   const t = (input ?? '').trim()
   const m = t.match(/^videos\/([^/]+)\/processed\/playlist\.m3u8$/i)
   return m ? m[1] : t
+}
+
+function decodePathSegment(segment: any) {
+  if (typeof segment !== 'string') return null
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return null
+  }
+}
+
+export function getAdminVideoIdFromPath(pathname: string) {
+  const pathParts = pathname.split('/').filter(Boolean)
+  const videoId = decodePathSegment(pathParts[3])
+  if (typeof videoId !== 'string' || videoId.length === 0) return null
+  // Keep route semantics as a single path segment even after decoding.
+  if (videoId.includes('/')) return null
+  return videoId
 }
 
 // Resolve a video row by ID first, then by vanity slug.
