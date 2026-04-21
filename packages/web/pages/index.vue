@@ -39,16 +39,7 @@
     </Transition>
 
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <!-- Hero Section -->
       <div class="mb-8">
-        <h1 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-3">
-          {{ homepageHeroTitle }}
-        </h1>
-        <p class="text-base sm:text-lg text-gray-600 dark:text-gray-400">
-          {{ homepageHeroSubtitle }}
-        </p>
-
-        <!-- Pills: redesigned with avatar, name, and value on two lines -->
         <div v-if="pills.length" class="mt-5 flex flex-wrap gap-3 overflow-x-auto pb-1">
           <div
             v-for="pill in pills"
@@ -88,110 +79,95 @@
         <p class="text-red-700 dark:text-red-300">{{ error }}</p>
       </div>
 
-      <!-- Redesigned Homepage Layout -->
       <div v-else-if="videos.length > 0" class="space-y-8">
+        <section
+          v-for="block in homepageRenderModel.blockItems"
+          :key="`home-block-${block.id}`"
+          class="space-y-3"
+        >
+          <div v-if="block.title || block.body">
+            <h2 v-if="block.title" class="text-xl font-bold text-gray-900 dark:text-white">{{ block.title }}</h2>
+            <p v-if="block.body" class="text-sm text-gray-600 dark:text-gray-400 mt-1">{{ block.body }}</p>
+          </div>
 
-        <!-- Featured Hero Video -->
-        <section v-if="heroVideo" class="group">
-          <NuxtLink :to="`/watch/${heroVideo.slug || heroVideo.id}`" class="block">
-            <div class="relative aspect-[21/9] sm:aspect-[2.4/1] rounded-xl overflow-hidden bg-gray-200 dark:bg-gray-800">
-              <img
-                v-if="heroVideo.thumbnail_url"
-                :src="sizeUrl(heroVideo.thumbnail_url, 'large')"
-                :alt="heroVideo.title"
-                class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.02]"
-              />
-              <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
-              <div class="absolute bottom-0 left-0 right-0 p-4 sm:p-6 lg:p-8">
-                <div v-if="isPremiumVideo(heroVideo)" class="inline-flex items-center gap-1 bg-yellow-500 text-black text-xs font-bold px-2 py-0.5 rounded mb-2">
-                  {{ strings.premiumBadge }}
-                </div>
-                <h2 class="text-xl sm:text-2xl lg:text-3xl font-bold text-white mb-1 line-clamp-2">{{ heroVideo.title }}</h2>
-                <p v-if="heroVideo.description" class="text-sm text-gray-300 line-clamp-2 max-w-2xl">{{ heroVideo.description }}</p>
-              </div>
-              <div class="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                {{ heroVideo.full_duration ? formatDuration(heroVideo.full_duration) : heroVideo.fullDuration ? formatDuration(heroVideo.fullDuration) : '' }}
-              </div>
-            </div>
-          </NuxtLink>
-        </section>
+          <div v-if="block.type === 'top_video'" class="space-y-4">
+            <VideoCard
+              v-for="video in block.videos"
+              :key="`top-video-${video.id}`"
+              :video="video"
+            />
+          </div>
 
-        <!-- 2×2 Recent Grid + 2×1 Sidebar -->
-        <section v-if="recentGridVideos.length > 0">
-          <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">{{ strings.recentVideos }}</h2>
-          <div class="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5">
-            <!-- Left: 2×2 grid -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <VideoCard
-                v-for="video in recentGridVideos.slice(0, 4)"
-                :key="`recent-${video.id}`"
-                :video="video"
-              />
+          <div v-else-if="block.type === 'featured_row'" class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <VideoCard
+              v-for="video in block.videos"
+              :key="`featured-row-${video.id}`"
+              :video="video"
+            />
+          </div>
+
+          <div v-else-if="block.type === 'category'" class="space-y-2">
+            <div v-if="block.categorySection" class="flex items-center justify-between">
+              <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ block.categorySection.category.name }}</h3>
+              <NuxtLink :to="`/category/${block.categorySection.category.slug}`" class="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline">
+                {{ strings.categoryMoreLink }}
+              </NuxtLink>
             </div>
-            <!-- Right: sidebar, two stacked cards -->
-            <div v-if="sidebarVideos.length > 0" class="hidden lg:flex flex-col gap-5">
+            <div v-if="block.categorySection" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
               <VideoCard
-                v-for="video in sidebarVideos"
-                :key="`sidebar-${video.id}`"
+                v-for="video in block.categorySection.visible"
+                :key="`category-block-${block.id}-${video.id}`"
                 :video="video"
               />
             </div>
           </div>
-        </section>
 
-        <!-- Category sections: rows of 3 or side mini 2x1 -->
-        <section v-for="section in categorySections" :key="section.category.id" class="space-y-3">
-          <div class="flex items-center justify-between">
-            <h2 class="text-xl font-bold text-gray-900 dark:text-white">{{ section.category.name }}</h2>
-            <NuxtLink :to="`/category/${section.category.slug}`" class="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline">
-              {{ strings.categoryMoreLink }}
-            </NuxtLink>
-          </div>
           <div
-            class="grid grid-cols-1 sm:grid-cols-2 gap-5"
-            :class="section.variant === 'side_mini' ? 'lg:grid-cols-2' : 'lg:grid-cols-3'"
+            v-else-if="block.type === 'split_horizontal' || block.type === 'split_vertical'"
+            class="grid gap-4"
+            :class="block.type === 'split_horizontal' ? 'md:grid-cols-2' : 'grid-cols-1'"
           >
-            <VideoCard
-              v-for="video in section.allVideos.slice(0, section.variant === 'side_mini' ? 2 : 3)"
-              :key="`cat-${section.category.id}-${video.id}`"
-              :video="video"
-            />
+            <section
+              v-for="child in block.children"
+              :key="`split-child-${child.id}`"
+              class="rounded-lg border border-gray-200 dark:border-gray-800 p-4 space-y-3 bg-white dark:bg-gray-900"
+            >
+              <div v-if="child.title || child.body">
+                <h3 v-if="child.title" class="font-semibold text-gray-900 dark:text-white">{{ child.title }}</h3>
+                <p v-if="child.body" class="text-sm text-gray-600 dark:text-gray-400">{{ child.body }}</p>
+              </div>
+              <div v-if="child.type === 'top_video'" class="space-y-3">
+                <VideoCard
+                  v-for="video in child.videos"
+                  :key="`split-top-${child.id}-${video.id}`"
+                  :video="video"
+                />
+              </div>
+              <div v-else-if="child.type === 'featured_row'" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <VideoCard
+                  v-for="video in child.videos"
+                  :key="`split-featured-${child.id}-${video.id}`"
+                  :video="video"
+                />
+              </div>
+              <div v-else-if="child.categorySection" class="space-y-2">
+                <div class="flex items-center justify-between">
+                  <h4 class="font-semibold text-gray-900 dark:text-white">{{ child.categorySection.category.name }}</h4>
+                  <NuxtLink :to="`/category/${child.categorySection.category.slug}`" class="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline">
+                    {{ strings.categoryMoreLink }}
+                  </NuxtLink>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <VideoCard
+                    v-for="video in child.categorySection.visible"
+                    :key="`split-category-${child.id}-${video.id}`"
+                    :video="video"
+                  />
+                </div>
+              </div>
+            </section>
           </div>
-          <p v-if="section.overflowCount > 0" class="text-xs text-gray-500 dark:text-gray-400">
-            {{ strings.moreInCategory(section.overflowCount) }}
-          </p>
         </section>
-
-        <!-- Remaining uncategorized videos: rows of 3 -->
-        <section v-if="uncategorizedVideos.length > 0">
-          <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">{{ strings.allUncategorized }}</h2>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            <VideoCard
-              v-for="video in uncategorizedVideos"
-              :key="`uncat-${video.id}`"
-              :video="video"
-            />
-          </div>
-        </section>
-
-        <!-- CTA and text blocks from layout config -->
-        <template v-for="block in renderedBlocks" :key="`extra-${block.id}`">
-          <section v-if="block.type === 'cta'" class="p-6 rounded-xl border border-blue-200 bg-blue-50 dark:bg-blue-950/40 dark:border-blue-800">
-            <h3 v-if="block.title" class="font-semibold text-gray-900 dark:text-white mb-2">{{ block.title }}</h3>
-            <p class="text-gray-800 dark:text-gray-200">{{ block.body || 'Upgrade to unlock complete videos and premium features.' }}</p>
-          </section>
-
-          <section v-else-if="block.type === 'text_split'" class="grid md:grid-cols-2 gap-4">
-            <div class="p-4 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
-              <h3 class="font-semibold text-gray-900 dark:text-white mb-2">{{ block.title || 'Why upgrade?' }}</h3>
-              <p class="text-gray-600 dark:text-gray-400">{{ block.body || 'Get full-length videos and uninterrupted viewing.' }}</p>
-            </div>
-            <div class="p-4 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
-              <h3 class="font-semibold text-gray-900 dark:text-white mb-2">Free vs Premium</h3>
-              <p class="text-gray-600 dark:text-gray-400">Free users can watch previews, premium users get complete access to every upload.</p>
-            </div>
-          </section>
-        </template>
       </div>
 
       <!-- Empty State -->
@@ -209,7 +185,7 @@
 </template>
 
 <script setup lang="ts">
-import type { HomepageLayoutBlock, HomepagePlacementResponse } from '~/composables/useHomepageLayout'
+import type { HomepagePlacementResponse } from '~/composables/useHomepageLayout'
 import { buildHomepageRenderModel } from '~/composables/useHomepageLayout'
 import { sizeUrl } from '~/composables/useThumbnail'
 import strings from '~/utils/strings'
@@ -246,23 +222,9 @@ const { authHeader } = useAuth()
 const loading = ref(true)
 const error   = ref<string | null>(null)
 const videos  = ref<any[]>([])
-const layoutBlocks       = ref<HomepageLayoutBlock[]>([])
-const featuredVideoIds   = ref<string[]>([])
-const featuredMode = ref<'latest' | 'specific'>('latest')
-const featuredVideoId = ref<string | null>(null)
+const layoutBlocks = ref<any[]>([])
 const categories = ref<VideoCategory[]>([])
 const pills = ref<Array<{ id: string; label: string; value: number; color: string; image_url?: string }>>([])
-const homepageHeroTitle = ref<string>(strings.heroTitleDefault)
-const homepageHeroSubtitle = ref<string>(strings.heroSubtitleDefault)
-
-const blockLabelMap: Record<HomepageLayoutBlock['type'], string> = {
-  hero:                'Hero',
-  featured_row:        'Featured videos',
-  cta:                 'Call to action',
-  text_split:          'Highlights',
-  video_grid:          'Available videos',
-  video_grid_legacy:   'Available videos',
-}
 
 const homepageRenderModel = computed(() =>
   buildHomepageRenderModel({
@@ -271,80 +233,14 @@ const homepageRenderModel = computed(() =>
     placement: placement.value,
   }),
 )
-const renderedBlocks = computed(() => homepageRenderModel.value.renderedBlocks)
-const heroBlock = computed(() => homepageRenderModel.value.heroBlock)
-const hasVideoGridBlock = computed(() => homepageRenderModel.value.hasVideoGridBlock)
-const categoryAssignedIds = computed(() => homepageRenderModel.value.categoryAssignedIds)
-
-const sortedByUpload = computed(() =>
-  [...videos.value].sort((a, b) => new Date(b.upload_date).getTime() - new Date(a.upload_date).getTime())
-)
-
 const placement = ref<HomepagePlacementResponse | null>(null)
-const featuredVideos = computed(() => homepageRenderModel.value.featuredVideos)
-const recentTwoByTwoVideos = computed(() => homepageRenderModel.value.recentTwoByTwoVideos)
-const categorySections = computed(() => homepageRenderModel.value.categorySections)
-
-// Redesigned layout computeds
-const heroVideo = computed(() => {
-  if (featuredVideos.value.length > 0) return featuredVideos.value[0]
-  return sortedByUpload.value[0] ?? null
-})
-
-const heroVideoId = computed(() => heroVideo.value?.id)
-
-const recentGridVideos = computed(() => {
-  const sorted = sortedByUpload.value.filter((v: any) => v.id !== heroVideoId.value)
-  if (recentTwoByTwoVideos.value.length > 0) {
-    const ids = new Set(recentTwoByTwoVideos.value.map((v: any) => v.id))
-    const fromPlacement = recentTwoByTwoVideos.value.filter((v: any) => v.id !== heroVideoId.value)
-    if (fromPlacement.length >= 4) return fromPlacement.slice(0, 4)
-    const extra = sorted.filter((v: any) => !ids.has(v.id))
-    return [...fromPlacement, ...extra].slice(0, 4)
-  }
-  return sorted.slice(0, 4)
-})
-
-const sidebarVideos = computed(() => {
-  const usedIds = new Set([heroVideoId.value, ...recentGridVideos.value.map((v: any) => v.id)])
-  return sortedByUpload.value.filter((v: any) => !usedIds.has(v.id)).slice(0, 2)
-})
-
-const uncategorizedVideos = computed(() => {
-  const usedIds = new Set([
-    heroVideoId.value,
-    ...recentGridVideos.value.map((v: any) => v.id),
-    ...sidebarVideos.value.map((v: any) => v.id),
-    ...categorySections.value.flatMap((s: any) => s.allVideos.map((v: any) => v.id)),
-  ])
-  return videos.value.filter((v: any) => !usedIds.has(v.id))
-})
-
-function isPremiumVideo(video: any) {
-  const full = video.full_duration ?? video.fullDuration ?? 0
-  const preview = video.preview_duration ?? 0
-  return full > 0 ? preview < full : preview > 0
-}
-
-const formatDuration = (seconds: number) => {
-  const mins = Math.floor(seconds / 60)
-  const secs = seconds % 60
-  return `${mins}:${secs.toString().padStart(2, '0')}`
-}
 
 const loadAdminConfig = async () => {
-  const res = await fetch(`${config.public.apiUrl}/api/admin/homepage/content`, {
-    headers: authHeader(),
-  })
+  const res = await fetch(`${config.public.apiUrl}/api/homepage/content`)
   if (!res.ok) return
   const data = await res.json()
-  homepageHeroTitle.value = data.title || strings.heroTitleDefault
-  homepageHeroSubtitle.value = data.subtitle || strings.heroSubtitleDefault
   const homepageConfig = data?.homepageConfig ?? {}
-  layoutBlocks.value     = Array.isArray(homepageConfig?.layoutBlocks)    ? homepageConfig.layoutBlocks    : []
-  featuredVideoIds.value = Array.isArray(homepageConfig?.featuredVideoIds) ? homepageConfig.featuredVideoIds : []
-  featuredMode.value = homepageConfig?.featuredMode === 'specific' ? 'specific' : 'latest'
-  featuredVideoId.value = typeof homepageConfig?.featuredVideoId === 'string' ? homepageConfig.featuredVideoId : null
+  layoutBlocks.value = Array.isArray(homepageConfig?.layoutBlocks) ? homepageConfig.layoutBlocks : []
 }
 
 const loadCategories = async () => {

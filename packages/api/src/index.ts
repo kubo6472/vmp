@@ -47,6 +47,7 @@ import { handleGetAccountRss } from './rssAccount.js'
 import { handleRssPodcastPreviewRebuildNotify, handleRssPodcastWebhookConfig } from './rssPodcastAdmin.js'
 import {
   handleHomepageContent,
+  handleHomepageContentPublic,
   handlePillsPublic,
   handlePillsUpdate,
   handleAdminPills,
@@ -58,6 +59,14 @@ import {
   ensurePillsApiKeySetting,
   logSegmentEvent,
 } from './adminExtras.js'
+import {
+  handleAdminPromoCampaigns,
+  handleAdminPromoCodes,
+  handleAdminIsicCampaigns,
+  handlePromoValidate,
+  handleIsicValidate,
+  handleIsicCampaignPublic,
+} from './promotions.js'
 import { handleAdminSmokeAuth } from './smokeAuth.js'
 import { handleSiteSettings } from './siteSettings.js'
 import { getReadSession, applySessionBookmark } from './d1Session.js'
@@ -279,6 +288,15 @@ export default {
     if (url.pathname === '/api/admin/payments/settings' && ['GET', 'PATCH'].includes(request.method)) {
       return handleAdminPaymentSettings(request, env, corsHeaders)
     }
+    if (url.pathname === '/api/admin/promotions/campaigns' && ['GET', 'POST', 'PATCH'].includes(request.method)) {
+      return handleAdminPromoCampaigns(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/promotions/codes' && ['GET', 'POST', 'PATCH'].includes(request.method)) {
+      return handleAdminPromoCodes(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/admin/isic/campaigns' && ['GET', 'POST', 'PATCH'].includes(request.method)) {
+      return handleAdminIsicCampaigns(request, env, corsHeaders)
+    }
     if (url.pathname === '/api/admin/site-settings' && ['GET', 'PATCH'].includes(request.method)) {
       return handleSiteSettings(request, env, corsHeaders)
     }
@@ -299,6 +317,9 @@ export default {
     }
     if (url.pathname === '/api/admin/rss/podcast-preview-rebuild' && request.method === 'POST') {
       return handleRssPodcastPreviewRebuildNotify(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/homepage/content' && request.method === 'GET') {
+      return handleHomepageContentPublic(request, env, corsHeaders)
     }
     if (url.pathname === '/api/admin/homepage/content' && (request.method === 'GET' || request.method === 'PATCH')) {
       return handleHomepageContent(request, env, corsHeaders)
@@ -347,6 +368,15 @@ export default {
     }
     if (url.pathname === '/api/account/subscription' && request.method === 'GET') {
       return handleGetSubscription(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/account/promotions/validate' && request.method === 'POST') {
+      return handlePromoValidate(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/account/isic/validate' && request.method === 'POST') {
+      return handleIsicValidate(request, env, corsHeaders)
+    }
+    if (url.pathname === '/api/account/isic/campaigns' && request.method === 'GET') {
+      return handleIsicCampaignPublic(request, env, corsHeaders)
     }
     if (url.pathname === '/api/account/rss' && request.method === 'GET') {
       return handleGetAccountRss(request, env, corsHeaders)
@@ -1014,7 +1044,7 @@ async function handleAdminCategories(request: any, env: any, corsHeaders: any) {
 
     if (method === 'POST') {
       const name = typeof body.name === 'string' ? body.name.trim() : ''
-      const slug = typeof body.slug === 'string' ? body.slug.trim() : ''
+      const slug = typeof body.slug === 'string' ? sanitizeSlug(body.slug) : ''
       const sortOrder = Number.isInteger(body.sortOrder) ? body.sortOrder : 0
       const direction = body.direction === 'asc' ? 'asc' : 'desc'
       const homepageLayoutVariant = normalizeHomepageLayoutVariant(body.homepageLayoutVariant)
@@ -1046,7 +1076,7 @@ async function handleAdminCategories(request: any, env: any, corsHeaders: any) {
         values.push(name)
       }
       if (typeof body.slug === 'string') {
-        const slug = body.slug.trim()
+        const slug = sanitizeSlug(body.slug)
         if (!isValidSlug(slug)) return jsonResponse({ error: 'slug must be lowercase alphanumeric words separated by hyphens' }, 400, corsHeaders)
         updates.push('slug = ?')
         values.push(slug)
@@ -1232,7 +1262,7 @@ async function handleAdminLivestreamCreate(request: any, env: any, corsHeaders: 
   if (!title) return jsonResponse({ error: 'title is required' }, 400, corsHeaders)
 
   const description = typeof body.description === 'string' ? body.description.trim() : null
-  const slug = typeof body.slug === 'string' && body.slug.trim() ? body.slug.trim() : null
+  const slug = typeof body.slug === 'string' && body.slug.trim() ? sanitizeSlug(body.slug) : null
   const publishStatus = typeof body.publishStatus === 'string' ? body.publishStatus : 'draft'
   if (!['draft', 'published', 'archived'].includes(publishStatus)) {
     return jsonResponse({ error: 'publishStatus must be one of: draft, published, archived' }, 400, corsHeaders)
@@ -1533,9 +1563,10 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   const hasCategoryId = Object.prototype.hasOwnProperty.call(body, 'categoryId')
   const hasDescription = Object.prototype.hasOwnProperty.call(body, 'description')
   const hasScheduledPublishAt = Object.prototype.hasOwnProperty.call(body, 'scheduledPublishAt')
+  const hasPublishedAt = Object.prototype.hasOwnProperty.call(body, 'publishedAt')
 
-  if (!hasStatus && !hasTitle && !hasSlug && !hasCategoryId && !hasDescription && !hasScheduledPublishAt) {
-    return jsonResponse({ error: 'At least one of status, title, slug, description, categoryId, or scheduledPublishAt must be provided' }, 400, corsHeaders)
+  if (!hasStatus && !hasTitle && !hasSlug && !hasCategoryId && !hasDescription && !hasScheduledPublishAt && !hasPublishedAt) {
+    return jsonResponse({ error: 'At least one of status, title, slug, description, categoryId, scheduledPublishAt, or publishedAt must be provided' }, 400, corsHeaders)
   }
   if (hasTitle && (typeof body.title !== 'string' || body.title.trim().length === 0)) {
     return jsonResponse({ error: 'title must not be empty' }, 400, corsHeaders)
@@ -1543,23 +1574,45 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   if (hasStatus && !allowedStatuses.includes(body.status)) {
     return jsonResponse({ error: 'status must be one of: draft, published, archived' }, 400, corsHeaders)
   }
-  if (hasSlug && body.slug !== null && (typeof body.slug !== 'string' || !isValidSlug(body.slug))) {
+  const normalizedSlug = hasSlug && body.slug !== null
+    ? (typeof body.slug === 'string' ? sanitizeSlug(body.slug) : null)
+    : null
+  if (hasSlug && body.slug !== null && !normalizedSlug) {
     return jsonResponse({ error: 'slug must be lowercase alphanumeric words separated by hyphens (e.g. my-video-title), or null to clear it' }, 400, corsHeaders)
   }
-  const scheduledPublishAt = normalizeScheduledPublishAt(body.scheduledPublishAt, { allowNull: true })
-  if (hasScheduledPublishAt && scheduledPublishAt.invalid) {
-    return jsonResponse({ error: 'scheduledPublishAt must be a valid ISO timestamp in the future, or null to clear schedule' }, 400, corsHeaders)
+  if (normalizedSlug && !isValidSlug(normalizedSlug)) {
+    return jsonResponse({ error: 'slug must be lowercase alphanumeric words separated by hyphens (e.g. my-video-title), or null to clear it' }, 400, corsHeaders)
   }
-  if (hasScheduledPublishAt && hasStatus && body.status === 'published') {
+  const scheduledPublishAt = normalizeScheduledPublishAt(body.scheduledPublishAt, { allowNull: true, allowPast: body.status === 'published' })
+  if (hasScheduledPublishAt && scheduledPublishAt.invalid) {
+    return jsonResponse({ error: 'scheduledPublishAt must be a valid ISO timestamp, or null to clear schedule' }, 400, corsHeaders)
+  }
+  const publishedAt = normalizePublishedAt(body.publishedAt, { allowNull: true })
+  if (hasPublishedAt && publishedAt.invalid) {
+    return jsonResponse({ error: 'publishedAt must be a valid ISO timestamp, or null to clear it' }, 400, corsHeaders)
+  }
+  if (hasScheduledPublishAt && body.scheduledPublishAt !== null && hasStatus && body.status === 'published') {
     return jsonResponse({
       error: 'Conflicting payload: scheduledPublishAt cannot be provided when status is published',
       code: 'invalid_payload',
     }, 400, corsHeaders)
   }
+  if (hasScheduledPublishAt && body.scheduledPublishAt !== null && hasPublishedAt && body.publishedAt !== null) {
+    return jsonResponse({
+      error: 'Conflicting payload: scheduledPublishAt cannot be combined with publishedAt',
+      code: 'invalid_payload',
+    }, 400, corsHeaders)
+  }
 
   const db = getDatabaseBinding(env)
-  const videoExists = await db.prepare('SELECT 1 FROM videos WHERE id = ?').bind(videoId).first()
+  const videoExists = await db.prepare('SELECT publish_status FROM videos WHERE id = ?').bind(videoId).first()
   if (!videoExists) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+  if (hasPublishedAt && body.publishedAt !== null) {
+    const nextPublished = hasStatus ? body.status === 'published' : videoExists.publish_status === 'published'
+    if (!nextPublished) {
+      return jsonResponse({ error: 'publishedAt can only be set for published videos' }, 400, corsHeaders)
+    }
+  }
   const livestreamRow = await db.prepare('SELECT video_id FROM livestreams WHERE video_id = ? LIMIT 1').bind(videoId).first()
   const isLivestreamVideo = Boolean(livestreamRow)
 
@@ -1591,10 +1644,10 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
 
   // Guard: reject a slug that equals another video's id — resolveVideoByIdOrSlug
   // resolves by id before slug, so the slug would become permanently shadowed.
-  if (hasSlug && body.slug !== null) {
+  if (hasSlug && normalizedSlug) {
     const idCollision = await db.prepare(
       'SELECT 1 FROM videos WHERE id = ? AND id != ? LIMIT 1'
-    ).bind(body.slug, videoId).first()
+    ).bind(normalizedSlug, videoId).first()
     if (idCollision) {
       return jsonResponse({ error: 'Slug conflicts with an existing video ID' }, 409, corsHeaders)
     }
@@ -1607,13 +1660,13 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
       try {
         if (hasTitle && hasSlug) {
           await db.prepare(`UPDATE videos SET title = ?, slug = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-            .bind(body.title.trim(), body.slug ?? null, videoId).run()
+            .bind(body.title.trim(), normalizedSlug ?? null, videoId).run()
         } else if (hasTitle) {
           await db.prepare(`UPDATE videos SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
             .bind(body.title.trim(), videoId).run()
         } else {
           await db.prepare(`UPDATE videos SET slug = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-            .bind(body.slug ?? null, videoId).run()
+            .bind(normalizedSlug ?? null, videoId).run()
         }
       } catch (err) {
         if (getErrorMessage(err).includes('UNIQUE')) {
@@ -1657,6 +1710,14 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
           WHERE id = ?
         `).bind(videoId).run()
       }
+    }
+    if (hasPublishedAt) {
+      await db.prepare(`
+        UPDATE videos
+        SET published_at = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(publishedAt.value, videoId).run()
     }
 
     let transitionedToPublished = false
@@ -2549,6 +2610,16 @@ function isValidSlug(slug: any) {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug);
 }
 
+function sanitizeSlug(raw: any) {
+  if (typeof raw !== 'string') return ''
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .trim()
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
 const HOMEPAGE_LAYOUT_VARIANTS = new Set(['three_by_one', 'side_mini'])
 
 function normalizeHomepageLayoutVariant(raw: any) {
@@ -2556,7 +2627,7 @@ function normalizeHomepageLayoutVariant(raw: any) {
   return HOMEPAGE_LAYOUT_VARIANTS.has(value) ? value : 'three_by_one'
 }
 
-function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boolean } = {}) {
+function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boolean, allowPast?: boolean } = {}) {
   if (raw == null || raw === '') {
     return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
   }
@@ -2571,8 +2642,33 @@ function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boolean } 
   const t = Date.parse(text)
   if (!Number.isFinite(t)) return { value: null, invalid: true }
 
-  // Allow timestamps within 60s grace window (treat as immediate publish)
-  if (t + 60_000 <= Date.now()) return { value: null, invalid: true }
+  // For scheduling we enforce future timestamps (with 60s grace). For backdating
+  // published videos, allow past timestamps explicitly.
+  if (!options.allowPast && t + 60_000 <= Date.now()) return { value: null, invalid: true }
+
+  const d = new Date(t)
+  const yyyy = d.getUTCFullYear()
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const dd = String(d.getUTCDate()).padStart(2, '0')
+  const hh = String(d.getUTCHours()).padStart(2, '0')
+  const mi = String(d.getUTCMinutes()).padStart(2, '0')
+  const ss = String(d.getUTCSeconds()).padStart(2, '0')
+  return { value: `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`, invalid: false }
+}
+
+function normalizePublishedAt(raw: any, options: { allowNull?: boolean } = {}) {
+  if (raw == null || raw === '') {
+    return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
+  }
+  if (typeof raw !== 'string') return { value: null, invalid: true }
+  const text = raw.trim()
+  if (!text) return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
+
+  const hasTimezone = /[Zz]$|[+-]\d{2}:\d{2}$/.test(text)
+  if (!hasTimezone) return { value: null, invalid: true }
+
+  const t = Date.parse(text)
+  if (!Number.isFinite(t)) return { value: null, invalid: true }
 
   const d = new Date(t)
   const yyyy = d.getUTCFullYear()
@@ -2649,20 +2745,46 @@ function normalizeHomepageConfig(config: any) {
   return {
     ...normalizeHomepagePlacementConfig(config),
     layoutBlocks: Array.isArray(config?.layoutBlocks)
-      ? config.layoutBlocks.filter((b: any) => b && typeof b === 'object').map((b: any) => ({
-      id:    typeof b.id    === 'string' ? b.id    : crypto.randomUUID(),
-      type:  normalizeLayoutBlockType(b.type),
-      title: typeof b.title === 'string' ? b.title : '',
-      body:  typeof b.body  === 'string' ? b.body  : ''
-    }))
+      ? config.layoutBlocks
+        .filter((b: any) => b && typeof b === 'object')
+        .map((b: any) => {
+          const type = normalizeLayoutBlockType(b.type)
+          const normalized: any = {
+            id: typeof b.id === 'string' ? b.id : crypto.randomUUID(),
+            type,
+            title: typeof b.title === 'string' ? b.title : '',
+            body: typeof b.body === 'string' ? b.body : '',
+          }
+          if (type === 'category') {
+            normalized.categoryId = typeof b.categoryId === 'string' ? b.categoryId : null
+          }
+          if (type === 'split_horizontal' || type === 'split_vertical') {
+            const children = Array.isArray(b.childBlocks) ? b.childBlocks : []
+            normalized.childBlocks = children
+              .filter((child: any) => child && typeof child === 'object')
+              .slice(0, 2)
+              .map((child: any) => ({
+                type: normalizeHomepageChildBlockType(child.type),
+                title: typeof child.title === 'string' ? child.title : '',
+                body: typeof child.body === 'string' ? child.body : '',
+                categoryId: typeof child.categoryId === 'string' ? child.categoryId : null,
+              }))
+          }
+          return normalized
+        })
       : [],
   };
 }
 
 function normalizeLayoutBlockType(type: any) {
   if (type === 'featured') return 'featured_row'
-  const allowedTypes = new Set(['hero', 'featured_row', 'cta', 'text_split', 'video_grid', 'video_grid_legacy'])
-  return allowedTypes.has(type) ? type : 'hero'
+  const allowedTypes = new Set(['featured_row', 'category', 'top_video', 'split_horizontal', 'split_vertical'])
+  return allowedTypes.has(type) ? type : 'top_video'
+}
+
+function normalizeHomepageChildBlockType(type: any) {
+  const allowedTypes = new Set(['featured_row', 'category', 'top_video'])
+  return allowedTypes.has(type) ? type : 'top_video'
 }
 
 async function canLoadEntrypoint(url: any) {

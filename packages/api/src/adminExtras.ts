@@ -55,9 +55,7 @@ export async function handleHomepageContent(request: any, env: any, corsHeaders:
     await ensureAdminSettingsTable(db)
 
     if (request.method === 'GET') {
-      const [title, subtitle, homepageRow, categoryRows] = await Promise.all([
-        getSetting(env, 'homepage_hero_title'),
-        getSetting(env, 'homepage_hero_subtitle'),
+      const [homepageRow, categoryRows] = await Promise.all([
         db.prepare('SELECT value FROM admin_settings WHERE key = ? LIMIT 1').bind('homepage').first(),
         db.prepare(`
           SELECT id, slug, name, sort_order, direction, COUNT(vca.video_id) AS video_count
@@ -73,8 +71,6 @@ export async function handleHomepageContent(request: any, env: any, corsHeaders:
       ])
       const homepageConfig = normalizeHomepageConfigForResponse(safeJsonParse(homepageRow?.value, null))
       return jsonResponse({
-        title: title ?? 'Discover Premium Video Content',
-        subtitle: subtitle ?? 'Watch free previews or unlock full access with a premium subscription',
         homepageConfig,
         categories: (categoryRows?.results ?? []).map((row: any) => ({
           ...row,
@@ -89,22 +85,13 @@ export async function handleHomepageContent(request: any, env: any, corsHeaders:
     }
     if (request.method !== 'PATCH') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
     const body = await request.json().catch(() => null)
-    const title = typeof body?.title === 'string' ? body.title.trim() : ''
-    const subtitle = typeof body?.subtitle === 'string' ? body.subtitle.trim() : ''
-    const hasHeroUpdate = Boolean(title && subtitle)
     const configUpdate = normalizeHomepageConfigForPatch(body?.homepageConfig)
     const categoryOrderUpdates = normalizeCategoryOrderUpdates(body?.categoryOrder)
-    if (!hasHeroUpdate && !configUpdate && !categoryOrderUpdates.length) {
-      return jsonResponse({ error: 'Provide title/subtitle, homepageConfig, or categoryOrder updates.' }, 400, corsHeaders)
+    if (!configUpdate && !categoryOrderUpdates.length) {
+      return jsonResponse({ error: 'Provide homepageConfig and/or categoryOrder updates.' }, 400, corsHeaders)
     }
 
     const writes = []
-    if (hasHeroUpdate) {
-      writes.push(
-        ['homepage_hero_title', title],
-        ['homepage_hero_subtitle', subtitle],
-      )
-    }
     if (configUpdate) {
       writes.push(['homepage', JSON.stringify(configUpdate)])
     }
@@ -144,7 +131,6 @@ export async function handleHomepageContent(request: any, env: any, corsHeaders:
     return jsonResponse({
       ok: true,
       updated: {
-        hero: hasHeroUpdate,
         homepageConfig: Boolean(configUpdate),
         categoryOrder: categoryOrderUpdates.length,
       },
@@ -163,12 +149,32 @@ function normalizeHomepageConfigForResponse(config: any) {
   const featuredMode = input.featuredMode === 'specific' ? 'specific' : 'latest'
   const featuredVideoId = typeof input.featuredVideoId === 'string' ? input.featuredVideoId : null
   const layoutBlocks = Array.isArray(input.layoutBlocks)
-    ? input.layoutBlocks.filter((block: any) => block && typeof block === 'object').map((block: any) => ({
-      id: typeof block.id === 'string' ? block.id : crypto.randomUUID(),
-      type: normalizeLayoutBlockType(block.type),
-      title: typeof block.title === 'string' ? block.title : '',
-      body: typeof block.body === 'string' ? block.body : '',
-    }))
+    ? input.layoutBlocks.filter((block: any) => block && typeof block === 'object').map((block: any) => {
+      const type = normalizeLayoutBlockType(block.type)
+      const normalized = {
+        id: typeof block.id === 'string' ? block.id : crypto.randomUUID(),
+        type,
+        title: typeof block.title === 'string' ? block.title : '',
+        body: typeof block.body === 'string' ? block.body : '',
+      } as Record<string, any>
+      if (type === 'category') {
+        normalized.categoryId = typeof block.categoryId === 'string' ? block.categoryId : null
+      }
+      if (type === 'split_horizontal' || type === 'split_vertical') {
+        const children = Array.isArray(block.childBlocks) ? block.childBlocks : []
+        normalized.childBlocks = children
+          .filter((child: any) => child && typeof child === 'object')
+          .map((child: any) => ({
+            id: typeof child.id === 'string' ? child.id : crypto.randomUUID(),
+            type: normalizeHomepageChildBlockType(child.type),
+            title: typeof child.title === 'string' ? child.title : '',
+            body: typeof child.body === 'string' ? child.body : '',
+            categoryId: typeof child.categoryId === 'string' ? child.categoryId : null,
+          }))
+          .slice(0, 2)
+      }
+      return normalized
+    })
     : []
   return {
     featuredVideoIds,
@@ -185,8 +191,17 @@ function normalizeHomepageConfigForPatch(raw: any) {
 
 function normalizeLayoutBlockType(type: any) {
   if (type === 'featured') return 'featured_row'
-  const allowedTypes = new Set(['hero', 'featured_row', 'cta', 'text_split', 'video_grid', 'video_grid_legacy'])
-  return allowedTypes.has(type) ? type : 'hero'
+  if (type === 'hero') return 'featured_row'
+  if (type === 'video_grid') return 'category'
+  if (type === 'text_split') return 'split_horizontal'
+  if (type === 'cta') return 'top_video'
+  const allowedTypes = new Set(['featured_row', 'category', 'top_video', 'split_horizontal', 'split_vertical'])
+  return allowedTypes.has(type) ? type : 'top_video'
+}
+
+function normalizeHomepageChildBlockType(type: any) {
+  const allowedTypes = new Set(['featured_row', 'category', 'top_video'])
+  return allowedTypes.has(type) ? type : 'top_video'
 }
 
 function normalizeCategoryOrderUpdates(raw: any) {
@@ -205,6 +220,22 @@ function normalizeCategoryOrderUpdates(raw: any) {
 function safeJsonParse(v: any, fallback: any) {
   if (!v) return fallback
   try { return JSON.parse(v) } catch { return fallback }
+}
+
+export async function handleHomepageContentPublic(request: any, env: any, corsHeaders: any) {
+  if (request.method !== 'GET') {
+    return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
+  }
+  try {
+    const db = getDb(env)
+    await ensureAdminSettingsTable(db)
+    const homepageRow = await db.prepare('SELECT value FROM admin_settings WHERE key = ? LIMIT 1').bind('homepage').first()
+    const homepageConfig = normalizeHomepageConfigForResponse(safeJsonParse(homepageRow?.value, null))
+    return jsonResponse({ homepageConfig }, 200, corsHeaders)
+  } catch (error) {
+    console.error('handleHomepageContentPublic:', error)
+    return jsonResponse({ error: 'Internal server error', code: 'internal_error' }, 500, corsHeaders)
+  }
 }
 
 export async function handlePillsPublic(request: any, env: any, corsHeaders: any) {

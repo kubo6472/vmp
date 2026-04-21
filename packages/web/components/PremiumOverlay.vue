@@ -67,6 +67,38 @@
       <p v-if="checkoutError" class="text-red-400 text-sm mb-3">
         {{ checkoutError }}
       </p>
+      <div class="mb-3 text-left">
+        <label class="text-xs uppercase tracking-wide text-gray-500 block mb-1">Promo code</label>
+        <div class="flex items-center gap-2">
+          <input
+            v-model="promoCodeInput"
+            type="text"
+            autocomplete="off"
+            placeholder="e.g. STUDENT2026"
+            class="flex-1 px-3 py-2 rounded-lg border border-gray-700 bg-gray-800 text-sm text-white placeholder-gray-500"
+          >
+          <button
+            type="button"
+            class="px-3 py-2 text-sm font-medium rounded-lg bg-gray-700 hover:bg-gray-600 text-white disabled:opacity-50"
+            :disabled="promoValidating || !promoCodeInput.trim()"
+            @click="validatePromoCode"
+          >
+            {{ promoValidating ? 'Checking…' : 'Apply' }}
+          </button>
+          <button
+            v-if="promoApplied"
+            type="button"
+            class="px-3 py-2 text-sm font-medium rounded-lg bg-gray-700 hover:bg-gray-600 text-white"
+            @click="clearPromoCode"
+          >
+            Clear
+          </button>
+        </div>
+        <p v-if="promoError" class="text-xs text-red-400 mt-1">{{ promoError }}</p>
+        <p v-else-if="promoApplied" class="text-xs text-emerald-400 mt-1">
+          Promo applied: {{ promoApplied.code }} · {{ promoApplied.rewardType.replace('_', ' ') }}
+        </p>
+      </div>
 
       <div class="space-y-2">
         <button
@@ -122,6 +154,10 @@ const availableProviders = ref<PaymentProvider[]>(['stripe'])
 const selectedProvider = ref<PaymentProvider>('stripe')
 const checkingOut = ref(false)
 const checkoutError = ref<string | null>(null)
+const promoCodeInput = ref('')
+const promoValidating = ref(false)
+const promoError = ref<string | null>(null)
+const promoApplied = ref<null | { code: string; rewardType: string }>(null)
 
 function formatPrice(amount: number | null | undefined): string {
   if (amount == null || !Number.isFinite(amount)) return '…'
@@ -230,12 +266,13 @@ async function handleSubscribe(provider?: PaymentProvider) {
   selectedProvider.value = selected
   checkingOut.value = true
   checkoutError.value = null
+  const promoCode = promoApplied.value?.code || ''
   try {
     const res = await fetch(`${apiUrl}/api/payments/checkout`, {
       method:      'POST',
       credentials: 'include',
       headers:     { 'Content-Type': 'application/json', ...authHeader() },
-      body:        JSON.stringify({ planType: selectedPlan.value, provider: selected }),
+      body:        JSON.stringify({ planType: selectedPlan.value, provider: selected, promoCode }),
     })
     const data = await res.json()
     if (!res.ok || !data.checkoutUrl) {
@@ -248,6 +285,48 @@ async function handleSubscribe(provider?: PaymentProvider) {
   } finally {
     checkingOut.value = false
   }
+}
+
+async function validatePromoCode() {
+  promoError.value = null
+  promoApplied.value = null
+  const code = promoCodeInput.value.trim().toUpperCase()
+  promoCodeInput.value = code
+  if (!code) return
+
+  if (!isLoggedIn.value) {
+    promoError.value = 'Please sign in to validate promo codes.'
+    return
+  }
+
+  promoValidating.value = true
+  try {
+    const res = await fetch(`${apiUrl}/api/account/promotions/validate`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ promoCode: code, planType: selectedPlan.value }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data?.valid) {
+      promoError.value = data?.error || 'Promo code is not valid.'
+      return
+    }
+    promoApplied.value = {
+      code: String(data?.promo?.code || code),
+      rewardType: String(data?.promo?.rewardType || 'free_month'),
+    }
+  } catch {
+    promoError.value = 'Network error while validating promo code.'
+  } finally {
+    promoValidating.value = false
+  }
+}
+
+function clearPromoCode() {
+  promoCodeInput.value = ''
+  promoApplied.value = null
+  promoError.value = null
 }
 
 function applyCheckoutIntentFromRoute() {
@@ -265,9 +344,25 @@ function applyCheckoutIntentFromRoute() {
 watch(() => props.show, (visible) => {
   if (visible) {
     applyCheckoutIntentFromRoute()
+    clearPromoCode()
     loadPrices()
   }
 }, { immediate: true })
+
+watch(selectedPlan, () => {
+  // Plan changes can invalidate a previously-applied code.
+  promoApplied.value = null
+  promoError.value = null
+})
+
+watch(promoCodeInput, (newInput) => {
+  const trimmed = newInput.trim()
+  const appliedCode = promoApplied.value?.code ?? ''
+  if (trimmed !== appliedCode) {
+    promoApplied.value = null
+    promoError.value = null
+  }
+})
 
 watch(() => route.fullPath, () => {
   if (props.show) applyCheckoutIntentFromRoute()

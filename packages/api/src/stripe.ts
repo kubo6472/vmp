@@ -9,6 +9,10 @@ import {
   removeSubscriberFromNewsletter,
   syncNewsletterForStripeSubscription,
 } from './brevo.js'
+import {
+  applyPromoRedemption,
+  resolvePromoCodeForCheckout,
+} from './promotions.js'
 import { normalizeStripeStatus, stripeGet, stripePost, verifyStripeWebhook } from './stripeClient.js'
 export { normalizeStripeStatus } from './stripeClient.js'
 import {
@@ -330,7 +334,7 @@ export async function handleAdminPaymentSettings(request: any, env: any, corsHea
     return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
   }
 
-  const body = await request.json().catch(() => null)
+    const body = await request.json().catch(() => null)
   if (!body || typeof body !== 'object') {
     return jsonResponse({ error: 'Request body is required' }, 400, corsHeaders)
   }
@@ -407,6 +411,17 @@ export async function handleCheckout(request: any, env: any, corsHeaders: any) {
       ? selectedProvider
       : defaultProvider
 
+    const promoResolution = provider === 'stripe'
+      ? await resolvePromoCodeForCheckout(env, body?.promoCode, planType)
+      : { ok: false, reason: 'empty' }
+    const promoMeta = promoResolution.ok ? promoResolution.checkoutMeta : null
+    if (!promoResolution.ok && promoResolution.reason !== 'empty') {
+      return jsonResponse({
+        error: promoResolution.error ?? 'Promo code is not valid',
+        code: promoResolution.reason ?? 'invalid_promo',
+      }, promoResolution.status ?? 400, corsHeaders)
+    }
+
     if (!configuredProviders.includes(provider)) {
       return jsonResponse({
         error: 'Requested payment provider is not enabled.',
@@ -444,14 +459,25 @@ export async function handleCheckout(request: any, env: any, corsHeaders: any) {
         }, 503, corsHeaders)
       }
 
-      const session = await stripePost('/checkout/sessions', {
+      const sessionPayload: any = {
         mode: 'subscription',
         line_items: [{ price: priceId, quantity: 1 }],
         customer_email: user.email,
-        metadata: { userId: user.sub, provider: 'stripe', planType },
+        metadata: {
+          userId: user.sub,
+          provider: 'stripe',
+          planType,
+          promoCodeId: promoMeta?.promoCodeId ?? '',
+          promoCode: promoMeta?.promoCode ?? '',
+          promoRewardType: promoMeta?.rewardType ?? '',
+        },
         success_url: `${frontendUrl}/account?subscribed=1`,
         cancel_url: frontendUrl,
-      }, env)
+      }
+      if (promoMeta?.stripeCouponId) {
+        sessionPayload.discounts = [{ coupon: promoMeta.stripeCouponId }]
+      }
+      const session = await stripePost('/checkout/sessions', sessionPayload, env)
 
       if (session.error || !session.url) {
         console.error('Stripe checkout session error:', session.error)
@@ -461,14 +487,24 @@ export async function handleCheckout(request: any, env: any, corsHeaders: any) {
       return jsonResponse({ checkoutUrl: session.url, provider }, 200, corsHeaders)
     }
 
+    const promoCodeInput = typeof body?.promoCode === 'string' ? body.promoCode.trim() : ''
+    let promoCodeId: string | null = null
+    if (promoCodeInput) {
+      const promoValidation = await resolvePromoCodeForCheckout(env, promoCodeInput, planType)
+      if (!promoValidation.ok) {
+        return jsonResponse({ error: promoValidation.error, code: promoValidation.code }, promoValidation.status ?? 400, corsHeaders)
+      }
+      promoCodeId = promoValidation.checkoutMeta?.promoCodeId ?? null
+    }
+
     const checkoutToken = crypto.randomUUID()
     const sessionToken = crypto.randomUUID().replaceAll('-', '')
     const checkoutSessionId = crypto.randomUUID()
     await db.prepare(`
       INSERT INTO payment_checkout_sessions
-        (id, user_id, provider, plan_type, checkout_token, session_token, status, updated_at)
-      VALUES (?, ?, 'gocardless', ?, ?, ?, 'pending', CURRENT_TIMESTAMP)
-    `).bind(checkoutSessionId, user.sub, planType, checkoutToken, sessionToken).run()
+        (id, user_id, provider, plan_type, checkout_token, session_token, status, promo_code_id, updated_at)
+      VALUES (?, ?, 'gocardless', ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP)
+    `).bind(checkoutSessionId, user.sub, planType, checkoutToken, sessionToken, promoCodeId).run()
 
     const flowResponse = await gocardlessPost('/redirect_flows', {
       redirect_flows: {
@@ -544,6 +580,19 @@ export async function handleWebhook(request: any, env: any, corsHeaders: any) {
         const stripeSub = await stripeGet(`/subscriptions/${session.subscription}`, env)
         if (stripeSub.id) {
           await upsertStripeSubscription(db, userId, stripeSub, env)
+          const promoCodeId = typeof session?.metadata?.promoCodeId === 'string' ? session.metadata.promoCodeId.trim() : ''
+          if (promoCodeId) {
+            await applyPromoRedemption(env, {
+              promoCodeId,
+              userId,
+              provider: 'stripe',
+              planType: String(session?.metadata?.planType || 'monthly'),
+              providerSubscriptionId: stripeSub.id ?? null,
+              grantedUntil: stripeSub.current_period_end
+                ? new Date(stripeSub.current_period_end * 1000).toISOString()
+                : null,
+            })
+          }
           try {
             await syncNewsletterForStripeSubscription(db, userId, stripeSub.status, env)
           } catch (brevoErr) {
@@ -754,7 +803,7 @@ export async function handleGoCardlessComplete(request: any, env: any, corsHeade
   try {
     const db = getDb(env)
     const checkoutSession = await db.prepare(`
-      SELECT id, user_id, plan_type, session_token, provider_checkout_id, status
+      SELECT id, user_id, plan_type, session_token, provider_checkout_id, status, promo_code_id
       FROM payment_checkout_sessions
       WHERE provider = 'gocardless'
         AND user_id = ?
@@ -842,6 +891,16 @@ export async function handleGoCardlessComplete(request: any, env: any, corsHeade
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).bind(gocardlessSub.id, checkoutSession.id).run()
+    if (checkoutSession.promo_code_id) {
+      await applyPromoRedemption(env, {
+        promoCodeId: String(checkoutSession.promo_code_id),
+        userId: user.sub,
+        provider: 'gocardless',
+        planType,
+        providerSubscriptionId: gocardlessSub.id,
+        grantedUntil: currentPeriodEnd,
+      })
+    }
 
     return jsonResponse({
       ok: true,

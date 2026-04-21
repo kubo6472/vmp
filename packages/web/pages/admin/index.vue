@@ -58,13 +58,18 @@
       </div>
 
       <section class="space-y-8">
-        <div v-if="activeAdminTab === 'homepage'" id="homepage-panel" role="tabpanel" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
+        <div
+          v-if="activeAdminTab === 'homepage' && homepagePreviewModel.hasFeaturedRowBlock"
+          id="homepage-panel"
+          role="tabpanel"
+          class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800"
+        >
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-xl font-bold text-gray-900 dark:text-white">Featured videos</h2>
             <p class="text-sm text-gray-600 dark:text-gray-400">Click a slot to replace</p>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <button
               v-for="(video, slotIndex) in featuredVideos"
               :key="`featured-${slotIndex}-${video?.id ?? 'empty'}`"
@@ -84,7 +89,7 @@
         <div v-if="activeAdminTab === 'homepage'" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-xl font-bold text-gray-900 dark:text-white">Homepage blocks</h2>
-            <button class="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg" @click="addBlock('hero')">
+            <button class="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg" @click="addBlock('top_video')">
               <span class="text-lg leading-none">+</span>
               Add block
             </button>
@@ -110,15 +115,42 @@
               <div class="grid gap-3">
                 <input v-model="block.title" type="text" placeholder="Block title" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-gray-400" />
                 <textarea v-model="block.body" rows="3" placeholder="Block copy" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-gray-400"></textarea>
+                <select
+                  v-if="block.type === 'category'"
+                  v-model="block.categoryId"
+                  class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
+                >
+                  <option value="">Select category</option>
+                  <option v-for="cat in categories" :key="`block-cat-${block.id}-${cat.id}`" :value="cat.id">{{ cat.name }}</option>
+                </select>
+                <div
+                  v-if="(block.type === 'split_horizontal' || block.type === 'split_vertical') && block.childBlocks"
+                  class="grid gap-3 rounded-md border border-dashed border-gray-300 dark:border-gray-700 p-3"
+                >
+                  <div
+                    v-for="(child, childIndex) in block.childBlocks"
+                    :key="`${block.id}-child-${childIndex}`"
+                    class="grid gap-2 rounded border border-gray-200 dark:border-gray-700 p-2 bg-white dark:bg-gray-900"
+                  >
+                    <div class="text-xs font-semibold text-gray-600 dark:text-gray-400">Child block {{ childIndex + 1 }}</div>
+                    <select v-model="child.type" class="px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white">
+                      <option v-for="componentType in leafComponentTypes" :key="`${block.id}-child-type-${componentType}`" :value="componentType">{{ componentType }}</option>
+                    </select>
+                    <input v-model="child.title" type="text" placeholder="Child block title" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-gray-400" />
+                    <textarea v-model="child.body" rows="2" placeholder="Child block copy" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-gray-400"></textarea>
+                    <select
+                      v-if="child.type === 'category'"
+                      v-model="child.categoryId"
+                      class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white"
+                    >
+                      <option value="">Select category</option>
+                      <option v-for="cat in categories" :key="`block-child-cat-${block.id}-${childIndex}-${cat.id}`" :value="cat.id">{{ cat.name }}</option>
+                    </select>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-
-        <div v-if="activeAdminTab === 'homepage'" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-3">
-          <h2 class="text-xl font-bold text-gray-900 dark:text-white">Homepage hero copy</h2>
-          <input v-model="homepageHeroTitle" type="text" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
-          <textarea v-model="homepageHeroSubtitle" rows="2" class="w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"></textarea>
         </div>
 
         <div v-if="activeAdminTab === 'homepage'" class="p-6 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 space-y-6">
@@ -127,67 +159,71 @@
             <p class="text-xs text-gray-500 dark:text-gray-400">Matches public rendering. Save applies changes.</p>
           </div>
           <div class="rounded-xl border border-gray-200 dark:border-gray-800 p-5 space-y-8 bg-gray-50/50 dark:bg-gray-950/50">
-            <div>
-              <h3 class="text-3xl font-bold text-gray-900 dark:text-white mb-3">{{ homepageHeroTitle || 'Discover Premium Video Content' }}</h3>
-              <p class="text-gray-600 dark:text-gray-400">{{ homepageHeroSubtitle || 'Watch free previews or unlock full access with a premium subscription' }}</p>
-              <div v-if="adminPills.length" class="mt-4 flex flex-wrap gap-2">
-                <div
-                  v-for="pill in adminPills"
-                  :key="`preview-pill-${pill.id}`"
-                  class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold text-white"
-                  :style="{ backgroundColor: pill.color || '#2563eb' }"
-                >
-                  <img
-                    v-if="pill.image_url"
-                    :src="pill.image_url"
-                    :alt="`${pill.label} image`"
-                    class="w-5 h-5 rounded-full object-cover border border-white/40"
-                  />
-                  <span>{{ pill.label }}</span>
-                  <span class="rounded-full bg-black/20 px-2 py-0.5">{{ pill.value }}</span>
-                </div>
-              </div>
-            </div>
-
             <section
-              v-for="block in homepagePreviewModel.renderedBlocks"
-              :key="`preview-block-${block.id}`"
+              v-for="block in homepagePreviewModel.blockItems"
+              :key="`preview-block-${block?.id}`"
               class="space-y-3"
             >
-              <div v-if="block.type !== 'hero'">
+              <div>
                 <h3 class="text-xl font-semibold text-gray-900 dark:text-white">{{ block.title || block.type }}</h3>
                 <p v-if="block.body" class="text-sm text-gray-600 dark:text-gray-400">{{ block.body }}</p>
               </div>
 
-              <div v-if="block.type === 'featured_row'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <VideoCard v-for="video in homepagePreviewModel.featuredVideos" :key="`preview-featured-${video.id}`" :video="video" />
+              <div v-if="block.type === 'featured_row'" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <VideoCard v-for="video in block.videos" :key="`preview-featured-${video.id}`" :video="video" />
               </div>
 
-              <div v-else-if="block.type === 'video_grid'" class="space-y-6">
-                <div>
-                  <h4 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Recent videos</h4>
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <VideoCard v-for="video in homepagePreviewModel.recentTwoByTwoVideos" :key="`preview-recent-${video.id}`" :video="video" />
-                  </div>
+              <div v-else-if="block.type === 'top_video'" class="space-y-4">
+                <VideoCard
+                  v-for="video in block.videos"
+                  :key="`preview-top-video-${video.id}`"
+                  :video="video"
+                />
+              </div>
+
+              <div v-else-if="block.type === 'category'" class="space-y-3">
+                <div v-if="block.categorySection" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <VideoCard
+                    v-for="video in block.categorySection.visible"
+                    :key="`preview-category-video-${block.categorySection.category.id}-${video.id}`"
+                    :video="video"
+                  />
                 </div>
-                <div v-for="section in homepagePreviewModel.categorySections" :key="`preview-category-${section.category.id}`" class="space-y-2">
-                  <button
-                    type="button"
-                    class="text-left text-lg font-semibold text-blue-600 dark:text-blue-400 hover:underline"
-                    @click="focusCategoryFromPreview(section.category.id)"
-                  >
-                    {{ section.category.name }} · {{ section.category.priority_bucket === 'p0' ? 'P0' : 'Standard' }}
-                  </button>
-                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <p v-else class="text-xs text-gray-500 dark:text-gray-400">No category selected or no videos available.</p>
+              </div>
+
+              <div v-else-if="block.type === 'split_horizontal' || block.type === 'split_vertical'" class="grid gap-4" :class="block.type === 'split_horizontal' ? 'md:grid-cols-2' : 'grid-cols-1'">
+                <section
+                  v-for="child in block.children"
+                  :key="`preview-split-child-${child.id}`"
+                  class="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-3"
+                >
+                  <h4 class="font-semibold text-gray-900 dark:text-white">{{ child.title || child.type }}</h4>
+                  <p v-if="child.body" class="text-sm text-gray-600 dark:text-gray-400">{{ child.body }}</p>
+                  <div v-if="child.type === 'featured_row'" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <VideoCard
-                      v-for="video in section.allVideos.slice(0, 3)"
-                      :key="`preview-category-video-${section.category.id}-${video.id}`"
+                      v-for="video in child.videos"
+                      :key="`preview-split-featured-${child.id}-${video.id}`"
                       :video="video"
                     />
                   </div>
-                  <p v-if="section.overflowCount > 0" class="text-xs text-gray-500 dark:text-gray-400">+{{ section.overflowCount }} overflow videos</p>
-                </div>
+                  <div v-else-if="child.type === 'top_video'" class="space-y-3">
+                    <VideoCard
+                      v-for="video in child.videos"
+                      :key="`preview-split-top-${child.id}-${video.id}`"
+                      :video="video"
+                    />
+                  </div>
+                  <div v-else-if="child.categorySection" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <VideoCard
+                      v-for="video in child.categorySection.visible"
+                      :key="`preview-split-category-video-${child.id}-${video.id}`"
+                      :video="video"
+                    />
+                  </div>
+                </section>
               </div>
+              <p v-else class="text-xs text-gray-500 dark:text-gray-400">No videos assigned to this block.</p>
             </section>
           </div>
         </div>
@@ -480,6 +516,20 @@
                             :disabled="statusUpdating[video.id]"
                             @click="updateVideoStatus(video, 'draft', '')"
                           >Clear schedule</button>
+                        </div>
+                        <div v-if="video.publish_status === 'published'" class="flex flex-wrap items-center gap-2">
+                          <input
+                            :value="parseIsoForInput(video.published_at)"
+                            type="datetime-local"
+                            class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white"
+                            :disabled="statusUpdating[video.id]"
+                            @change="(e) => updateVideoPublishedAt(video, parseLocalDateTimeToIso((e.target as HTMLInputElement).value || ''))"
+                          />
+                          <button
+                            class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50"
+                            :disabled="statusUpdating[video.id]"
+                            @click="updateVideoPublishedAt(video, '')"
+                          >Clear publish date</button>
                         </div>
                         <button
                           v-if="video.publish_status !== 'draft'"
@@ -1347,6 +1397,248 @@
             </div>
 
             <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <h3 class="font-semibold text-gray-900 dark:text-white">Promo campaigns & codes</h3>
+                  <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                    Manage single-use and multi-use promo codes for free month/year or Stripe percentage discounts.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm font-semibold disabled:opacity-50"
+                  :disabled="promotionsLoading"
+                  @click="loadPromotions"
+                >
+                  {{ promotionsLoading ? 'Loading…' : 'Reload promotions' }}
+                </button>
+              </div>
+
+              <div v-if="promotionsMessage" class="rounded-lg border px-3 py-2 text-sm" :class="promotionsMessageClass">
+                {{ promotionsMessage }}
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="space-y-2">
+                  <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Create campaign</h4>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Campaign name
+                    <input v-model="promoCampaignForm.name" type="text" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" placeholder="e.g. Acme Corp 2026">
+                  </label>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Description
+                    <textarea v-model="promoCampaignForm.description" rows="2" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" placeholder="Optional notes" />
+                  </label>
+                  <label class="inline-flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
+                    <input v-model="promoCampaignForm.isActive" type="checkbox" class="rounded border-gray-300 dark:border-gray-600">
+                    Active
+                  </label>
+                  <button
+                    type="button"
+                    class="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-50"
+                    :disabled="promotionsSaving || !promoCampaignForm.name.trim()"
+                    @click="createPromoCampaign"
+                  >
+                    {{ promotionsSaving ? 'Saving…' : 'Create campaign' }}
+                  </button>
+                </div>
+
+                <div class="space-y-2">
+                  <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Create promo code(s)</h4>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Campaign
+                    <select v-model="promoCodeForm.campaignId" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                      <option value="">Select campaign…</option>
+                      <option v-for="c in promoCampaigns" :key="c.id" :value="c.id">{{ c.name }}</option>
+                    </select>
+                  </label>
+                  <div class="grid grid-cols-2 gap-2">
+                    <label class="text-xs text-gray-600 dark:text-gray-300 block">Code prefix (optional)
+                      <input v-model="promoCodeForm.code" type="text" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono" placeholder="ACME">
+                    </label>
+                    <label class="text-xs text-gray-600 dark:text-gray-300 block">How many codes
+                      <input v-model.number="promoCodeForm.quantity" type="number" min="1" max="200" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                  </div>
+                  <div class="grid grid-cols-2 gap-2">
+                    <label class="text-xs text-gray-600 dark:text-gray-300 block">Reward type
+                      <select v-model="promoCodeForm.rewardType" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                        <option value="free_month">Free month</option>
+                        <option value="free_year">Free year</option>
+                        <option value="discount_percent">Discount % (Stripe coupon)</option>
+                      </select>
+                    </label>
+                    <label class="text-xs text-gray-600 dark:text-gray-300 block">Max uses per code
+                      <input v-model.number="promoCodeForm.maxUses" type="number" min="1" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                  </div>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Allowed plans
+                    <div class="mt-1 flex flex-wrap gap-3">
+                      <label class="inline-flex items-center gap-2 text-xs"><input v-model="promoCodeForm.allowedPlanTypes" type="checkbox" value="monthly" class="rounded border-gray-300 dark:border-gray-600">Monthly</label>
+                      <label class="inline-flex items-center gap-2 text-xs"><input v-model="promoCodeForm.allowedPlanTypes" type="checkbox" value="yearly" class="rounded border-gray-300 dark:border-gray-600">Yearly</label>
+                      <label class="inline-flex items-center gap-2 text-xs"><input v-model="promoCodeForm.allowedPlanTypes" type="checkbox" value="club" class="rounded border-gray-300 dark:border-gray-600">Club</label>
+                    </div>
+                  </label>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Stripe coupon ID
+                    <span v-if="promoCodeForm.rewardType === 'discount_percent'" class="text-red-500 dark:text-red-400">*</span>
+                    <input
+                      v-model="promoCodeForm.stripeCouponId"
+                      type="text"
+                      :required="promoCodeForm.rewardType === 'discount_percent'"
+                      class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-xs"
+                      :class="{ 'border-red-500 dark:border-red-400': promoCodeForm.rewardType === 'discount_percent' && !promoCodeForm.stripeCouponId.trim() }"
+                      placeholder="coupon_..."
+                    >
+                  </label>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Expires at (optional)
+                    <input v-model="promoCodeForm.expiresAt" type="datetime-local" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                  </label>
+                  <button
+                    type="button"
+                    class="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-50"
+                    :disabled="promotionsSaving || !promoCodeForm.campaignId || (promoCodeForm.rewardType === 'discount_percent' && !promoCodeForm.stripeCouponId.trim())"
+                    @click="createPromoCodes"
+                  >
+                    {{ promotionsSaving ? 'Saving…' : 'Create code(s)' }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-100 dark:border-gray-800 p-3">
+                <h4 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">Existing promo codes</h4>
+                <p v-if="!promoCodes.length" class="text-sm text-gray-500 dark:text-gray-400">No promo codes yet.</p>
+                <div v-else class="overflow-x-auto">
+                  <table class="min-w-full text-sm">
+                    <thead class="text-left text-gray-500 dark:text-gray-400">
+                      <tr>
+                        <th class="py-1 pr-3">Code</th>
+                        <th class="py-1 pr-3">Campaign</th>
+                        <th class="py-1 pr-3">Reward</th>
+                        <th class="py-1 pr-3">Usage</th>
+                        <th class="py-1 pr-3">Plans</th>
+                        <th class="py-1 pr-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="code in promoCodes" :key="code.id" class="border-t border-gray-100 dark:border-gray-800">
+                        <td class="py-2 pr-3 font-mono text-xs text-gray-900 dark:text-gray-100">{{ code.code }}</td>
+                        <td class="py-2 pr-3 text-gray-800 dark:text-gray-200">{{ code.campaign_name || '—' }}</td>
+                        <td class="py-2 pr-3 text-gray-800 dark:text-gray-200">{{ code.reward_type }}</td>
+                        <td class="py-2 pr-3 text-gray-800 dark:text-gray-200">{{ code.used_count }} / {{ code.max_uses }}</td>
+                        <td class="py-2 pr-3 text-gray-800 dark:text-gray-200">{{ code.allowed_plan_types }}</td>
+                        <td class="py-2 pr-3 text-gray-800 dark:text-gray-200">{{ code.is_active ? 'Active' : 'Inactive' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <h3 class="font-semibold text-gray-900 dark:text-white">ISIC campaigns</h3>
+                  <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                    Configure CZ/SK ISIC-based campaigns and API connection placeholders until production keys are available.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm font-semibold disabled:opacity-50"
+                  :disabled="isicLoading"
+                  @click="loadIsicCampaigns"
+                >
+                  {{ isicLoading ? 'Loading…' : 'Reload ISIC' }}
+                </button>
+              </div>
+
+              <div v-if="isicMessage" class="rounded-lg border px-3 py-2 text-sm" :class="isicMessageClass">
+                {{ isicMessage }}
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <label class="text-xs text-gray-600 dark:text-gray-300 block">Enable ISIC API
+                  <div class="mt-1">
+                    <input v-model="isicApiConfig.enabled" type="checkbox" class="rounded border-gray-300 dark:border-gray-600">
+                  </div>
+                </label>
+                <label class="text-xs text-gray-600 dark:text-gray-300 block md:col-span-2">API base URL
+                  <input v-model="isicApiConfig.baseUrl" type="url" placeholder="https://alive.example.com/api" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-xs">
+                </label>
+              </div>
+              <label class="text-xs text-gray-600 dark:text-gray-300 block">API key (stored in admin_settings until secrets are available)
+                <input v-model="isicApiConfig.apiKey" type="password" placeholder="Paste key" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-xs">
+              </label>
+              <button
+                type="button"
+                class="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-50"
+                :disabled="isicSaving"
+                @click="saveIsicApiConfig"
+              >
+                {{ isicSaving ? 'Saving…' : 'Save ISIC API config' }}
+              </button>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="space-y-2">
+                  <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Create ISIC campaign</h4>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Name
+                    <input v-model="isicCampaignForm.name" type="text" placeholder="Students 5000 free slots" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                  </label>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Description
+                    <textarea v-model="isicCampaignForm.description" rows="2" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white" />
+                  </label>
+                  <div class="grid grid-cols-2 gap-2">
+                    <label class="text-xs text-gray-600 dark:text-gray-300 block">Free slots limit
+                      <input v-model.number="isicCampaignForm.freeSlotsLimit" type="number" min="0" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                    <label class="text-xs text-gray-600 dark:text-gray-300 block">Discount percent
+                      <input v-model.number="isicCampaignForm.discountPercent" type="number" min="0" max="100" step="0.1" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                  </div>
+                  <div class="grid grid-cols-2 gap-2">
+                    <label class="text-xs text-gray-600 dark:text-gray-300 block">Renewal months
+                      <input v-model.number="isicCampaignForm.renewalMonths" type="number" min="1" max="36" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                    </label>
+                    <label class="text-xs text-gray-600 dark:text-gray-300 block">Popup behavior
+                      <select v-model="isicCampaignForm.popupBehavior" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                        <option value="default">Default</option>
+                        <option value="highlight_campaign">Highlight campaign</option>
+                        <option value="hide_standard">Hide standard plans</option>
+                        <option value="isic_first">ISIC first</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label class="text-xs text-gray-600 dark:text-gray-300 block">Country scope
+                    <input v-model="isicCampaignForm.countryScope" type="text" placeholder="CZ,SK" class="mt-1 w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+                  </label>
+                  <label class="inline-flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
+                    <input v-model="isicCampaignForm.isActive" type="checkbox" class="rounded border-gray-300 dark:border-gray-600">
+                    Active
+                  </label>
+                  <button
+                    type="button"
+                    class="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-50"
+                    :disabled="isicSaving || !isicCampaignForm.name.trim()"
+                    @click="createIsicCampaign"
+                  >
+                    {{ isicSaving ? 'Saving…' : 'Create ISIC campaign' }}
+                  </button>
+                </div>
+
+                <div class="space-y-2">
+                  <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Active ISIC campaigns</h4>
+                  <p v-if="!isicCampaigns.length" class="text-sm text-gray-500 dark:text-gray-400">No ISIC campaigns yet.</p>
+                  <div v-else class="space-y-2">
+                    <div v-for="campaign in isicCampaigns" :key="campaign.id" class="rounded border border-gray-100 dark:border-gray-800 p-3">
+                      <p class="font-medium text-gray-900 dark:text-white">{{ campaign.name }}</p>
+                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Slots: {{ campaign.free_slots_limit }} · Discount: {{ campaign.discount_percent }}% · Renewal: {{ campaign.renewal_months }} months
+                      </p>
+                      <p class="text-xs text-gray-500 dark:text-gray-400">Behavior: {{ campaign.popup_behavior }} · Scope: {{ campaign.country_scope }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-4">
               <div>
                 <h3 class="font-semibold text-gray-900 dark:text-white">Podcast preview (RSS)</h3>
                 <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
@@ -1590,7 +1882,7 @@ import { resolvePlaylistDuration } from '~/composables/useHlsDuration'
 import { sizeUrl } from '~/composables/useThumbnail'
 import { useAdminNewsletterPolling } from '~/composables/useAdminNewsletterPolling'
 import { buildHomepageRenderModel } from '~/composables/useHomepageLayout'
-import type { HomepageLayoutBlock, HomepagePlacementResponse } from '~/composables/useHomepageLayout'
+import type { HomepageLayoutBlock, HomepagePlacementResponse, HomepageRenderLeafBlock, HomepageRenderSplitBlock } from '~/composables/useHomepageLayout'
 
 // ── Route guard ───────────────────────────────────────────────────────────────
 // This single line is the only meaningful addition to this file.
@@ -1648,7 +1940,8 @@ interface AdminUserRow {
   uiSubscription?: string
 }
 
-type BlockType = 'hero' | 'featured_row' | 'cta' | 'text_split' | 'video_grid' | 'video_grid_legacy'
+type BlockType = 'featured_row' | 'category' | 'top_video' | 'split_horizontal' | 'split_vertical'
+type LeafBlockType = 'featured_row' | 'category' | 'top_video'
 type LayoutBlock = HomepageLayoutBlock
 
 type AnalyticsRange = '7d' | '30d' | '90d' | '180d' | '365d'
@@ -1762,7 +2055,8 @@ const livestreamModal = ref({
     publishStatus: 'draft',
   },
 })
-const componentTypes: BlockType[] = ['hero', 'featured_row', 'cta', 'text_split', 'video_grid', 'video_grid_legacy']
+const componentTypes: BlockType[] = ['top_video', 'featured_row', 'category', 'split_horizontal', 'split_vertical']
+const leafComponentTypes: LeafBlockType[] = ['top_video', 'featured_row', 'category']
 const layoutBlocks = ref<LayoutBlock[]>([])
 const homepageBaseline = ref<string>('')
 
@@ -1792,12 +2086,41 @@ const newsletterCampaigns = ref<any[]>([])
 const newsletterTemplateForm = ref({ name: '', subject: '', htmlBody: '' })
 const newsletterEditingTemplateId = ref<string | null>(null)
 const newsletterTemplateSaving = ref(false)
-const homepageHeroTitle = ref('')
-const homepageHeroSubtitle = ref('')
-
 type PaymentProvider = 'stripe' | 'gocardless'
 type PlanType = 'monthly' | 'yearly' | 'club'
 interface PaymentPriceRow { monthly: string; yearly: string; club: string }
+interface PromoCampaign {
+  id: string
+  name: string
+  description?: string | null
+  is_active: number
+  code_count?: number
+  total_redemptions?: number
+}
+interface PromoCodeRow {
+  id: string
+  campaign_id: string
+  campaign_name?: string | null
+  code: string
+  reward_type: string
+  max_uses: number
+  used_count: number
+  is_active: number
+  allowed_plan_types: string
+}
+interface IsicCampaignRow {
+  id: string
+  name: string
+  description?: string | null
+  is_active: number
+  free_slots_limit: number
+  discount_percent: number
+  renewal_months: number
+  popup_behavior: string
+  country_scope: string
+}
+type PromoRewardType = 'free_month' | 'free_year' | 'discount_percent'
+type IsicPopupBehavior = 'default' | 'highlight_campaign' | 'hide_standard' | 'isic_first'
 
 const paymentSettings = ref<{
   enabledProviders: PaymentProvider[]
@@ -1820,6 +2143,48 @@ const paymentSettings = ref<{
 const paymentSettingsSaving = ref(false)
 const paymentSettingsMessage = ref('')
 const paymentSettingsMessageClass = ref('')
+const promotionsLoading = ref(false)
+const promotionsSaving = ref(false)
+const promoCampaigns = ref<PromoCampaign[]>([])
+const promoCodes = ref<PromoCodeRow[]>([])
+const promoCampaignForm = ref({
+  name: '',
+  description: '',
+  isActive: true,
+})
+const promoCodeForm = ref({
+  campaignId: '',
+  code: '',
+  quantity: 1,
+  rewardType: 'free_month',
+  maxUses: 1,
+  allowedPlanTypes: ['monthly', 'yearly', 'club'] as string[],
+  stripeCouponId: '',
+  expiresAt: '',
+})
+const isicLoading = ref(false)
+const isicSaving = ref(false)
+const isicCampaigns = ref<IsicCampaignRow[]>([])
+const isicApiConfig = ref({
+  enabled: false,
+  baseUrl: '',
+  apiKey: '',
+  hasApiKey: false,
+})
+const isicCampaignForm = ref({
+  name: '',
+  description: '',
+  freeSlotsLimit: 5000,
+  discountPercent: 0,
+  renewalMonths: 12,
+  popupBehavior: 'highlight_campaign',
+  countryScope: 'CZ,SK',
+  isActive: true,
+})
+const promotionsMessage = ref('')
+const promotionsMessageClass = ref('')
+const isicMessage = ref('')
+const isicMessageClass = ref('')
 
 const siteBranding = ref({
   site_name: '',
@@ -2027,6 +2392,18 @@ const featuredVideos = computed(() =>
   featuredSlots.value.length ? featuredSlots.value : [...chronologicallySortedUploads.value.slice(0, 4)]
 )
 
+const previewLeafBlocks = computed(() =>
+  homepagePreviewModel.value.blockItems.filter((block): block is HomepageRenderLeafBlock =>
+    block.type === 'featured_row' || block.type === 'category' || block.type === 'top_video',
+  ),
+)
+
+const previewSplitBlocks = computed(() =>
+  homepagePreviewModel.value.blockItems.filter((block): block is HomepageRenderSplitBlock =>
+    block.type === 'split_horizontal' || block.type === 'split_vertical',
+  ),
+)
+
 const homepagePlacement = ref<HomepagePlacementResponse | null>(null)
 const mergedHomepagePlacement = computed(() => {
   const base = homepagePlacement.value || { featured: [], recentGrid: [], categoryBlocks: [] }
@@ -2098,6 +2475,13 @@ const parseLocalDateTimeToIso = (raw?: string | null) => {
   return date.toISOString()
 }
 
+const parseOptionalLocalDateTimeToIso = (raw?: string | null) => {
+  if (!raw) return null
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toISOString()
+}
+
 const formatDateTime = (raw?: string | null) => {
   if (!raw) return '—'
   const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z'
@@ -2125,7 +2509,29 @@ const hydrateActualDurations = async () => {
   actualDurationByVideoId.value = Object.fromEntries(durations)
 }
 
-const addBlock    = (type: BlockType) => { layoutBlocks.value.push({ id: crypto.randomUUID(), type, title: 'New block', body: 'Add block content here.' }) }
+const defaultSplitChildren = (): Array<{ type: LeafBlockType, title: string, body: string, categoryId: string | null }> => ([
+  { type: 'top_video', title: 'Top video', body: '', categoryId: null },
+  { type: 'category', title: 'Category', body: '', categoryId: '' },
+])
+const addBlock = (type: BlockType) => {
+  if (type === 'split_horizontal' || type === 'split_vertical') {
+    layoutBlocks.value.push({
+      id: crypto.randomUUID(),
+      type,
+      title: 'Split block',
+      body: '',
+      childBlocks: defaultSplitChildren().map((child) => ({ ...child })),
+    } as LayoutBlock)
+    return
+  }
+  layoutBlocks.value.push({
+    id: crypto.randomUUID(),
+    type,
+    title: type === 'category' ? 'Category block' : 'New block',
+    body: '',
+    categoryId: type === 'category' ? '' : null,
+  } as LayoutBlock)
+}
 const removeBlock = (id: string)      => { layoutBlocks.value = layoutBlocks.value.filter(b => b.id !== id) }
 
 const onDragStart = (index: number) => { draggingIndex.value = index }
@@ -2139,21 +2545,55 @@ const onDrop = (targetIndex: number) => {
   draggingIndex.value = null
 }
 
-const getDefaultBlocks = (): LayoutBlock[] => ([
-  { id: crypto.randomUUID(), type: 'hero',         title: 'Hero section',         body: 'Feature your main value proposition here.' },
-  { id: crypto.randomUUID(), type: 'featured_row', title: 'Featured videos row',  body: 'Drag this block to position featured content on the page.' },
-])
+const getDefaultBlocks = (): LayoutBlock[] => ([])
 
-const serializeHomepageState = () => JSON.stringify({
-  title: homepageHeroTitle.value,
-  subtitle: homepageHeroSubtitle.value,
-  featuredVideoIds: featuredSlots.value.map((v) => v?.id).filter((v): v is string => Boolean(v)),
-  layoutBlocks: layoutBlocks.value.map((block) => ({
+const normalizeLoadedBlock = (raw: any): LayoutBlock | null => {
+  if (!raw || typeof raw !== 'object') return null
+  const id = typeof raw.id === 'string' ? raw.id : crypto.randomUUID()
+  const type: BlockType = componentTypes.includes(raw.type) ? raw.type : 'top_video'
+  const title = typeof raw.title === 'string' ? raw.title : ''
+  const body = typeof raw.body === 'string' ? raw.body : ''
+  const categoryId = typeof raw.categoryId === 'string' ? raw.categoryId : ''
+  if (type === 'split_horizontal' || type === 'split_vertical') {
+    const children = Array.isArray(raw.childBlocks) ? raw.childBlocks : []
+    const normalizedChildren = children
+      .filter((child: any) => child && typeof child === 'object')
+      .map((child: any) => ({
+        type: leafComponentTypes.includes(child.type) ? child.type : 'top_video',
+        title: typeof child.title === 'string' ? child.title : '',
+        body: typeof child.body === 'string' ? child.body : '',
+        categoryId: typeof child.categoryId === 'string' ? child.categoryId : '',
+      }))
+      .slice(0, 2)
+    while (normalizedChildren.length < 2) normalizedChildren.push({ type: 'top_video', title: '', body: '', categoryId: '' })
+    return { id, type, title, body, childBlocks: normalizedChildren }
+  }
+  return { id, type, title, body, categoryId: type === 'category' ? categoryId : null }
+}
+const sanitizeBlockForSave = (block: LayoutBlock) => {
+  const payload: any = {
     id: block.id,
     type: block.type,
-    title: block.title,
-    body: block.body,
-  })),
+    title: block.title ?? '',
+    body: block.body ?? '',
+  }
+  if (block.type === 'category') {
+    payload.categoryId = typeof block.categoryId === 'string' ? block.categoryId : null
+  }
+  if ((block.type === 'split_horizontal' || block.type === 'split_vertical') && Array.isArray(block.childBlocks)) {
+    payload.childBlocks = block.childBlocks.slice(0, 2).map((child) => ({
+      type: leafComponentTypes.includes(child?.type) ? child.type : 'top_video',
+      title: typeof child?.title === 'string' ? child.title : '',
+      body: typeof child?.body === 'string' ? child.body : '',
+      categoryId: typeof child?.categoryId === 'string' ? child.categoryId : null,
+    }))
+  }
+  return payload
+}
+
+const serializeHomepageState = () => JSON.stringify({
+  featuredVideoIds: featuredSlots.value.map((v) => v?.id).filter((v): v is string => Boolean(v)),
+  layoutBlocks: layoutBlocks.value.map((block) => sanitizeBlockForSave(block)),
   categoryOrder: categories.value.map((category) => ({ id: category.id, sortOrder: category.sort_order })),
 })
 
@@ -2175,16 +2615,6 @@ const nudgeCategoryOrder = (idx: number, direction: -1 | 1) => {
   next[idx] = { ...itemAtIdx, sort_order: itemAtSwapIdx.sort_order }
   next[swapIdx] = { ...itemAtSwapIdx, sort_order: temp }
   categories.value = next
-}
-
-const focusCategoryFromPreview = (categoryId: string) => {
-  if (!categoryId) return
-  setAdminTab('categories')
-  nextTick(() => {
-    const element = document.querySelector(`[data-category-id="${categoryId}"]`) as HTMLElement | null
-    element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    element?.focus()
-  })
 }
 
 const resetLivestreamModal = () => {
@@ -2429,13 +2859,16 @@ const loadHomepageState = async () => {
     return
   }
   const data = await res.json()
-  homepageHeroTitle.value = data.title || 'Discover Premium Video Content'
-  homepageHeroSubtitle.value = data.subtitle || 'Watch free previews or unlock full access with a premium subscription'
   const homepageConfig = data?.homepageConfig ?? {}
   const featuredIds: string[] = Array.isArray(homepageConfig.featuredVideoIds) ? homepageConfig.featuredVideoIds : []
   layoutBlocks.value = Array.isArray(homepageConfig.layoutBlocks) && homepageConfig.layoutBlocks.length
-    ? homepageConfig.layoutBlocks
+    ? homepageConfig.layoutBlocks.map(normalizeLoadedBlock).filter((block: LayoutBlock | null): block is LayoutBlock => Boolean(block))
     : getDefaultBlocks()
+  if (!layoutBlocks.value.length) {
+    featuredSlots.value = [null, null, null, null]
+    applyHomepageBaseline()
+    return
+  }
   if (Array.isArray(data?.categories) && data.categories.length) {
     categories.value = data.categories
   }
@@ -2640,6 +3073,229 @@ const loadPaymentSettings = async () => {
   } catch (e: any) {
     paymentSettingsMessage.value = `Could not load payment settings: ${e.message}`
     paymentSettingsMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  }
+}
+
+const loadPromotions = async () => {
+  if (!isAdmin.value) return
+  promotionsLoading.value = true
+  promotionsMessage.value = ''
+  try {
+    const [campaignRes, codeRes] = await Promise.all([
+      fetch(`${config.public.apiUrl}/api/admin/promotions/campaigns`, { headers: authHeader() }),
+      fetch(`${config.public.apiUrl}/api/admin/promotions/codes`, { headers: authHeader() }),
+    ])
+    const campaignData = await campaignRes.json().catch(() => ({}))
+    const codeData = await codeRes.json().catch(() => ({}))
+    if (!campaignRes.ok) throw new Error(campaignData.error || `HTTP ${campaignRes.status}`)
+    if (!codeRes.ok) throw new Error(codeData.error || `HTTP ${codeRes.status}`)
+    promoCampaigns.value = Array.isArray(campaignData.campaigns) ? campaignData.campaigns : []
+    promoCodes.value = Array.isArray(codeData.codes) ? codeData.codes : []
+    if (!promoCodeForm.value.campaignId && promoCampaigns.value.length) {
+      promoCodeForm.value.campaignId = String(promoCampaigns.value[0]?.id || '')
+    }
+  } catch (e: any) {
+    promotionsMessage.value = e.message || 'Failed to load promotions'
+    promotionsMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    promotionsLoading.value = false
+  }
+}
+
+const createPromoCampaign = async () => {
+  if (!isAdmin.value) return
+  const name = promoCampaignForm.value.name.trim()
+  if (!name) {
+    promotionsMessage.value = 'Campaign name is required.'
+    promotionsMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+    return
+  }
+  promotionsSaving.value = true
+  promotionsMessage.value = ''
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/promotions/campaigns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({
+        name,
+        description: promoCampaignForm.value.description,
+        isActive: promoCampaignForm.value.isActive,
+      }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    promoCampaignForm.value = { name: '', description: '', isActive: true }
+    promotionsMessage.value = 'Promo campaign created.'
+    promotionsMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+    await loadPromotions()
+  } catch (e: any) {
+    promotionsMessage.value = e.message || 'Failed to create campaign'
+    promotionsMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    promotionsSaving.value = false
+  }
+}
+
+const createPromoCodes = async () => {
+  if (!isAdmin.value) return
+  if (!promoCodeForm.value.campaignId) {
+    promotionsMessage.value = 'Choose a campaign first.'
+    promotionsMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+    return
+  }
+  if (promoCodeForm.value.rewardType === 'discount_percent' && !promoCodeForm.value.stripeCouponId.trim()) {
+    promotionsMessage.value = 'Stripe coupon ID is required for discount_percent promo codes.'
+    promotionsMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+    return
+  }
+  promotionsSaving.value = true
+  promotionsMessage.value = ''
+  try {
+    const expiresIso = parseOptionalLocalDateTimeToIso(promoCodeForm.value.expiresAt)
+    const res = await fetch(`${config.public.apiUrl}/api/admin/promotions/codes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({
+        campaignId: promoCodeForm.value.campaignId,
+        code: promoCodeForm.value.code,
+        quantity: promoCodeForm.value.quantity,
+        rewardType: promoCodeForm.value.rewardType,
+        maxUses: promoCodeForm.value.maxUses,
+        allowedPlanTypes: promoCodeForm.value.allowedPlanTypes,
+        stripeCouponId: promoCodeForm.value.stripeCouponId,
+        expiresAt: expiresIso,
+      }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    const created = Number(data.created || 0)
+    const codes = Array.isArray(data.codes) ? data.codes : []
+    promotionsMessage.value = created > 0
+      ? `Created ${created} promo code(s): ${codes.join(', ')}`
+      : 'Promo code request completed.'
+    promotionsMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+    promoCodeForm.value = {
+      campaignId: promoCodeForm.value.campaignId,
+      code: '',
+      quantity: 1,
+      rewardType: 'free_month',
+      maxUses: 1,
+      allowedPlanTypes: ['monthly', 'yearly', 'club'],
+      stripeCouponId: '',
+      expiresAt: '',
+    }
+    await loadPromotions()
+  } catch (e: any) {
+    promotionsMessage.value = e.message || 'Failed to create promo code(s)'
+    promotionsMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    promotionsSaving.value = false
+  }
+}
+
+const loadIsicCampaigns = async () => {
+  if (!isAdmin.value) return
+  isicLoading.value = true
+  isicMessage.value = ''
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/isic/campaigns`, { headers: authHeader() })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    isicCampaigns.value = Array.isArray(data.campaigns) ? data.campaigns : []
+    const apiConfig = data.apiConfig || {}
+    isicApiConfig.value = {
+      enabled: Boolean(apiConfig.enabled),
+      baseUrl: String(apiConfig.baseUrl || ''),
+      apiKey: '',
+      hasApiKey: Boolean(apiConfig.hasApiKey),
+    }
+  } catch (e: any) {
+    isicMessage.value = e.message || 'Failed to load ISIC settings'
+    isicMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    isicLoading.value = false
+  }
+}
+
+const saveIsicApiConfig = async () => {
+  if (!isAdmin.value) return
+  isicSaving.value = true
+  isicMessage.value = ''
+  try {
+    const apiConfigPayload: any = {
+      enabled: isicApiConfig.value.enabled,
+      baseUrl: isicApiConfig.value.baseUrl.trim(),
+    }
+    const trimmedApiKey = isicApiConfig.value.apiKey.trim()
+    if (trimmedApiKey) {
+      apiConfigPayload.apiKey = trimmedApiKey
+    }
+    const res = await fetch(`${config.public.apiUrl}/api/admin/isic/campaigns`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({
+        apiConfig: apiConfigPayload,
+      }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    isicMessage.value = 'ISIC API configuration saved.'
+    isicMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+    isicApiConfig.value.apiKey = ''
+    await loadIsicCampaigns()
+  } catch (e: any) {
+    isicMessage.value = e.message || 'Failed to save ISIC API configuration'
+    isicMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    isicSaving.value = false
+  }
+}
+
+const createIsicCampaign = async () => {
+  if (!isAdmin.value) return
+  const name = isicCampaignForm.value.name.trim()
+  if (!name) {
+    isicMessage.value = 'ISIC campaign name is required.'
+    isicMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+    return
+  }
+  isicSaving.value = true
+  isicMessage.value = ''
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/isic/campaigns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({
+        name,
+        description: isicCampaignForm.value.description,
+        isActive: isicCampaignForm.value.isActive,
+        freeSlotsLimit: isicCampaignForm.value.freeSlotsLimit,
+        discountPercent: isicCampaignForm.value.discountPercent,
+        renewalMonths: isicCampaignForm.value.renewalMonths,
+        popupBehavior: isicCampaignForm.value.popupBehavior,
+        countryScope: isicCampaignForm.value.countryScope,
+      }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    isicCampaignForm.value = {
+      name: '',
+      description: '',
+      isActive: true,
+      freeSlotsLimit: 5000,
+      discountPercent: 0,
+      renewalMonths: 12,
+      popupBehavior: 'highlight_campaign',
+      countryScope: 'CZ,SK',
+    }
+    isicMessage.value = 'ISIC campaign created.'
+    isicMessageClass.value = 'border-green-300 bg-green-50 text-green-700 dark:bg-green-950 dark:border-green-700 dark:text-green-200'
+    await loadIsicCampaigns()
+  } catch (e: any) {
+    isicMessage.value = e.message || 'Failed to create ISIC campaign'
+    isicMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    isicSaving.value = false
   }
 }
 
@@ -3238,11 +3894,9 @@ const saveAll = async () => {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
-          title: homepageHeroTitle.value,
-          subtitle: homepageHeroSubtitle.value,
           homepageConfig: {
             featuredVideoIds,
-            layoutBlocks: layoutBlocks.value,
+            layoutBlocks: layoutBlocks.value.map((block) => sanitizeBlockForSave(block)),
           },
           categoryOrder: categories.value.map((category) => ({
             id: category.id,
@@ -3277,6 +3931,26 @@ const saveAll = async () => {
   }
 }
 
+watch(
+  layoutBlocks,
+  (blocks) => {
+    for (const block of blocks) {
+      if (block.type !== 'category' && typeof block.categoryId === 'string' && block.categoryId) {
+        block.categoryId = null
+      }
+      if (block.type === 'split_horizontal' || block.type === 'split_vertical') {
+        const children = Array.isArray(block.childBlocks) ? block.childBlocks : []
+        for (const child of children) {
+          if (child.type !== 'category' && typeof child.categoryId === 'string' && child.categoryId) {
+            child.categoryId = null
+          }
+        }
+      }
+    }
+  },
+  { deep: true },
+)
+
 const reloadAll = async () => {
   loading.value = true
   try {
@@ -3287,6 +3961,8 @@ const reloadAll = async () => {
     await loadNewsletterSettings()
     await loadNewsletterTemplates()
     await loadPaymentSettings()
+    await loadPromotions()
+    await loadIsicCampaigns()
     await loadSiteBranding()
     await loadRssPodcastWebhookSettings()
     await loadUsers()
@@ -3350,11 +4026,17 @@ async function saveTitleEdit(video: Video) {
   }
 }
 
-async function updateVideoStatus(video: Video, newStatus: 'draft' | 'published' | 'archived', scheduledPublishAt: string | null = null) {
+async function updateVideoStatus(
+  video: Video,
+  newStatus: 'draft' | 'published' | 'archived',
+  scheduledPublishAt: string | null = null,
+  publishedAt: string | null = null,
+) {
   statusUpdating.value[video.id] = true
   try {
     const payload: Record<string, unknown> = { status: newStatus }
     if (scheduledPublishAt !== null) payload.scheduledPublishAt = scheduledPublishAt
+    if (publishedAt !== null) payload.publishedAt = publishedAt
     const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
@@ -3370,11 +4052,41 @@ async function updateVideoStatus(video: Video, newStatus: 'draft' | 'published' 
       const cur = uploads.value[idx]!
       uploads.value[idx] = { ...cur, ...updated }
     }
-    showToast('success', `Status updated: ${video.title} → ${newStatus}.`)
+    const publishedAtChanged = publishedAt !== null
+    showToast('success', publishedAtChanged
+      ? `Published timestamp updated for ${video.title}.`
+      : `Status updated: ${video.title} → ${newStatus}.`)
   } catch (e: any) {
     saveMessage.value = `Failed to update "${video.title}": ${e.message}`
     showToast('error', `Failed to update ${video.title}: ${e.message}`)
     saveMessageClass.value = 'border-red-300 bg-red-50 text-red-700 dark:bg-red-950 dark:border-red-700 dark:text-red-200'
+  } finally {
+    statusUpdating.value[video.id] = false
+  }
+}
+
+async function updateVideoPublishedAt(video: Video, rawValue: string) {
+  statusUpdating.value[video.id] = true
+  try {
+    const nextIso = rawValue ? parseLocalDateTimeToIso(rawValue) : null
+    const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ publishedAt: nextIso }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    const { video: updated } = await res.json()
+    const idx = uploads.value.findIndex(v => v.id === video.id)
+    if (idx !== -1) {
+      const cur = uploads.value[idx]!
+      uploads.value[idx] = { ...cur, ...updated }
+    }
+    showToast('success', `Published date updated for ${video.title}.`)
+  } catch (e: any) {
+    showToast('error', `Failed to update published date: ${e.message}`)
   } finally {
     statusUpdating.value[video.id] = false
   }
@@ -3675,25 +4387,28 @@ async function startSlugEdit(video: Video) {
 async function saveSlugEdit(video: Video) {
   const editing = editingSlug.value
   if (!editing || editing.id !== video.id) return
-  const newSlug = editing.value.trim() || null
+  const slugInput = editing.value.trim()
+  const requestedSlug = slugInput ? slugInput.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').replace(/[\s_-]+/g, '-').replace(/^-+|-+$/g, '') : null
   editingSlug.value = null
-  if (newSlug === (video.slug ?? null)) return
+  if (requestedSlug === (video.slug ?? null)) return
   try {
     const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({ slug: newSlug }),
+      body: JSON.stringify({ slug: requestedSlug }),
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }))
       throw new Error(err.error || `HTTP ${res.status}`)
     }
+    const data = await res.json().catch(() => ({}))
+    const normalizedSlug = data?.video?.slug ?? requestedSlug
     const idx = uploads.value.findIndex(v => v.id === video.id)
     if (idx !== -1) {
       const cur = uploads.value[idx]!
-      uploads.value[idx] = { ...cur, slug: newSlug }
+      uploads.value[idx] = { ...cur, slug: normalizedSlug }
     }
-    showToast('success', newSlug ? `Slug set: /watch/${newSlug}` : 'Slug cleared.')
+    showToast('success', normalizedSlug ? `Slug set: /watch/${normalizedSlug}` : 'Slug cleared.')
   } catch (e: any) {
     showToast('error', `Failed to update slug: ${e.message}`)
   }
