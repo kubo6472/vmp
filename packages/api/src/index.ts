@@ -1591,13 +1591,13 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   if (hasPublishedAt && publishedAt.invalid) {
     return jsonResponse({ error: 'publishedAt must be a valid ISO timestamp, or null to clear it' }, 400, corsHeaders)
   }
-  if (hasScheduledPublishAt && hasStatus && body.status === 'published') {
+  if (hasScheduledPublishAt && body.scheduledPublishAt !== null && hasStatus && body.status === 'published') {
     return jsonResponse({
       error: 'Conflicting payload: scheduledPublishAt cannot be provided when status is published',
       code: 'invalid_payload',
     }, 400, corsHeaders)
   }
-  if (hasScheduledPublishAt && hasPublishedAt) {
+  if (hasScheduledPublishAt && body.scheduledPublishAt !== null && hasPublishedAt && body.publishedAt !== null) {
     return jsonResponse({
       error: 'Conflicting payload: scheduledPublishAt cannot be combined with publishedAt',
       code: 'invalid_payload',
@@ -1607,7 +1607,7 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   const db = getDatabaseBinding(env)
   const videoExists = await db.prepare('SELECT publish_status FROM videos WHERE id = ?').bind(videoId).first()
   if (!videoExists) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
-  if (hasPublishedAt) {
+  if (hasPublishedAt && body.publishedAt !== null) {
     const nextPublished = hasStatus ? body.status === 'published' : videoExists.publish_status === 'published'
     if (!nextPublished) {
       return jsonResponse({ error: 'publishedAt can only be set for published videos' }, 400, corsHeaders)

@@ -39,7 +39,10 @@ async function getAllowedPlansFromSettings(env: any): Promise<string[]> {
 }
 
 function parseAllowedPlanTypes(raw: any, allowedPlans: string[]) {
-  const values = Array.isArray(raw) ? raw : String(raw ?? '').split(',')
+  if (Array.isArray(raw) && raw.length === 0) return []
+  const rawStr = String(raw ?? '')
+  if (!Array.isArray(raw) && (raw == null || rawStr.trim() === '')) return allowedPlans
+  const values = Array.isArray(raw) ? raw : rawStr.split(',')
   const normalized = values
     .map((v: any) => String(v).trim().toLowerCase())
     .filter((v: string) => allowedPlans.includes(v))

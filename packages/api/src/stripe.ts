@@ -491,9 +491,10 @@ export async function handleCheckout(request: any, env: any, corsHeaders: any) {
     let promoCodeId: string | null = null
     if (promoCodeInput) {
       const promoValidation = await resolvePromoCodeForCheckout(env, promoCodeInput, planType)
-      if (promoValidation.ok) {
-        promoCodeId = promoValidation.checkoutMeta?.promoCodeId ?? null
+      if (!promoValidation.ok) {
+        return jsonResponse({ error: promoValidation.error, code: promoValidation.code }, promoValidation.status ?? 400, corsHeaders)
       }
+      promoCodeId = promoValidation.checkoutMeta?.promoCodeId ?? null
     }
 
     const checkoutToken = crypto.randomUUID()
