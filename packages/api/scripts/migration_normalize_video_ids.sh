@@ -159,15 +159,20 @@ if ! table_exists "video_segment_events" || ! column_exists "video_segment_event
   exit 1
 fi
 
-if ! table_exists "video_id_migration_map"; then
+has_video_id_migration_map=0
+if table_exists "video_id_migration_map"; then
+  has_video_id_migration_map=1
+elif [[ "$APPLY" == "1" ]]; then
   run_sql "CREATE TABLE video_id_migration_map (
     old_id TEXT PRIMARY KEY,
     new_id TEXT NOT NULL UNIQUE,
     migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );"
+  has_video_id_migration_map=1
 fi
 
 declare -A VIDEO_ID_MAP
+declare -A RESERVED_NEW_IDS
 while IFS= read -r row; do
   [[ -n "$row" ]] || continue
   old_id="$(printf '%s' "$row" | node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(0,"utf8"));process.stdout.write(String(r.id ?? ""));')"
@@ -186,8 +191,15 @@ while IFS= read -r row; do
     new_sql="$(sql_escape "$new_id")"
     old_sql="$(sql_escape "$old_id")"
     exists_count="$(run_scalar "SELECT COUNT(*) AS n FROM videos WHERE id = '${new_sql}' AND id <> '${old_sql}';")"
-    mapped_count="$(run_scalar "SELECT COUNT(*) AS n FROM video_id_migration_map WHERE new_id = '${new_sql}' AND old_id <> '${old_sql}';")"
-    if [[ "$exists_count" == "0" && "$mapped_count" == "0" ]]; then
+    mapped_count=0
+    if [[ "$has_video_id_migration_map" == "1" ]]; then
+      mapped_count="$(run_scalar "SELECT COUNT(*) AS n FROM video_id_migration_map WHERE new_id = '${new_sql}' AND old_id <> '${old_sql}';")"
+    fi
+    reserved_in_map=0
+    if [[ -n "${RESERVED_NEW_IDS[$new_id]:-}" ]]; then
+      reserved_in_map=1
+    fi
+    if [[ "$exists_count" == "0" && "$mapped_count" == "0" && "$reserved_in_map" == "0" ]]; then
       break
     fi
     suffix=$((suffix + 1))
@@ -195,6 +207,7 @@ while IFS= read -r row; do
   done
 
   VIDEO_ID_MAP["$old_id"]="$new_id"
+  RESERVED_NEW_IDS["$new_id"]="1"
 done < <(run_rows "SELECT id FROM videos ORDER BY id;")
 
 if [[ "${#VIDEO_ID_MAP[@]}" -eq 0 ]]; then
