@@ -3,9 +3,26 @@ set -euo pipefail
 
 DB_NAME="${DB_NAME:-video-subscription-db}"
 MODE_FLAG="${MODE_FLAG:---local}"
+DRY_RUN="${DRY_RUN:-1}"
+APPLY="${APPLY:-0}"
+MAP_FILE="${MAP_FILE:-}"
 
 if [[ "${1:-}" == "--remote" ]]; then
   MODE_FLAG="--remote"
+fi
+
+if [[ "$APPLY" == "1" ]]; then
+  DRY_RUN="0"
+fi
+
+if [[ "$DRY_RUN" != "0" && "$DRY_RUN" != "1" ]]; then
+  echo "[normalize-video-ids] DRY_RUN must be 0 or 1 (got '$DRY_RUN')"
+  exit 1
+fi
+
+if [[ "$APPLY" != "0" && "$APPLY" != "1" ]]; then
+  echo "[normalize-video-ids] APPLY must be 0 or 1 (got '$APPLY')"
+  exit 1
 fi
 
 run_sql() {
@@ -87,6 +104,7 @@ sql_escape() {
 }
 
 echo "[normalize-video-ids] Starting on ${DB_NAME} (${MODE_FLAG})"
+echo "[normalize-video-ids] Mode: DRY_RUN=${DRY_RUN} APPLY=${APPLY}"
 
 if ! table_exists "videos" || ! column_exists "videos" "id"; then
   echo "[normalize-video-ids] Required table/column missing: videos.id"
@@ -142,18 +160,37 @@ while IFS= read -r row; do
 done < <(run_rows "SELECT id FROM videos ORDER BY id;")
 
 if [[ "${#VIDEO_ID_MAP[@]}" -eq 0 ]]; then
+  if [[ -n "$MAP_FILE" ]]; then
+    : > "$MAP_FILE"
+    echo "[normalize-video-ids] Wrote empty mapping file: $MAP_FILE"
+  fi
   echo "[normalize-video-ids] No video IDs required sanitization."
   exit 0
 fi
 
 echo "[normalize-video-ids] Planned rewrites: ${#VIDEO_ID_MAP[@]}"
-for old_id in "${!VIDEO_ID_MAP[@]}"; do
+for old_id in $(printf '%s\n' "${!VIDEO_ID_MAP[@]}" | LC_ALL=C sort); do
   new_id="${VIDEO_ID_MAP[$old_id]}"
   echo "  ${old_id} -> ${new_id}"
 done
 
+if [[ -n "$MAP_FILE" ]]; then
+  : > "$MAP_FILE"
+  for old_id in $(printf '%s\n' "${!VIDEO_ID_MAP[@]}" | LC_ALL=C sort); do
+    new_id="${VIDEO_ID_MAP[$old_id]}"
+    printf '%s\t%s\n' "$old_id" "$new_id" >> "$MAP_FILE"
+  done
+  echo "[normalize-video-ids] Wrote mapping file: $MAP_FILE"
+fi
+
+if [[ "$APPLY" != "1" ]]; then
+  echo "[normalize-video-ids] Dry run only — no DB updates applied."
+  echo "[normalize-video-ids] Re-run with APPLY=1 to execute."
+  exit 0
+fi
+
 echo "[normalize-video-ids] Applying rewrites..."
-for old_id in "${!VIDEO_ID_MAP[@]}"; do
+for old_id in $(printf '%s\n' "${!VIDEO_ID_MAP[@]}" | LC_ALL=C sort); do
   new_id="${VIDEO_ID_MAP[$old_id]}"
   old_sql="$(sql_escape "$old_id")"
   new_sql="$(sql_escape "$new_id")"
@@ -185,5 +222,4 @@ for old_id in "${!VIDEO_ID_MAP[@]}"; do
 done
 
 echo "[normalize-video-ids] Done."
-echo "[normalize-video-ids] NOTE: R2 objects are still stored under old prefixes (videos/<old_id>/...)."
-echo "[normalize-video-ids] Existing records should keep working via fallback if the API checks video_id_migration_map."
+echo "[normalize-video-ids] NOTE: Move R2 prefixes from videos/<old_id>/ to videos/<new_id>/ to keep playback paths aligned."

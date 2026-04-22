@@ -8,6 +8,7 @@
     "start": "node ./supervisor.mjs",
     "supervisor": "node ./supervisor.mjs",
     "pipeline": "bash ./bin/video_pipeline_watch.sh",
+    "migrate:r2-video-prefixes": "bash ./bin/video_id_r2_prefix_migrate.sh",
     "render": "bash ./render_podcast_preview_mp3.sh"
   },
   "engines": {

@@ -65,3 +65,35 @@ Expose the HTTP port to the Worker only (VPN, SSH tunnel, or reverse proxy with 
 - `npm run start` — supervisor (pipeline + dashboard + webhook)
 - `npm run pipeline` — bash pipeline only (no Node; for debugging)
 - `npm run render -- <video_id> <seconds>` — one-off preview MP3
+- `npm run migrate-r2-prefixes` — copy/sync `videos/<old_id>/` prefixes to `videos/<new_id>/` using mapping JSON from API migration
+
+## Video ID migration workflow (no reupload)
+
+1. Generate mapping on API side (dry run):
+
+```bash
+cd /path/to/vmp
+DRY_RUN=1 APPLY=0 MAPPING_JSON_PATH=/tmp/video-id-map.json \
+  npm run db:migration-normalize-video-ids --workspace=@vmp/api
+```
+
+2. Apply DB rewrite when mapping looks correct:
+
+```bash
+DRY_RUN=0 APPLY=1 MAPPING_JSON_PATH=/tmp/video-id-map.json \
+  npm run db:migration-normalize-video-ids --workspace=@vmp/api
+```
+
+3. On the podcast-host VM, pull this branch and run R2 prefix migration:
+
+```bash
+cd /path/to/vmp
+MAPPING_JSON_PATH=/tmp/video-id-map.json \
+  R2_BUCKET=vmp-videos \
+  bash ./packages/podcast-host/bin/video_id_r2_prefix_migrate.sh
+```
+
+Optional flags:
+- `APPLY=0` (default) preview only
+- `APPLY=1` perform copy/sync
+- `DELETE_OLD=1` delete old prefixes after successful copy + verification
