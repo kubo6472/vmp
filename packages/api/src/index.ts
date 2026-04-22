@@ -830,9 +830,12 @@ async function handleVideoProxy(request: any, env: any, corsHeaders: any, ctx: a
     }
   }
 
-  // Extract videoId from path (videos/{id}/...)
-  const pathParts = objectPath.split('/')
-  const proxyVideoId = pathParts[1] ?? ''
+  // Extract and decode videoId from path (videos/{id}/...). URL paths preserve
+  // percent-encoding (e.g. spaces as %20), while signed tokens use decoded IDs.
+  const proxyVideoId = getProxyVideoIdFromPath(normalizedPath)
+  if (!proxyVideoId) {
+    return jsonResponse({ error: 'Unsupported proxied path' }, 400, corsHeaders)
+  }
 
   // Verify token claims match the requested video
   if (tokenClaims && tokenClaims.videoId !== proxyVideoId) {
@@ -2591,6 +2594,23 @@ function decodePathSegment(segment: any) {
 export function getAdminVideoIdFromPath(pathname: string) {
   const pathParts = pathname.split('/').filter(Boolean)
   const videoId = decodePathSegment(pathParts[3])
+  if (typeof videoId !== 'string' || videoId.length === 0) return null
+  // Keep route semantics as a single path segment even after decoding.
+  if (videoId.includes('/')) return null
+  return videoId
+}
+
+export function getProxyVideoIdFromPath(pathname: string) {
+  const pathParts = pathname.split('/').filter(Boolean)
+  let videoIdSegment: string | undefined
+  if (pathParts[0] === 'videos') {
+    // Normalized proxy object path used by handleVideoProxy (videos/{id}/...)
+    videoIdSegment = pathParts[1]
+  } else if (pathParts[0] === 'api' && pathParts[1] === 'video-proxy') {
+    // Full request pathname form (/api/video-proxy/videos/{id}/...)
+    videoIdSegment = pathParts[3]
+  }
+  const videoId = decodePathSegment(videoIdSegment)
   if (typeof videoId !== 'string' || videoId.length === 0) return null
   // Keep route semantics as a single path segment even after decoding.
   if (videoId.includes('/')) return null
