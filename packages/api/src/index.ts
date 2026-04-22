@@ -2627,7 +2627,7 @@ function normalizeHomepageLayoutVariant(raw: any) {
   return HOMEPAGE_LAYOUT_VARIANTS.has(value) ? value : 'three_by_one'
 }
 
-function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boolean, allowPast?: boolean } = {}) {
+export function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boolean, allowPast?: boolean } = {}) {
   if (raw == null || raw === '') {
     return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
   }
@@ -2635,11 +2635,7 @@ function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boolean, a
   const text = raw.trim()
   if (!text) return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
 
-  // Require explicit timezone: must end with 'Z' or +/-HH:MM offset
-  const hasTimezone = /[Zz]$|[+-]\d{2}:\d{2}$/.test(text)
-  if (!hasTimezone) return { value: null, invalid: true }
-
-  const t = Date.parse(text)
+  const t = parseAdminTimestampToUtcMillis(text)
   if (!Number.isFinite(t)) return { value: null, invalid: true }
 
   // For scheduling we enforce future timestamps (with 60s grace). For backdating
@@ -2656,7 +2652,7 @@ function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boolean, a
   return { value: `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`, invalid: false }
 }
 
-function normalizePublishedAt(raw: any, options: { allowNull?: boolean } = {}) {
+export function normalizePublishedAt(raw: any, options: { allowNull?: boolean } = {}) {
   if (raw == null || raw === '') {
     return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
   }
@@ -2664,10 +2660,7 @@ function normalizePublishedAt(raw: any, options: { allowNull?: boolean } = {}) {
   const text = raw.trim()
   if (!text) return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
 
-  const hasTimezone = /[Zz]$|[+-]\d{2}:\d{2}$/.test(text)
-  if (!hasTimezone) return { value: null, invalid: true }
-
-  const t = Date.parse(text)
+  const t = parseAdminTimestampToUtcMillis(text)
   if (!Number.isFinite(t)) return { value: null, invalid: true }
 
   const d = new Date(t)
@@ -2678,6 +2671,22 @@ function normalizePublishedAt(raw: any, options: { allowNull?: boolean } = {}) {
   const mi = String(d.getUTCMinutes()).padStart(2, '0')
   const ss = String(d.getUTCSeconds()).padStart(2, '0')
   return { value: `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`, invalid: false }
+}
+
+export function parseAdminTimestampToUtcMillis(raw: string) {
+  // Preferred path: ISO timestamps with explicit timezone.
+  const hasTimezone = /[Zz]$|[+-]\d{2}:\d{2}$/.test(raw)
+  if (hasTimezone) return Date.parse(raw)
+
+  // Backwards-compatible path for admin payloads that may contain SQL-style
+  // datetime strings from existing UI state (YYYY-MM-DD HH:MM[:SS[.sss]]).
+  const sqlLike = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(raw)
+  if (!sqlLike) return Number.NaN
+
+  const [, y, m, d, hh, mm, ss = '00', sss = '0'] = sqlLike
+  const millis = sss.padEnd(3, '0')
+  const utcIso = `${y}-${m}-${d}T${hh}:${mm}:${ss}.${millis}Z`
+  return Date.parse(utcIso)
 }
 
 async function runScheduledPublishJobs(env: any) {
