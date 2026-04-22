@@ -5,7 +5,7 @@ DB_NAME="${DB_NAME:-video-subscription-db}"
 MODE_FLAG="${MODE_FLAG:---local}"
 DRY_RUN="${DRY_RUN:-1}"
 APPLY="${APPLY:-0}"
-MAP_FILE="${MAP_FILE:-}"
+MAPPING_JSON_PATH="${MAPPING_JSON_PATH:-/tmp/video-id-map.json}"
 
 if [[ "${1:-}" == "--remote" ]]; then
   MODE_FLAG="--remote"
@@ -103,6 +103,44 @@ sql_escape() {
   printf "%s" "$1" | sed "s/'/''/g"
 }
 
+json_quote() {
+  printf '%s' "$1" | node -e 'const fs=require("fs");const s=fs.readFileSync(0,"utf8");process.stdout.write(JSON.stringify(s));'
+}
+
+json_escape_for_json_string() {
+  printf '%s' "$1" | node -e 'const fs=require("fs");const s=fs.readFileSync(0,"utf8");process.stdout.write(JSON.stringify(s).slice(1,-1));'
+}
+
+write_mapping_json() {
+  local output_path="$1"
+  local output_dir
+  output_dir="$(dirname "$output_path")"
+  mkdir -p "$output_dir"
+
+  local tmp_path="${output_path}.tmp.$$"
+  {
+    printf '{\n'
+    printf '  "generated_at": %s,\n' "$(json_quote "$(date -u +%FT%TZ)")"
+    printf '  "mappings": [\n'
+    local index=0
+    local total="${#SORTED_KEYS[@]}"
+    while [ "$index" -lt "$total" ]; do
+      local old_id="${SORTED_KEYS[$index]}"
+      local new_id="${VIDEO_ID_MAP[$old_id]}"
+      local comma=","
+      if [ "$index" -eq $((total - 1)) ]; then
+        comma=""
+      fi
+      printf '    { "old_id": %s, "new_id": %s }%s\n' "$(json_quote "$old_id")" "$(json_quote "$new_id")" "$comma"
+      index=$((index + 1))
+    done
+    printf '  ]\n'
+    printf '}\n'
+  } > "$tmp_path"
+
+  mv "$tmp_path" "$output_path"
+}
+
 echo "[normalize-video-ids] Starting on ${DB_NAME} (${MODE_FLAG})"
 echo "[normalize-video-ids] Mode: DRY_RUN=${DRY_RUN} APPLY=${APPLY}"
 
@@ -160,28 +198,22 @@ while IFS= read -r row; do
 done < <(run_rows "SELECT id FROM videos ORDER BY id;")
 
 if [[ "${#VIDEO_ID_MAP[@]}" -eq 0 ]]; then
-  if [[ -n "$MAP_FILE" ]]; then
-    : > "$MAP_FILE"
-    echo "[normalize-video-ids] Wrote empty mapping file: $MAP_FILE"
-  fi
+  SORTED_KEYS=()
+  write_mapping_json "$MAPPING_JSON_PATH"
+  echo "[normalize-video-ids] Wrote empty mapping JSON: $MAPPING_JSON_PATH"
   echo "[normalize-video-ids] No video IDs required sanitization."
   exit 0
 fi
 
 echo "[normalize-video-ids] Planned rewrites: ${#VIDEO_ID_MAP[@]}"
-for old_id in $(printf '%s\n' "${!VIDEO_ID_MAP[@]}" | LC_ALL=C sort); do
+mapfile -t SORTED_KEYS < <(printf '%s\n' "${!VIDEO_ID_MAP[@]}" | LC_ALL=C sort)
+for old_id in "${SORTED_KEYS[@]}"; do
   new_id="${VIDEO_ID_MAP[$old_id]}"
   echo "  ${old_id} -> ${new_id}"
 done
 
-if [[ -n "$MAP_FILE" ]]; then
-  : > "$MAP_FILE"
-  for old_id in $(printf '%s\n' "${!VIDEO_ID_MAP[@]}" | LC_ALL=C sort); do
-    new_id="${VIDEO_ID_MAP[$old_id]}"
-    printf '%s\t%s\n' "$old_id" "$new_id" >> "$MAP_FILE"
-  done
-  echo "[normalize-video-ids] Wrote mapping file: $MAP_FILE"
-fi
+write_mapping_json "$MAPPING_JSON_PATH"
+echo "[normalize-video-ids] Wrote mapping JSON: $MAPPING_JSON_PATH"
 
 if [[ "$APPLY" != "1" ]]; then
   echo "[normalize-video-ids] Dry run only — no DB updates applied."
@@ -190,35 +222,60 @@ if [[ "$APPLY" != "1" ]]; then
 fi
 
 echo "[normalize-video-ids] Applying rewrites..."
-for old_id in $(printf '%s\n' "${!VIDEO_ID_MAP[@]}" | LC_ALL=C sort); do
+has_livestream_video_id=0
+if table_exists "livestreams" && column_exists "livestreams" "video_id"; then
+  has_livestream_video_id=1
+fi
+
+has_livestream_recording_video_id=0
+if table_exists "livestreams" && column_exists "livestreams" "recording_video_id"; then
+  has_livestream_recording_video_id=1
+fi
+
+has_homepage_json=0
+if table_exists "admin_settings" && column_exists "admin_settings" "key" && column_exists "admin_settings" "value"; then
+  has_homepage_json=1
+fi
+
+for old_id in "${SORTED_KEYS[@]}"; do
   new_id="${VIDEO_ID_MAP[$old_id]}"
   old_sql="$(sql_escape "$old_id")"
   new_sql="$(sql_escape "$new_id")"
+  escaped_old_json="$(json_escape_for_json_string "$old_id")"
+  escaped_new_json="$(json_escape_for_json_string "$new_id")"
+  escaped_old_sql="$(sql_escape "$escaped_old_json")"
+  escaped_new_sql="$(sql_escape "$escaped_new_json")"
 
-  run_sql "PRAGMA foreign_keys = OFF;"
-  run_sql "BEGIN TRANSACTION;"
-  run_sql "UPDATE videos SET id = '${new_sql}' WHERE id = '${old_sql}';"
-  run_sql "UPDATE video_category_assignments SET video_id = '${new_sql}' WHERE video_id = '${old_sql}';"
-  run_sql "UPDATE video_segment_events SET video_id = '${new_sql}' WHERE video_id = '${old_sql}';"
-  if table_exists "livestreams" && column_exists "livestreams" "video_id"; then
-    run_sql "UPDATE livestreams SET video_id = '${new_sql}' WHERE video_id = '${old_sql}';"
+  sql_batch="PRAGMA defer_foreign_keys = ON;
+BEGIN TRANSACTION;
+UPDATE videos SET id = '${new_sql}' WHERE id = '${old_sql}';
+UPDATE video_category_assignments SET video_id = '${new_sql}' WHERE video_id = '${old_sql}';
+UPDATE video_segment_events SET video_id = '${new_sql}' WHERE video_id = '${old_sql}';
+"
+  if [[ "$has_livestream_video_id" == "1" ]]; then
+    sql_batch+="UPDATE livestreams SET video_id = '${new_sql}' WHERE video_id = '${old_sql}';
+"
   fi
-  if table_exists "livestreams" && column_exists "livestreams" "recording_video_id"; then
-    run_sql "UPDATE livestreams SET recording_video_id = '${new_sql}' WHERE recording_video_id = '${old_sql}';"
+  if [[ "$has_livestream_recording_video_id" == "1" ]]; then
+    sql_batch+="UPDATE livestreams SET recording_video_id = '${new_sql}' WHERE recording_video_id = '${old_sql}';
+"
   fi
-  if table_exists "admin_settings" && column_exists "admin_settings" "key" && column_exists "admin_settings" "value"; then
-    run_sql "UPDATE admin_settings
-             SET value = replace(value, '\"${old_sql}\"', '\"${new_sql}\"'),
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE key = 'homepage'
-               AND instr(value, '\"${old_sql}\"') > 0;"
+  if [[ "$has_homepage_json" == "1" ]]; then
+    sql_batch+="UPDATE admin_settings
+SET value = replace(value, '\"${escaped_old_sql}\"', '\"${escaped_new_sql}\"'),
+    updated_at = CURRENT_TIMESTAMP
+WHERE key = 'homepage'
+  AND instr(value, '\"${escaped_old_sql}\"') > 0;
+"
   fi
-  run_sql "INSERT INTO video_id_migration_map (old_id, new_id)
-           VALUES ('${old_sql}', '${new_sql}')
-           ON CONFLICT(old_id) DO UPDATE
-             SET new_id = excluded.new_id, migrated_at = CURRENT_TIMESTAMP;"
-  run_sql "COMMIT;"
-  run_sql "PRAGMA foreign_keys = ON;"
+  sql_batch+="INSERT INTO video_id_migration_map (old_id, new_id)
+VALUES ('${old_sql}', '${new_sql}')
+ON CONFLICT(old_id) DO UPDATE
+  SET new_id = excluded.new_id, migrated_at = CURRENT_TIMESTAMP;
+COMMIT;
+PRAGMA foreign_keys = ON;"
+
+  run_sql "$sql_batch"
 done
 
 echo "[normalize-video-ids] Done."

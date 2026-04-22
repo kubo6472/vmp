@@ -18,7 +18,8 @@ set -euo pipefail
 #   bash packages/podcast-host/bin/video_id_r2_prefix_migrate.sh
 
 DB_NAME="${DB_NAME:-video-subscription-db}"
-MODE_FLAG="${MODE_FLAG:---local}"
+MODE_FLAG="${MODE_FLAG:-}"
+MAPPING_JSON_PATH="${MAPPING_JSON_PATH:-}"
 if [[ "${1:-}" == "--remote" ]]; then
   MODE_FLAG="--remote"
 fi
@@ -28,6 +29,16 @@ RCLONE_REMOTE="${RCLONE_REMOTE:-}"
 R2_BUCKET_NAME="${R2_BUCKET_NAME:-}"
 APPLY="${APPLY:-0}"
 DELETE_OLD="${DELETE_OLD:-0}"
+
+if [[ "$APPLY" != "0" && "$APPLY" != "1" ]]; then
+  echo "[r2-prefix-migrate] APPLY must be 0 or 1 (got '$APPLY')" >&2
+  exit 1
+fi
+
+if [[ "$DELETE_OLD" != "0" && "$DELETE_OLD" != "1" ]]; then
+  echo "[r2-prefix-migrate] DELETE_OLD must be 0 or 1 (got '$DELETE_OLD')" >&2
+  exit 1
+fi
 
 run_rows() {
   local sql="$1"
@@ -66,14 +77,32 @@ r2_path() {
   printf "%s/%s" "$root" "$rel"
 }
 
-echo "[r2-prefix-migrate] DB=${DB_NAME} MODE=${MODE_FLAG} APPLY=${APPLY} DELETE_OLD=${DELETE_OLD}"
+if [[ -n "$MAPPING_JSON_PATH" && -f "$MAPPING_JSON_PATH" ]]; then
+  if [[ -z "$MODE_FLAG" ]]; then
+    MODE_FLAG="--remote"
+  elif [[ "$MODE_FLAG" != "--remote" ]]; then
+    echo "[r2-prefix-migrate] MAPPING_JSON_PATH is set; MODE_FLAG must be --remote (or unset)." >&2
+    exit 1
+  fi
+elif [[ -n "$MAPPING_JSON_PATH" ]]; then
+  echo "[r2-prefix-migrate] MAPPING_JSON_PATH does not exist: $MAPPING_JSON_PATH" >&2
+  exit 1
+else
+  # No mapping artifact provided; require explicit DB mode.
+  if [[ -z "$MODE_FLAG" ]]; then
+    echo "[r2-prefix-migrate] No MAPPING_JSON_PATH provided. Set MODE_FLAG explicitly to --local or --remote." >&2
+    exit 1
+  fi
+fi
+
+echo "[r2-prefix-migrate] DB=${DB_NAME} MODE=${MODE_FLAG:-n/a} APPLY=${APPLY} DELETE_OLD=${DELETE_OLD}"
 echo "[r2-prefix-migrate] R2 root: $(r2_root)"
 
 mapping_count=0
 while IFS= read -r row; do
   [ -n "$row" ] || continue
-  old_id="$(printf '%s' "$row" | node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(0,"utf8"));process.stdout.write(String(r.old_id ?? ""));')"
-  new_id="$(printf '%s' "$row" | node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(0,"utf8"));process.stdout.write(String(r.new_id ?? ""));')"
+  old_id="$(printf '%s' "$row" | node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(0,"utf8"));process.stdout.write(String(r.old_id ?? r.oldId ?? ""));')"
+  new_id="$(printf '%s' "$row" | node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(0,"utf8"));process.stdout.write(String(r.new_id ?? r.newId ?? ""));')"
   [ -n "$old_id" ] || continue
   [ -n "$new_id" ] || continue
   [ "$old_id" != "$new_id" ] || continue
@@ -100,12 +129,31 @@ while IFS= read -r row; do
       --checkers 16 \
       --transfers 8
     if [ "$DELETE_OLD" = "1" ]; then
+      if ! rclone check "$src" "$dst"; then
+        echo "  ERROR: verification failed for $old_id -> $new_id; refusing to delete source." >&2
+        exit 1
+      fi
       rclone delete "$src" --rmdirs
     fi
   else
     echo "  skip: source prefix missing ($src_prefix)"
   fi
-done < <(run_rows "SELECT old_id, new_id FROM video_id_migration_map ORDER BY old_id;")
+done < <(
+  if [[ -n "$MAPPING_JSON_PATH" && -f "$MAPPING_JSON_PATH" ]]; then
+    node -e '
+      const fs = require("fs");
+      const p = process.argv[1];
+      const payload = JSON.parse(fs.readFileSync(p, "utf8"));
+      const rows = Array.isArray(payload?.mappings) ? payload.mappings : [];
+      rows
+        .filter((r) => r && typeof r.old_id === "string" && typeof r.new_id === "string")
+        .sort((a, b) => a.old_id.localeCompare(b.old_id))
+        .forEach((r) => process.stdout.write(JSON.stringify(r) + "\n"));
+    ' "$MAPPING_JSON_PATH"
+  else
+    run_rows "SELECT old_id, new_id FROM video_id_migration_map ORDER BY old_id;"
+  fi
+)
 
 if [ "$mapping_count" -eq 0 ]; then
   echo "[r2-prefix-migrate] No rows in video_id_migration_map. Run DB normalize script first."

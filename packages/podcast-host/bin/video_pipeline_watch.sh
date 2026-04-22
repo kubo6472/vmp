@@ -14,6 +14,7 @@ MP3_ONLY="${MP3_ONLY:-0}"
 PREVIEW_MP3_SECONDS="${PREVIEW_MP3_SECONDS:-180}"
 PREVIEW_MP3_LOCK_SECONDS="${PREVIEW_MP3_LOCK_SECONDS:-60}"
 PREVIEW_MP3_ENABLED="${PREVIEW_MP3_ENABLED:-1}"
+MP3_BITRATE="${MP3_BITRATE:-128k}"
 # Controls how video IDs are derived from inbox filenames:
 #   none       -> keep filename stem as-is
 #   slug       -> normalize to lowercase [a-z0-9-]
@@ -117,8 +118,8 @@ sanitize_video_id() {
             return
             ;;
         *)
-            printf '%s' "$raw"
-            return
+            echo "ERROR: Unsupported VIDEO_ID_SANITIZE_MODE='$mode'. Expected one of: none, slug, slug-hash, base64url" >&2
+            exit 1
             ;;
     esac
 }
@@ -424,7 +425,7 @@ process_video() {
             log "🎧 Encoding podcast MP3"
             emit_pipeline_event "$VIDEO_ID" "podcast_mp3" "active" "start"
             ffmpeg -hide_banner -y -i "$INPUT_PATH" \
-                -vn -map 0:a:0 -c:a libmp3lame -b:a 128k -f mp3 "$TMP_DIR/$MP3_NAME.tmp.$$"
+                -vn -map 0:a:0 -c:a libmp3lame -b:a "$MP3_BITRATE" -f mp3 "$TMP_DIR/$MP3_NAME.tmp.$$"
             mv "$TMP_DIR/$MP3_NAME.tmp.$$" "$TMP_DIR/$MP3_NAME"
             log "✅ MP3 encoding done"
             emit_pipeline_event "$VIDEO_ID" "podcast_mp3" "active" "done"
@@ -575,7 +576,7 @@ if [ "$PREVIEW_MP3_ENABLED" = "1" ] && [ "$HAS_AUDIO" -gt 0 ]; then
         emit_pipeline_event "$VIDEO_ID" "preview_wait" "active" "${PREVIEW_MP3_LOCK_SECONDS}s"
         sleep "$PREVIEW_MP3_LOCK_SECONDS"
         emit_pipeline_event "$VIDEO_ID" "preview_render" "active" "${PREVIEW_MP3_SECONDS}s"
-        ffmpeg -hide_banner -y -i "$TMP_DIR/$MP3_NAME" -t "$PREVIEW_MP3_SECONDS" -vn -c:a libmp3lame -b:a 128k -f mp3 "$TMP_DIR/$MP3_PREVIEW_NAME.tmp.$$"
+        ffmpeg -hide_banner -y -i "$TMP_DIR/$MP3_NAME" -t "$PREVIEW_MP3_SECONDS" -vn -c:a libmp3lame -b:a "$MP3_BITRATE" -f mp3 "$TMP_DIR/$MP3_PREVIEW_NAME.tmp.$$"
         mv "$TMP_DIR/$MP3_PREVIEW_NAME.tmp.$$" "$TMP_DIR/$MP3_PREVIEW_NAME"
         emit_pipeline_event "$VIDEO_ID" "preview_upload" "active" "start"
         rclone copyto "$TMP_DIR/$MP3_PREVIEW_NAME" "$(r2_path "videos/${VIDEO_ID}/${MP3_PREVIEW_NAME}")"

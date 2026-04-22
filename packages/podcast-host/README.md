@@ -66,7 +66,7 @@ Expose the HTTP port to the Worker only (VPN, SSH tunnel, or reverse proxy with 
 - `npm run start` — supervisor (pipeline + dashboard + webhook)
 - `npm run pipeline` — bash pipeline only (no Node; for debugging)
 - `npm run render -- <video_id> <seconds>` — one-off preview MP3
-- `npm run migrate-r2-prefixes` — copy/sync `videos/<old_id>/` prefixes to `videos/<new_id>/` using mapping JSON from API migration
+- `npm run migrate:r2-video-prefixes` — copy/sync `videos/<old_id>/` prefixes to `videos/<new_id>/` using mapping JSON from API migration
 
 ## Video ID migration workflow (no reupload)
 

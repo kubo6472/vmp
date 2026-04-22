@@ -2606,14 +2606,15 @@ export function getProxyVideoIdFromPath(pathname: string) {
   if (pathParts[0] === 'videos') {
     // Normalized proxy object path used by handleVideoProxy (videos/{id}/...)
     videoIdSegment = pathParts[1]
-  } else if (pathParts[0] === 'api' && pathParts[1] === 'video-proxy') {
+  } else if (pathParts[0] === 'api' && pathParts[1] === 'video-proxy' && pathParts[2] === 'videos') {
     // Full request pathname form (/api/video-proxy/videos/{id}/...)
     videoIdSegment = pathParts[3]
   }
+  if (typeof videoIdSegment !== 'string' || videoIdSegment.length === 0) return null
   const videoId = decodePathSegment(videoIdSegment)
   if (typeof videoId !== 'string' || videoId.length === 0) return null
   // Keep route semantics as a single path segment even after decoding.
-  if (videoId.includes('/')) return null
+  if (videoId.includes('/') || videoId === '.' || videoId === '..') return null
   return videoId
 }
 

@@ -13,6 +13,7 @@ PREVIEW_SEC="${2:?preview seconds (integer)}"
 R2_BUCKET="${R2_BUCKET:-vmp-videos}"
 RCLONE_REMOTE="${RCLONE_REMOTE:-}"
 R2_BUCKET_NAME="${R2_BUCKET_NAME:-}"
+MP3_BITRATE="${MP3_BITRATE:-128k}"
 MP3_FULL="podcast.mp3"
 MP3_OUT="podcast_preview.mp3"
 TMP_DIR="${TMPDIR:-/tmp}/vmp_podcast_preview_${VIDEO_ID}_$$"
@@ -61,8 +62,8 @@ if [ ! -s "$LOCAL_IN" ]; then
   exit 1
 fi
 
-echo "Encoding first ${PREVIEW_SEC}s to ${MP3_OUT} at 128k"
-ffmpeg -hide_banner -y -i "$LOCAL_IN" -t "$PREVIEW_SEC" -vn -c:a libmp3lame -b:a 128k -f mp3 "$LOCAL_OUT"
+echo "Encoding first ${PREVIEW_SEC}s to ${MP3_OUT} at ${MP3_BITRATE}"
+ffmpeg -hide_banner -y -i "$LOCAL_IN" -t "$PREVIEW_SEC" -vn -c:a libmp3lame -b:a "$MP3_BITRATE" -f mp3 "$LOCAL_OUT"
 
 REMOTE_OUT="$(r2_path "videos/${VIDEO_ID}/${MP3_OUT}")"
 echo "Uploading ${REMOTE_OUT}"
