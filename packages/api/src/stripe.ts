@@ -492,7 +492,10 @@ export async function handleCheckout(request: any, env: any, corsHeaders: any) {
     if (promoCodeInput) {
       const promoValidation = await resolvePromoCodeForCheckout(env, promoCodeInput, planType)
       if (!promoValidation.ok) {
-        return jsonResponse({ error: promoValidation.error, code: promoValidation.code }, promoValidation.status ?? 400, corsHeaders)
+        return jsonResponse({
+          error: promoValidation.error ?? 'Promo code is not valid',
+          code: promoValidation.reason ?? 'invalid_promo',
+        }, promoValidation.status ?? 400, corsHeaders)
       }
       promoCodeId = promoValidation.checkoutMeta?.promoCodeId ?? null
     }
