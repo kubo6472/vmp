@@ -50,6 +50,7 @@ Expose the HTTP port to the Worker only (VPN, SSH tunnel, or reverse proxy with 
 | `VMP_RUN_PIPELINE` | `1` (default) run watchfolder pipeline; `0` only UI + preview jobs |
 | `VMP_PIPELINE_SCRIPT` | Override path to `video_pipeline_watch.sh` |
 | `VMP_PREVIEW_CONCURRENCY` | Parallel preview encodes (default `1`) |
+| `MP3_BITRATE` | Full and preview podcast MP3 bitrate in kbps (default `128`) |
 | `VIDEO_ID_SANITIZE_MODE` | Controls ID derivation from filename stem: `slug-hash` (default), `slug`, `base64url`, `none` |
 | `VAAPI_DEVICE` | GPU device node for VAAPI hardware encoding (default `/dev/dri/renderD128`). Requires a GPU with VAAPI support and read/write access to the device node. |
 | `INBOX_DIR`, `TMP_DIR_BASE`, `R2_BUCKET`, … | Passed through to the bash pipeline |

@@ -61,8 +61,8 @@ if [ ! -s "$LOCAL_IN" ]; then
   exit 1
 fi
 
-echo "Encoding first ${PREVIEW_SEC}s to ${MP3_OUT}"
-ffmpeg -hide_banner -y -i "$LOCAL_IN" -t "$PREVIEW_SEC" -vn -c:a libmp3lame -q:a 2 -f mp3 "$LOCAL_OUT"
+echo "Encoding first ${PREVIEW_SEC}s to ${MP3_OUT} at 128k"
+ffmpeg -hide_banner -y -i "$LOCAL_IN" -t "$PREVIEW_SEC" -vn -c:a libmp3lame -b:a 128k -f mp3 "$LOCAL_OUT"
 
 REMOTE_OUT="$(r2_path "videos/${VIDEO_ID}/${MP3_OUT}")"
 echo "Uploading ${REMOTE_OUT}"
