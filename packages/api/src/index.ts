@@ -1951,33 +1951,6 @@ async function handleAdminVideoNotify(request: any, env: any, ctx: any, corsHead
   return jsonResponse({ ok: true, push_enqueued_at: responseTimestamp }, 200, corsHeaders)
 }
 
-async function handleAdminVideoPublishSweep(request: any, env: any, corsHeaders: any) {
-  try {
-    await requireRole(request, env, 'editor', 'admin', 'super_admin')
-  } catch {
-    return jsonResponse({ error: 'Unauthorized' }, 401, corsHeaders)
-  }
-  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders)
-  const db = getDatabaseBinding(env)
-  const nowIso = new Date().toISOString()
-  const result = await db.prepare(`
-    UPDATE videos
-    SET publish_status = 'published',
-        published_at = COALESCE(published_at, CURRENT_TIMESTAMP),
-        scheduled_publish_at = NULL,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE publish_status != 'published'
-      AND scheduled_publish_at IS NOT NULL
-      AND scheduled_publish_at <= CURRENT_TIMESTAMP
-  `).run()
-  const publishedCount = Number(result.meta?.changes ?? result.changes ?? 0)
-  return jsonResponse({
-    ok: true,
-    publishedCount,
-    executedAt: nowIso,
-  }, 200, corsHeaders)
-}
-
 async function handleVideoSwap(request: any, env: any, corsHeaders: any) {
   try {
     await requireRole(request, env, 'editor', 'admin', 'super_admin')

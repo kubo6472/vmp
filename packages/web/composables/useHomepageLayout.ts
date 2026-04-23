@@ -96,9 +96,6 @@ export function buildHomepageRenderModel({
     .slice(0, 4)
     .map((id) => videoById.get(id))
     .filter(Boolean)
-  const recentTwoByTwoVideos = (placement?.recentGrid ?? [])
-    .map((slot) => (slot ? videoById.get(slot.id) : null))
-    .filter(Boolean)
 
   const categorySections = (placement?.categoryBlocks ?? []).map((block) => {
     const combinedIds = [...block.visible, ...block.overflow].map((ref) => ref.id)
