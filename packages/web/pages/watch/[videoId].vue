@@ -239,9 +239,10 @@
               </span>
             </div>
 
-            <p class="text-gray-700 dark:text-gray-300 leading-relaxed">
-              {{ videoDescription }}
-            </p>
+            <div
+              class="text-gray-700 dark:text-gray-300 leading-relaxed prose prose-sm dark:prose-invert max-w-none"
+              v-html="videoDescriptionHtml"
+            ></div>
             <p v-if="videoData.video.isLivestream" class="mt-3 text-sm text-gray-500 dark:text-gray-400">
               {{ strings.livestreamRealtimeNote }}
             </p>
@@ -304,6 +305,7 @@ import 'media-chrome'
 import 'videojs-video-element'
 import { resolvePlaylistDuration } from '~/composables/useHlsDuration'
 import { sizeUrl } from '~/composables/useThumbnail'
+import { renderMarkdownToHtml } from '~/utils/markdown'
 import strings from '~/utils/strings'
 
 const route  = useRoute()
@@ -378,9 +380,13 @@ const previewPercentage = computed(() => {
   return (Math.min(videoData.value.video.previewDuration, full) / full) * 100
 })
 
-const videoDescription = computed(() =>
-  videoData.value?.video?.description || strings.noDescription
-)
+const videoDescription = computed(() => {
+  const rawDescription = videoData.value?.video?.description
+  if (typeof rawDescription !== 'string') return strings.noDescription
+  const trimmedDescription = rawDescription.trim()
+  return trimmedDescription ? trimmedDescription : strings.noDescription
+})
+const videoDescriptionHtml = computed(() => renderMarkdownToHtml(videoDescription.value))
 
 const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60)

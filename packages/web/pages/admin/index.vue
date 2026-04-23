@@ -170,7 +170,13 @@
               </div>
 
               <div v-if="block.type === 'featured_row'" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <VideoCard v-for="video in block.videos" :key="`preview-featured-${video.id}`" :video="video" />
+                <VideoCard
+                  v-for="video in block.videos"
+                  :key="`preview-featured-${video.id}`"
+                  :video="video"
+                  :show-description="false"
+                  :show-relative-timestamp="true"
+                />
               </div>
 
               <div v-else-if="block.type === 'top_video'" class="space-y-4">
@@ -178,6 +184,9 @@
                   v-for="video in block.videos"
                   :key="`preview-top-video-${video.id}`"
                   :video="video"
+                  layout="horizontal"
+                  :show-description="false"
+                  :show-relative-timestamp="true"
                 />
               </div>
 
@@ -187,6 +196,8 @@
                     v-for="video in block.categorySection.visible"
                     :key="`preview-category-video-${block.categorySection.category.id}-${video.id}`"
                     :video="video"
+                    :show-description="false"
+                    :show-relative-timestamp="true"
                   />
                 </div>
                 <p v-else class="text-xs text-gray-500 dark:text-gray-400">No category selected or no videos available.</p>
@@ -205,6 +216,8 @@
                       v-for="video in child.videos"
                       :key="`preview-split-featured-${child.id}-${video.id}`"
                       :video="video"
+                      :show-description="false"
+                      :show-relative-timestamp="true"
                     />
                   </div>
                   <div v-else-if="child.type === 'top_video'" class="space-y-3">
@@ -212,6 +225,9 @@
                       v-for="video in child.videos"
                       :key="`preview-split-top-${child.id}-${video.id}`"
                       :video="video"
+                      layout="horizontal"
+                      :show-description="false"
+                      :show-relative-timestamp="true"
                     />
                   </div>
                   <div v-else-if="child.categorySection" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -219,6 +235,8 @@
                       v-for="video in child.categorySection.visible"
                       :key="`preview-split-category-video-${child.id}-${video.id}`"
                       :video="video"
+                      :show-description="false"
+                      :show-relative-timestamp="true"
                     />
                   </div>
                 </section>
@@ -255,7 +273,7 @@
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium w-16">Thumb</th>
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Title</th>
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Status</th>
-                    <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Category</th>
+                    <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium w-[1%] whitespace-nowrap">Category</th>
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Duration</th>
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Preview lock</th>
                     <th class="sticky top-0 z-10 bg-white dark:bg-gray-900 pb-2 pr-4 font-medium">Views</th>
@@ -384,35 +402,23 @@
                           </a>
                         </template>
                       </div>
-                      <!-- Description editor -->
-                      <div class="mt-1 group/desc flex items-start gap-1 min-w-0">
-                        <div v-if="editingDescription?.id === video.id" class="w-full">
-                          <textarea
-                            ref="descriptionInputEl"
-                            v-model="editingDescription.value"
-                            rows="3"
-                            class="w-full px-2 py-1 text-xs rounded border border-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"
-                            @keydown.escape="editingDescription = null"
-                            @blur="saveDescriptionEdit(video)"
-                          ></textarea>
-                        </div>
-                        <template v-else>
-                          <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 min-w-0">{{ video.description || '—' }}</p>
-                          <button
-                            class="opacity-0 group-hover/desc:opacity-100 p-0.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-opacity flex-shrink-0"
-                            title="Edit description"
-                            @click="startDescriptionEdit(video)"
-                          >
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                            </svg>
-                          </button>
-                        </template>
+                      <!-- Description summary -->
+                      <div class="mt-1 flex items-start gap-2 min-w-0">
+                        <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 min-w-0">{{ video.description || '—' }}</p>
+                        <button
+                          type="button"
+                          class="p-0.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-opacity flex-shrink-0"
+                          title="Edit description"
+                          @click="openDescriptionModal(video)"
+                        >
+                          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                        </button>
                       </div>
                       <div class="mt-1 flex flex-wrap gap-1">
                         <span v-if="video.livestream_provider" class="inline-flex items-center gap-1 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 px-2 py-0.5 text-[10px] font-semibold">🔴 Live</span>
                         <span v-if="video.r2_exists === false && !video.livestream_provider" class="inline-flex items-center gap-1 rounded-full bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300 px-2 py-0.5 text-[10px] font-semibold">⚠ R2 missing</span>
-                        <span v-if="video.publish_status === 'draft'" class="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-0.5 text-[10px] font-semibold">📝 Draft</span>
                       </div>
                     </td>
                     <td class="py-3 pr-4">
@@ -421,13 +427,7 @@
                           class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
                           :class="statusBadgeClass(video.publish_status)"
                         >
-                          {{ video.publish_status ?? 'draft' }}
-                        </span>
-                        <span
-                          v-if="video.publish_status === 'draft' && video.scheduled_publish_at"
-                          class="block text-[11px] font-semibold text-sky-600 dark:text-sky-400"
-                        >
-                          Scheduled
+                          {{ statusBadgeLabel(video) }}
                         </span>
                         <span v-if="video.livestream_provider" class="block text-[11px] text-purple-600 dark:text-purple-300">
                           stream: {{ video.livestream_status || 'draft' }}
@@ -449,7 +449,8 @@
                     </td>
                     <td class="py-3 pr-4">
                       <select
-                        class="w-44 px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white"
+                        class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white"
+                        :style="{ width: `${categorySelectWidthCh}ch` }"
                         :value="video.category_id || ''"
                         @change="(e) => updateVideoCategory(video, (e.target as HTMLSelectElement).value)"
                       >
@@ -478,39 +479,8 @@
                     <td class="py-3 pr-4 text-gray-600 dark:text-gray-400 whitespace-nowrap">
                       {{ Number(video.total_views || 0).toLocaleString() }}
                     </td>
-                    <td class="py-3 pr-4 text-gray-600 dark:text-gray-400 align-top">
-                      <button
-                        type="button"
-                        class="text-left underline decoration-dotted hover:text-gray-900 dark:hover:text-gray-200 whitespace-nowrap"
-                        :title="'Edit upload date or schedule'"
-                        @click="toggleSchedulePanel(video)"
-                      >
-                        {{ formatDate(video.upload_date) }}
-                      </button>
-                      <div
-                        v-if="schedulePanelVideoId === video.id"
-                        class="mt-2 p-2 rounded border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-950/50 space-y-2 max-w-[14rem]"
-                      >
-                        <label class="block text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Upload date</label>
-                        <input
-                          :value="uploadDateEditDraft[video.id] ?? formatEuropeanDateTimeFromAny(video.upload_date)"
-                          type="text"
-                          inputmode="numeric"
-                          autocomplete="off"
-                          :placeholder="scheduleInputPlaceholder"
-                          class="w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white font-mono"
-                          :disabled="statusUpdating[video.id]"
-                          @input="(e) => setUploadDateDraft(video.id, (e.target as HTMLInputElement).value)"
-                        />
-                        <button
-                          type="button"
-                          class="w-full px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white font-medium disabled:opacity-50"
-                          :disabled="statusUpdating[video.id]"
-                          @click="applyUploadDateFromPanel(video)"
-                        >
-                          Save upload date
-                        </button>
-                      </div>
+                    <td class="py-3 pr-4 text-gray-600 dark:text-gray-400 align-top whitespace-nowrap">
+                      {{ formatDateTime(video.upload_date) }}
                     </td>
                     <td class="py-3 pr-4">
                       <button
@@ -539,69 +509,18 @@
                           :disabled="statusUpdating[video.id]"
                           @click="updateVideoStatus(video, 'published', null)"
                         >Publish</button>
-                        <div v-if="video.publish_status === 'draft'" class="flex flex-col gap-1 min-w-[11rem]">
-                          <input
-                            :value="scheduleInputDisplay(video)"
-                            type="text"
-                            inputmode="numeric"
-                            autocomplete="off"
-                            :placeholder="scheduleInputPlaceholder"
-                            class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white font-mono w-full max-w-[11rem]"
-                            :disabled="statusUpdating[video.id]"
-                            @input="(e) => setScheduleDraft(video.id, (e.target as HTMLInputElement).value)"
-                          />
-                          <button
-                            type="button"
-                            class="px-2 py-1 text-xs rounded bg-sky-600 hover:bg-sky-700 text-white font-medium disabled:opacity-50 self-start"
-                            :disabled="statusUpdating[video.id]"
-                            @click="applyScheduleFromForm(video)"
-                          >
-                            Apply schedule
-                          </button>
-                          <button
-                            v-if="video.scheduled_publish_at"
-                            class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50 self-start"
-                            :disabled="statusUpdating[video.id]"
-                            @click="clearScheduleFromForm(video)"
-                          >Clear schedule</button>
-                        </div>
-                        <div v-if="video.publish_status === 'published'" class="flex flex-col gap-1 min-w-[11rem]">
-                          <input
-                            :value="publishedInputDisplay(video)"
-                            type="text"
-                            inputmode="numeric"
-                            autocomplete="off"
-                            :placeholder="scheduleInputPlaceholder"
-                            class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white font-mono w-full max-w-[11rem]"
-                            :disabled="statusUpdating[video.id]"
-                            @input="(e) => setPublishedDraft(video.id, (e.target as HTMLInputElement).value)"
-                          />
-                          <button
-                            type="button"
-                            class="px-2 py-1 text-xs rounded bg-sky-600 hover:bg-sky-700 text-white font-medium disabled:opacity-50 self-start"
-                            :disabled="statusUpdating[video.id]"
-                            @click="applyPublishedAtFromForm(video)"
-                          >
-                            Apply date
-                          </button>
-                          <button
-                            class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50"
-                            :disabled="statusUpdating[video.id]"
-                            @click="clearPublishedFromForm(video)"
-                          >Clear publish date</button>
-                        </div>
+                        <button
+                          type="button"
+                          class="px-2 py-1 text-xs rounded bg-sky-600 hover:bg-sky-700 text-white font-medium disabled:opacity-50"
+                          :disabled="statusUpdating[video.id]"
+                          @click="openScheduleModal(video)"
+                        >Schedule</button>
                         <button
                           v-if="video.publish_status !== 'draft'"
                           class="px-2 py-1 text-xs rounded bg-amber-500 hover:bg-amber-600 text-white font-medium disabled:opacity-50"
                           :disabled="statusUpdating[video.id]"
-                          @click="updateVideoStatus(video, 'draft', null)"
+                          @click="openConfirmModal(video, 'revert_to_draft')"
                         >Revert to draft</button>
-                        <button
-                          v-if="video.publish_status !== 'archived'"
-                          class="px-2 py-1 text-xs rounded bg-gray-400 hover:bg-gray-500 text-white font-medium disabled:opacity-50"
-                          :disabled="statusUpdating[video.id]"
-                          @click="openConfirmModal(video, 'archive')"
-                        >Archive</button>
                         <button
                           v-if="video.publish_status === 'published'"
                           class="px-2 py-1 text-xs rounded bg-purple-600 hover:bg-purple-700 text-white font-medium"
@@ -1835,6 +1754,144 @@
       </div>
     </div>
 
+    <!-- Schedule modal -->
+    <div v-if="scheduleModal.open" class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" @click.self="closeScheduleModal">
+      <div
+        ref="scheduleDialogRef"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="scheduleModalTitle"
+        tabindex="-1"
+        class="w-full max-w-lg rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-5"
+      >
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 id="scheduleModalTitle" class="text-lg font-semibold text-gray-900 dark:text-white">Schedule</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400 line-clamp-1">{{ scheduleModalVideo?.title || 'Video' }}</p>
+          </div>
+          <button class="text-sm text-gray-600 dark:text-gray-300 hover:underline" @click="closeScheduleModal">Close</button>
+        </div>
+        <div v-if="scheduleModalVideo" class="space-y-4">
+          <div class="space-y-1">
+            <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Upload date</label>
+            <input
+              v-model="scheduleModal.uploadDate"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              :placeholder="scheduleInputPlaceholder"
+              class="w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white font-mono"
+              :disabled="statusUpdating[scheduleModalVideo.id]"
+            />
+            <button
+              type="button"
+              class="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white font-medium disabled:opacity-50"
+              :disabled="statusUpdating[scheduleModalVideo.id]"
+              @click="applyUploadDateFromScheduleModal(scheduleModalVideo)"
+            >Apply upload date</button>
+          </div>
+          <div class="space-y-1">
+            <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Scheduled publish date</label>
+            <input
+              v-model="scheduleModal.scheduleDate"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              :placeholder="scheduleInputPlaceholder"
+              class="w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white font-mono"
+              :disabled="statusUpdating[scheduleModalVideo.id]"
+            />
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="px-2 py-1 text-xs rounded bg-sky-600 hover:bg-sky-700 text-white font-medium disabled:opacity-50"
+                :disabled="statusUpdating[scheduleModalVideo.id]"
+                @click="applyScheduleFromModal(scheduleModalVideo)"
+              >Apply schedule</button>
+              <button
+                type="button"
+                class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50"
+                :disabled="statusUpdating[scheduleModalVideo.id]"
+                @click="clearScheduleFromModal(scheduleModalVideo)"
+              >Clear schedule</button>
+            </div>
+          </div>
+          <div class="space-y-1">
+            <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Published date</label>
+            <input
+              v-model="scheduleModal.publishedDate"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              :placeholder="scheduleInputPlaceholder"
+              class="w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white font-mono"
+              :disabled="statusUpdating[scheduleModalVideo.id]"
+            />
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="px-2 py-1 text-xs rounded bg-sky-600 hover:bg-sky-700 text-white font-medium disabled:opacity-50"
+                :disabled="statusUpdating[scheduleModalVideo.id]"
+                @click="applyPublishedAtFromModal(scheduleModalVideo)"
+              >Apply date</button>
+              <button
+                type="button"
+                class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50"
+                :disabled="statusUpdating[scheduleModalVideo.id]"
+                @click="clearPublishedDateFromModal(scheduleModalVideo)"
+              >Clear publish date</button>
+            </div>
+          </div>
+        </div>
+        <div class="mt-4 flex justify-end">
+          <button type="button" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 text-sm" @click="closeScheduleModal">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Description modal -->
+    <div v-if="descriptionModal.open" class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" @click.self="closeDescriptionModal">
+      <div
+        ref="descriptionDialogRef"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="descriptionModalTitle"
+        tabindex="-1"
+        class="w-full max-w-3xl rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-5"
+      >
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 id="descriptionModalTitle" class="text-lg font-semibold text-gray-900 dark:text-white">Edit description</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400 line-clamp-1">{{ descriptionModal.title }}</p>
+          </div>
+          <button class="text-sm text-gray-600 dark:text-gray-300 hover:underline" @click="closeDescriptionModal">Close</button>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Markdown</label>
+            <textarea
+              ref="descriptionInputEl"
+              v-model="descriptionModal.value"
+              rows="14"
+              class="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white font-mono"
+              placeholder="Use markdown: **bold**, *italic*, lists, links, headings..."
+            ></textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Preview</label>
+            <div
+              class="min-h-[22rem] max-h-[26rem] overflow-y-auto px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-sm text-gray-900 dark:text-gray-100 prose prose-sm dark:prose-invert max-w-none"
+              v-html="descriptionModalPreviewHtml"
+            ></div>
+          </div>
+        </div>
+        <div class="mt-4 flex justify-end gap-2">
+          <button type="button" class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 text-sm" @click="closeDescriptionModal">Cancel</button>
+          <button type="button" class="px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold" @click="saveDescriptionModal">Save description</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Swap modal -->
     <div v-if="swapModal.open" class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" @click.self="swapModal.open = false">
       <div
@@ -1942,6 +1999,7 @@ import { sizeUrl } from '~/composables/useThumbnail'
 import { useAdminNewsletterPolling } from '~/composables/useAdminNewsletterPolling'
 import { buildHomepageRenderModel } from '~/composables/useHomepageLayout'
 import type { HomepageLayoutBlock, HomepagePlacementResponse, HomepageRenderLeafBlock, HomepageRenderSplitBlock } from '~/composables/useHomepageLayout'
+import { renderMarkdownToHtml } from '~/utils/markdown'
 
 // ── Route guard ───────────────────────────────────────────────────────────────
 // This single line is the only meaningful addition to this file.
@@ -2071,7 +2129,6 @@ const saveMessageClass = ref('')
 const previewLockByVideoId = ref<Record<string, number>>({})
 const actualDurationByVideoId = ref<Record<string, number>>({})
 const statusUpdating = ref<Record<string, boolean>>({})
-const schedulePanelVideoId = ref<string | null>(null)
 const scheduleTextDraft = ref<Record<string, string>>({})
 const publishedTextDraft = ref<Record<string, string>>({})
 const uploadDateEditDraft = ref<Record<string, string>>({})
@@ -2098,7 +2155,30 @@ const editingTitle = ref<{ id: string; value: string } | null>(null)
 const titleInputEl = ref<HTMLInputElement | null>(null)
 const editingSlug  = ref<{ id: string; value: string } | null>(null)
 const slugInputEl  = ref<HTMLInputElement | null>(null)
-const editingDescription = ref<{ id: string; value: string } | null>(null)
+const scheduleModal = ref<{
+  open: boolean
+  videoId: string | null
+  uploadDate: string
+  scheduleDate: string
+  publishedDate: string
+}>({
+  open: false,
+  videoId: null,
+  uploadDate: '',
+  scheduleDate: '',
+  publishedDate: '',
+})
+const descriptionModal = ref<{
+  open: boolean
+  videoId: string | null
+  title: string
+  value: string
+}>({
+  open: false,
+  videoId: null,
+  title: '',
+  value: '',
+})
 const descriptionInputEl = ref<HTMLTextAreaElement | null>(null)
 const swapModal = ref<{
   open: boolean
@@ -2560,12 +2640,42 @@ const parseEuropeanDateTimeToIso = (raw: string): string | null => {
 }
 
 const scheduleInputPlaceholder = 'DD.MM.YYYY HH:mm'
+const categorySelectWidthCh = computed(() => {
+  const maxAllowedWidthCh = 30
+  const longestNameLength = categories.value.reduce((max, category) => Math.max(max, String(category.name || '').length), 0)
+  return Math.min(maxAllowedWidthCh, Math.max(12, longestNameLength + 2))
+})
+const getVideoById = (videoId: string | null) => {
+  if (!videoId) return null
+  return uploads.value.find((video) => video.id === videoId) ?? null
+}
+const scheduleModalVideo = computed(() => getVideoById(scheduleModal.value.videoId))
+const descriptionModalPreviewHtml = computed(() => {
+  const html = renderMarkdownToHtml(descriptionModal.value.value)
+  return html || '<p class="text-gray-500 dark:text-gray-400">No description preview.</p>'
+})
 
-const scheduleInputDisplay = (video: Video) =>
-  scheduleTextDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.scheduled_publish_at || null)
+const isScheduledDraft = (video: Video) =>
+  video.publish_status === 'draft' && Boolean(video.scheduled_publish_at)
 
-const publishedInputDisplay = (video: Video) =>
-  publishedTextDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.published_at || null)
+function statusBadgeLabel(video: Video) {
+  if (isScheduledDraft(video)) return 'scheduled'
+  return video.publish_status ?? 'draft'
+}
+
+const openScheduleModal = (video: Video) => {
+  scheduleModal.value = {
+    open: true,
+    videoId: video.id,
+    uploadDate: uploadDateEditDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.upload_date),
+    scheduleDate: scheduleTextDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.scheduled_publish_at || null),
+    publishedDate: publishedTextDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.published_at || null),
+  }
+}
+
+const closeScheduleModal = () => {
+  scheduleModal.value.open = false
+}
 
 const setScheduleDraft = (videoId: string, value: string) => {
   scheduleTextDraft.value = { ...scheduleTextDraft.value, [videoId]: value }
@@ -2573,18 +2683,6 @@ const setScheduleDraft = (videoId: string, value: string) => {
 
 const setPublishedDraft = (videoId: string, value: string) => {
   publishedTextDraft.value = { ...publishedTextDraft.value, [videoId]: value }
-}
-
-const toggleSchedulePanel = (video: Video) => {
-  if (schedulePanelVideoId.value === video.id) {
-    schedulePanelVideoId.value = null
-    return
-  }
-  schedulePanelVideoId.value = video.id
-  uploadDateEditDraft.value = {
-    ...uploadDateEditDraft.value,
-    [video.id]: formatEuropeanDateTimeFromAny(video.upload_date),
-  }
 }
 
 const setUploadDateDraft = (videoId: string, value: string) => {
@@ -4256,23 +4354,23 @@ async function patchVideoUploadDate(video: Video, iso: string) {
   }
 }
 
-async function applyUploadDateFromPanel(video: Video) {
-  const raw = uploadDateEditDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.upload_date)
+async function applyUploadDateFromScheduleModal(video: Video) {
+  const raw = scheduleModal.value.uploadDate.trim()
   const iso = parseAdminDateTimeToIso(raw)
   if (!iso) {
     showToast('error', `Use ${scheduleInputPlaceholder} (24-hour).`)
     return
   }
+  setUploadDateDraft(video.id, raw)
   await patchVideoUploadDate(video, iso)
 }
 
-async function applyScheduleFromForm(video: Video) {
-  const raw = scheduleTextDraft.value[video.id] ?? (video.scheduled_publish_at
-    ? formatEuropeanDateTimeFromAny(video.scheduled_publish_at)
-    : '')
+async function applyScheduleFromModal(video: Video) {
+  const raw = scheduleModal.value.scheduleDate
   const trimmed = raw.trim()
   if (!trimmed) {
     await updateVideoStatus(video, 'draft', '')
+    scheduleModal.value.scheduleDate = ''
     clearScheduleTextDraft(video.id)
     return
   }
@@ -4281,23 +4379,27 @@ async function applyScheduleFromForm(video: Video) {
     showToast('error', `Use ${scheduleInputPlaceholder} (24-hour).`)
     return
   }
+  setScheduleDraft(video.id, trimmed)
   await updateVideoStatus(video, 'draft', iso)
+  scheduleModal.value.scheduleDate = formatEuropeanDateTimeFromAny(iso)
   clearScheduleTextDraft(video.id)
 }
 
-async function clearScheduleFromForm(video: Video) {
+async function clearScheduleFromModal(video: Video) {
   await updateVideoStatus(video, 'draft', '')
   const latest = uploads.value.find(v => v.id === video.id)
   if (!latest?.scheduled_publish_at) {
+    scheduleModal.value.scheduleDate = ''
     clearScheduleTextDraft(video.id)
   }
 }
 
-async function applyPublishedAtFromForm(video: Video) {
-  const raw = publishedTextDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.published_at || null)
+async function applyPublishedAtFromModal(video: Video) {
+  const raw = scheduleModal.value.publishedDate
   const trimmed = raw.trim()
   if (!trimmed) {
     await updateVideoPublishedAt(video, '')
+    scheduleModal.value.publishedDate = ''
     clearPublishedTextDraft(video.id)
     return
   }
@@ -4306,14 +4408,17 @@ async function applyPublishedAtFromForm(video: Video) {
     showToast('error', `Use ${scheduleInputPlaceholder} (24-hour).`)
     return
   }
+  setPublishedDraft(video.id, trimmed)
   await updateVideoPublishedAt(video, iso)
+  scheduleModal.value.publishedDate = formatEuropeanDateTimeFromAny(iso)
   clearPublishedTextDraft(video.id)
 }
 
-async function clearPublishedFromForm(video: Video) {
+async function clearPublishedDateFromModal(video: Video) {
   await updateVideoPublishedAt(video, '')
   const latest = uploads.value.find(v => v.id === video.id)
   if (!latest?.published_at) {
+    scheduleModal.value.publishedDate = ''
     clearPublishedTextDraft(video.id)
   }
 }
@@ -4509,7 +4614,7 @@ type ConfirmModalState =
   | {
       open: true
       mode: 'video'
-      action: 'trash' | 'archive'
+      action: 'trash' | 'revert_to_draft'
       video: Video
       impactText: string
     }
@@ -4530,7 +4635,7 @@ const confirmModal = ref<ConfirmModalState>({ open: false })
 const confirmModalTitle = computed(() => {
   const m = confirmModal.value
   if (!m.open) return ''
-  if (m.mode === 'video') return m.action === 'trash' ? 'Permanently delete video?' : 'Archive video?'
+  if (m.mode === 'video') return m.action === 'trash' ? 'Permanently delete video?' : 'Revert video to draft?'
   if (m.mode === 'user_role') return 'Confirm role change'
   return 'Confirm subscription change'
 })
@@ -4538,7 +4643,9 @@ const confirmModalTitle = computed(() => {
 const confirmModalConfirmClass = computed(() => {
   const m = confirmModal.value
   if (!m.open || m.mode === 'video') {
-    return m.open && m.mode === 'video' && m.action === 'trash' ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'
+    return m.open && m.mode === 'video' && m.action === 'trash'
+      ? 'bg-red-600 hover:bg-red-700'
+      : 'bg-amber-600 hover:bg-amber-700'
   }
   return 'bg-purple-600 hover:bg-purple-700'
 })
@@ -4559,7 +4666,7 @@ function onConfirmCancel() {
   }
 }
 
-function openConfirmModal(video: Video, action: 'trash' | 'archive'): void
+function openConfirmModal(video: Video, action: 'trash' | 'revert_to_draft'): void
 function openConfirmModal(payload: {
   mode: 'user_role' | 'user_subscription'
   userId: string
@@ -4581,7 +4688,7 @@ function openConfirmModal(
     nextSubscription: string
     impactText: string
   },
-  action?: 'trash' | 'archive',
+  action?: 'trash' | 'revert_to_draft',
 ) {
   if (videoOrPayload && typeof videoOrPayload === 'object' && 'mode' in videoOrPayload) {
     const p = videoOrPayload
@@ -4607,7 +4714,7 @@ function openConfirmModal(
     video,
     impactText: act === 'trash'
       ? `This permanently removes ${video.title} from the database and deletes all files in R2 (videos/${video.id}/). This cannot be undone.`
-      : `This hides ${video.title} from published surfaces. It remains restorable from Drafts.`,
+      : `This will move ${video.title} back to draft status and remove it from published surfaces.`,
   }
 }
 
@@ -4616,8 +4723,11 @@ async function runConfirmedAction() {
   if (!current.open) return
   if (current.mode === 'video') {
     closeConfirmModal()
-    if (current.action === 'trash') await trashVideo(current.video)
-    else await updateVideoStatus(current.video, 'archived')
+    if (current.action === 'trash') {
+      await trashVideo(current.video)
+    } else {
+      await updateVideoStatus(current.video, 'draft', null)
+    }
     return
   }
   const snap = { ...current }
@@ -4670,20 +4780,36 @@ async function saveSlugEdit(video: Video) {
   }
 }
 
-async function startDescriptionEdit(video: Video) {
-  editingDescription.value = { id: video.id, value: video.description || '' }
-  await nextTick()
-  descriptionInputEl.value?.focus()
+function openDescriptionModal(video: Video) {
+  descriptionModal.value = {
+    open: true,
+    videoId: video.id,
+    title: video.title,
+    value: video.description || '',
+  }
 }
 
-async function saveDescriptionEdit(video: Video) {
-  const editing = editingDescription.value
-  if (!editing || editing.id !== video.id) return
-  const newDesc = editing.value.trim()
-  editingDescription.value = null
-  if (newDesc === (video.description || '')) return
+function closeDescriptionModal() {
+  descriptionModal.value = {
+    open: false,
+    videoId: null,
+    title: '',
+    value: '',
+  }
+}
+
+async function saveDescriptionModal() {
+  const videoId = descriptionModal.value.videoId
+  if (!videoId) return
+  const video = uploads.value.find((v) => v.id === videoId)
+  if (!video) return
+  const newDesc = descriptionModal.value.value.trim()
+  if (newDesc === (video.description || '')) {
+    closeDescriptionModal()
+    return
+  }
   try {
-    const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${videoId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({ description: newDesc }),
@@ -4692,11 +4818,12 @@ async function saveDescriptionEdit(video: Video) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }))
       throw new Error(err.error || `HTTP ${res.status}`)
     }
-    const idx = uploads.value.findIndex(v => v.id === video.id)
+    const idx = uploads.value.findIndex(v => v.id === videoId)
     if (idx !== -1) {
       const cur = uploads.value[idx]!
       uploads.value[idx] = { ...cur, description: newDesc }
     }
+    closeDescriptionModal()
     showToast('success', 'Description updated.')
   } catch (e: any) {
     showToast('error', `Failed to update description: ${e.message}`)
@@ -4739,6 +4866,8 @@ async function executeSwap() {
 
 const confirmDialogRef = ref<HTMLElement | null>(null)
 const swapDialogRef    = ref<HTMLElement | null>(null)
+const scheduleDialogRef = ref<HTMLElement | null>(null)
+const descriptionDialogRef = ref<HTMLElement | null>(null)
 const lastFocusedEl    = ref<HTMLElement | null>(null)
 
 function setAdminTab(tab: 'videos' | 'categories' | 'homepage' | 'pills' | 'notifications' | 'newsletter' | 'users' | 'analytics' | 'system') {
@@ -4813,6 +4942,54 @@ function onSwapModalKeydown(e: KeyboardEvent) {
   }
 }
 
+function onScheduleModalKeydown(e: KeyboardEvent) {
+  if (!scheduleModal.value.open) return
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    closeScheduleModal()
+    return
+  }
+  if (e.key !== 'Tab' || !scheduleDialogRef.value) return
+  const focusable = scheduleDialogRef.value.querySelectorAll<HTMLElement>(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  )
+  if (!focusable.length) return
+  const first = focusable[0]!
+  const last = focusable[focusable.length - 1]!
+  const active = document.activeElement as HTMLElement | null
+  if (e.shiftKey && active === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+function onDescriptionModalKeydown(e: KeyboardEvent) {
+  if (!descriptionModal.value.open) return
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    closeDescriptionModal()
+    return
+  }
+  if (e.key !== 'Tab' || !descriptionDialogRef.value) return
+  const focusable = descriptionDialogRef.value.querySelectorAll<HTMLElement>(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  )
+  if (!focusable.length) return
+  const first = focusable[0]!
+  const last = focusable[focusable.length - 1]!
+  const active = document.activeElement as HTMLElement | null
+  if (e.shiftKey && active === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
 watch(() => swapModal.value.open, async (open) => {
   if (open) {
     lastFocusedEl.value = document.activeElement as HTMLElement | null
@@ -4825,6 +5002,31 @@ watch(() => swapModal.value.open, async (open) => {
   }
 })
 
+watch(() => scheduleModal.value.open, async (open) => {
+  if (open) {
+    lastFocusedEl.value = document.activeElement as HTMLElement | null
+    await nextTick()
+    scheduleDialogRef.value?.focus()
+    window.addEventListener('keydown', onScheduleModalKeydown)
+  } else {
+    window.removeEventListener('keydown', onScheduleModalKeydown)
+    lastFocusedEl.value?.focus()
+  }
+})
+
+watch(() => descriptionModal.value.open, async (open) => {
+  if (open) {
+    lastFocusedEl.value = document.activeElement as HTMLElement | null
+    await nextTick()
+    descriptionDialogRef.value?.focus()
+    descriptionInputEl.value?.focus()
+    window.addEventListener('keydown', onDescriptionModalKeydown)
+  } else {
+    window.removeEventListener('keydown', onDescriptionModalKeydown)
+    lastFocusedEl.value?.focus()
+  }
+})
+
 onMounted(async () => {
   await reloadAll()
 })
@@ -4832,6 +5034,8 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onConfirmModalKeydown)
   window.removeEventListener('keydown', onSwapModalKeydown)
+  window.removeEventListener('keydown', onScheduleModalKeydown)
+  window.removeEventListener('keydown', onDescriptionModalKeydown)
   if (usersSearchDebounceTimer) clearTimeout(usersSearchDebounceTimer)
   for (const timer of toastTimers.values()) clearTimeout(timer)
   toastTimers.clear()

@@ -738,6 +738,7 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any) {
       },
       video: {
         title: video?.title ?? `Uploaded Video ${videoId}`,
+        description: video?.description ?? '',
         fullDuration,
         previewDuration,
         playlistUrl,

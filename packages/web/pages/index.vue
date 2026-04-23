@@ -106,6 +106,8 @@
               v-for="video in block.videos"
               :key="`featured-row-${video.id}`"
               :video="video"
+              :show-description="false"
+              :show-relative-timestamp="true"
             />
           </div>
 
@@ -121,6 +123,8 @@
                 v-for="video in block.categorySection.visible"
                 :key="`category-block-${block.id}-${video.id}`"
                 :video="video"
+                :show-description="false"
+                :show-relative-timestamp="true"
               />
             </div>
           </div>
@@ -154,6 +158,8 @@
                   v-for="video in child.videos"
                   :key="`split-featured-${child.id}-${video.id}`"
                   :video="video"
+                  :show-description="false"
+                  :show-relative-timestamp="true"
                 />
               </div>
               <div v-else-if="child.categorySection" class="space-y-2">
@@ -168,6 +174,8 @@
                     v-for="video in child.categorySection.visible"
                     :key="`split-category-${child.id}-${video.id}`"
                     :video="video"
+                    :show-description="false"
+                    :show-relative-timestamp="true"
                   />
                 </div>
               </div>
