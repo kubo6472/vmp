@@ -4205,8 +4205,22 @@ function parseAdminDateTimeToIso(raw: string): string | null {
   const trimmed = raw.trim()
   const euro = parseEuropeanDateTimeToIso(trimmed)
   if (euro) return euro
-  const strictIso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/
-  if (!strictIso.test(trimmed)) return null
+  const strictIso = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(?:Z|[+-]\d{2}:\d{2})$/
+  const match = trimmed.match(strictIso)
+  if (!match) return null
+  const [, yText, moText, dText, hText, miText, sText = '0', msText = '0'] = match
+  const y = Number(yText)
+  const mo = Number(moText)
+  const d = Number(dText)
+  const h = Number(hText)
+  const mi = Number(miText)
+  const s = Number(sText)
+  const ms = Number(msText.padEnd(3, '0'))
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d) || !Number.isFinite(h) || !Number.isFinite(mi) || !Number.isFinite(s) || !Number.isFinite(ms)) return null
+  if (mo < 1 || mo > 12) return null
+  const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate()
+  if (d < 1 || d > daysInMonth) return null
+  if (h < 0 || h > 23 || mi < 0 || mi > 59 || s < 0 || s > 59 || ms < 0 || ms > 999) return null
   const date = new Date(trimmed)
   if (Number.isNaN(date.getTime())) return null
   return date.toISOString()

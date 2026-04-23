@@ -35,12 +35,6 @@ describe('normalizeScheduledPublishAt', () => {
     assert.equal(normalized.backdatesUpload, true)
   })
 
-  it('does not set backdatesUpload when allowPast is true', () => {
-    const normalized = normalizeScheduledPublishAt('2000-01-01 00:00:00', { allowNull: true, allowPast: true })
-    assert.equal(normalized.invalid, false)
-    assert.equal(normalized.backdatesUpload, false)
-  })
-
   it('does not backdate inside 60s grace window', () => {
     const ts = new Date(Date.now() - 30_000).toISOString()
     const normalized = normalizeScheduledPublishAt(ts, { allowNull: true })

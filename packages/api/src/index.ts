@@ -1591,7 +1591,7 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   if (normalizedSlug && !isValidSlug(normalizedSlug)) {
     return jsonResponse({ error: 'slug must be lowercase alphanumeric words separated by hyphens (e.g. my-video-title), or null to clear it' }, 400, corsHeaders)
   }
-  const scheduledPublishAt = normalizeScheduledPublishAt(body.scheduledPublishAt, { allowNull: true, allowPast: body.status === 'published' })
+  const scheduledPublishAt = normalizeScheduledPublishAt(body.scheduledPublishAt, { allowNull: true })
   if (hasScheduledPublishAt && scheduledPublishAt.invalid) {
     return jsonResponse({ error: 'scheduledPublishAt must be a valid ISO timestamp, or null to clear schedule' }, 400, corsHeaders)
   }
@@ -1718,36 +1718,29 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
           error: 'Cannot backdate scheduledPublishAt for a published video. Use uploadDate instead.',
           code: 'invalid_payload',
         }
+        const concurrentChangePayload = {
+          error: 'Video state changed concurrently, please retry',
+          code: 'conflict',
+        }
         if (scheduledPublishAt.backdatesUpload) {
           if (expectedPublishStatus === 'published') {
             return jsonResponse(staleStatusPayload, 409, corsHeaders)
           }
-          const result = await db.prepare(`
-            UPDATE videos
-            SET upload_date = ?,
-                scheduled_publish_at = NULL,
-                publish_status = CASE WHEN publish_status = 'archived' THEN 'archived' ELSE 'draft' END,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-              AND publish_status = ?
-          `).bind(scheduledPublishAt.value, videoId, expectedPublishStatus).run()
-          const changes = result.meta?.changes ?? result.changes ?? 0
-          if (changes === 0) {
-            return jsonResponse(staleStatusPayload, 409, corsHeaders)
-          }
-        } else {
-          const result = await db.prepare(`
-            UPDATE videos
-            SET scheduled_publish_at = ?,
-                publish_status = CASE WHEN publish_status = 'archived' THEN 'archived' ELSE 'draft' END,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-              AND publish_status = ?
-          `).bind(scheduledPublishAt.value, videoId, expectedPublishStatus).run()
-          const changes = result.meta?.changes ?? result.changes ?? 0
-          if (changes === 0) {
-            return jsonResponse(staleStatusPayload, 409, corsHeaders)
-          }
+        }
+        const setClause = scheduledPublishAt.backdatesUpload
+          ? 'upload_date = ?, scheduled_publish_at = NULL'
+          : 'scheduled_publish_at = ?'
+        const result = await db.prepare(`
+          UPDATE videos
+          SET ${setClause},
+              publish_status = CASE WHEN publish_status = 'archived' THEN 'archived' ELSE 'draft' END,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+            AND publish_status = ?
+        `).bind(scheduledPublishAt.value, videoId, expectedPublishStatus).run()
+        const changes = result.meta?.changes ?? result.changes ?? 0
+        if (changes === 0) {
+          return jsonResponse(concurrentChangePayload, 409, corsHeaders)
         }
       } else {
         await db.prepare(`
