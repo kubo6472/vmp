@@ -22,7 +22,7 @@
     "@vmp/shared": "*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260414.1",
+    "@cloudflare/workers-types": "^4.20260423.1",
     "@types/node": "^25.6.0",
     "tsx": "^4.20.6",
     "wrangler": "^4.83.0"
