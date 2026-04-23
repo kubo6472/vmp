@@ -14,6 +14,7 @@ describe('getProxyVideoIdFromPath', () => {
   })
 
   it('returns null for malformed encoded proxy path segment', () => {
+    // Intentionally malformed percent-encoding (%E0%A4%A: incomplete UTF-8) to verify invalid input handling.
     const videoId = getProxyVideoIdFromPath('videos/%E0%A4%A/master.m3u8')
     assert.equal(videoId, null)
   })
