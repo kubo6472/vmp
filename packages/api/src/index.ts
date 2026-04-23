@@ -2885,10 +2885,6 @@ function normalizeHomepageChildBlockType(type: any) {
   return allowedTypes.has(type) ? type : 'top_video'
 }
 
-async function canLoadEntrypoint(url: any) {
-  try { return (await fetch(url, { method: 'HEAD' })).ok } catch { return false }
-}
-
 function getDatabaseBinding(env: any) {
   const db = env.DB || env.video_subscription_db
   if (!db) throw new Error('Database binding not configured')

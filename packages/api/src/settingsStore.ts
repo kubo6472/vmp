@@ -42,7 +42,7 @@ export async function getSetting(env: any, key: any, options: SettingsOptions = 
     }
   }
 
-  let value = defaultValue
+  let value: any
   let hasDbRowValue = false
   try {
     const row = await db.prepare('SELECT value FROM admin_settings WHERE key = ? LIMIT 1').bind(key).first()
