@@ -24,8 +24,8 @@ function renderInlineMarkdown(input: string): string {
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>')
-  html = html.replace(/(^|[^\*])\*([^*]+)\*(?!\*)/g, '$1<em>$2</em>')
-  html = html.replace(/(^|[^_])_([^_]+)_(?!_)/g, '$1<em>$2</em>')
+  html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+  html = html.replace(/(?<!_)_([^_]+)_(?!_)/g, '<em>$1</em>')
   html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label: string, rawUrl: string) => {
     const safeUrl = sanitizeUrl(rawUrl)
     return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${label}</a>`
