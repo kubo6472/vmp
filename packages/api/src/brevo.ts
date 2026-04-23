@@ -77,13 +77,6 @@ async function getAdminSetting(db: any, key: any) {
   return row?.value ?? null
 }
 
-async function setAdminSetting(db: any, key: any, value: any) {
-  await db.prepare(`
-    INSERT INTO admin_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-  `).bind(key, value).run()
-}
-
 function brevoTimeoutMs(env: any) {
   const raw = env.BREVO_FETCH_TIMEOUT_MS
   const n = raw != null && String(raw).trim() !== '' ? Number.parseInt(String(raw).trim(), 10) : 5000
