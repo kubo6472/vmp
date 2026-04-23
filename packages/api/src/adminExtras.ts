@@ -1,6 +1,6 @@
 import { requireAuth, requireRole } from './auth.js'
 import { ensureAdminSettingsTable } from './adminSettingsTable.js'
-import { getSetting, setSetting, setSettings, buildSettingsStatements } from './settingsStore.js'
+import { getSetting, setSetting, buildSettingsStatements } from './settingsStore.js'
 import {
   evaluateRoleChange,
   evaluateSelfRoleChange,
