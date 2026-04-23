@@ -378,9 +378,12 @@ const previewPercentage = computed(() => {
   return (Math.min(videoData.value.video.previewDuration, full) / full) * 100
 })
 
-const videoDescription = computed(() =>
-  videoData.value?.video?.description || strings.noDescription
-)
+const videoDescription = computed(() => {
+  const rawDescription = videoData.value?.video?.description
+  if (typeof rawDescription !== 'string') return strings.noDescription
+  const trimmedDescription = rawDescription.trim()
+  return trimmedDescription ? trimmedDescription : strings.noDescription
+})
 
 const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60)
