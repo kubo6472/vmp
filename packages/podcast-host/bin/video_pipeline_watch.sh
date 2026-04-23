@@ -377,19 +377,19 @@ process_video() {
             emit_pipeline_event "$VIDEO_ID" "encode" "active" "start"
 
             emit_pipeline_event "$VIDEO_ID" "encode" "active" "1/3 1080p"
-            "${FFMPEG_VAAPI_BASE[@]}" -i "$INPUT_PATH" \
+            "${FFMPEG_VAAPI_BASE[@]}" -i "$INPUT_PATH" -r 30 \
                 -vf "format=nv12,hwupload,scale_vaapi=w=1920:h=1080:force_original_aspect_ratio=decrease" \
-                -map 0:v:0 -map 0:a? -c:v h264_vaapi -b:v 5M -maxrate 5M -bufsize 10M -c:a aac -b:a 128k -f mp4 "$TMP_DIR/1080p.mp4.tmp.$$"
+                -map 0:v:0 -map 0:a? -c:v h264_vaapi -g 180 -keyint_min 180 -sc_threshold 0 -b:v 5M -maxrate 5M -bufsize 10M -c:a aac -b:a 128k -f mp4 "$TMP_DIR/1080p.mp4.tmp.$$"
             mv "$TMP_DIR/1080p.mp4.tmp.$$" "$TMP_DIR/1080p.mp4"
             emit_pipeline_event "$VIDEO_ID" "encode" "active" "2/3 720p"
-            "${FFMPEG_VAAPI_BASE[@]}" -i "$INPUT_PATH" \
+            "${FFMPEG_VAAPI_BASE[@]}" -i "$INPUT_PATH" -r 30 \
                 -vf "format=nv12,hwupload,scale_vaapi=w=1280:h=720:force_original_aspect_ratio=decrease" \
-                -map 0:v:0 -map 0:a? -c:v h264_vaapi -b:v 3M -maxrate 3M -bufsize 6M -c:a aac -b:a 128k -f mp4 "$TMP_DIR/720p.mp4.tmp.$$"
+                -map 0:v:0 -map 0:a? -c:v h264_vaapi -g 180 -keyint_min 180 -sc_threshold 0 -b:v 3M -maxrate 3M -bufsize 6M -c:a aac -b:a 128k -f mp4 "$TMP_DIR/720p.mp4.tmp.$$"
             mv "$TMP_DIR/720p.mp4.tmp.$$" "$TMP_DIR/720p.mp4"
             emit_pipeline_event "$VIDEO_ID" "encode" "active" "3/3 480p"
-            "${FFMPEG_VAAPI_BASE[@]}" -i "$INPUT_PATH" \
+            "${FFMPEG_VAAPI_BASE[@]}" -i "$INPUT_PATH" -r 30 \
                 -vf "format=nv12,hwupload,scale_vaapi=w=854:h=480:force_original_aspect_ratio=decrease" \
-                -map 0:v:0 -map 0:a? -c:v h264_vaapi -b:v 1500k -maxrate 1500k -bufsize 3000k -c:a aac -b:a 96k -f mp4 "$TMP_DIR/480p.mp4.tmp.$$"
+                -map 0:v:0 -map 0:a? -c:v h264_vaapi -g 180 -keyint_min 180 -sc_threshold 0 -b:v 1500k -maxrate 1500k -bufsize 3000k -c:a aac -b:a 96k -f mp4 "$TMP_DIR/480p.mp4.tmp.$$"
             mv "$TMP_DIR/480p.mp4.tmp.$$" "$TMP_DIR/480p.mp4"
 
             log "✅ Encoding done"
@@ -457,8 +457,8 @@ process_video() {
                 "input=$TMP_DIR/1080p.mp4,stream=video,init_segment=$TMP_DIR/init_1080.mp4,segment_template=$TMP_DIR/seg_1080_\$Number\$.m4s"
                 "input=$TMP_DIR/720p.mp4,stream=video,init_segment=$TMP_DIR/init_720.mp4,segment_template=$TMP_DIR/seg_720_\$Number\$.m4s"
                 "input=$TMP_DIR/480p.mp4,stream=video,init_segment=$TMP_DIR/init_480.mp4,segment_template=$TMP_DIR/seg_480_\$Number\$.m4s"
-                --segment_duration 2
-                --fragment_duration 2
+                --segment_duration 6
+                --fragment_duration 6
                 --generate_static_live_mpd
                 --mpd_output "$TMP_DIR/manifest.mpd"
                 --hls_master_playlist_output "$TMP_DIR/master.m3u8"

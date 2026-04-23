@@ -914,11 +914,15 @@ async function handleVideoProxy(request: any, env: any, corsHeaders: any, ctx: a
     const rewrittenManifest = rewriteManifestForProxyWithPreview(manifest, effectivePreviewUntil, objectPath, vtForRewrite)
     const headers = new Headers(upstreamResponse.headers)
     headers.set('Content-Type', 'application/vnd.apple.mpegurl')
+    const cacheControl = getVideoProxyCacheControl(objectPath, manifestType)
+    if (cacheControl) headers.set('Cache-Control', cacheControl)
     headers.delete('Content-Length')
     for (const [k, v] of Object.entries(corsHeaders as CorsHeaders)) headers.set(k, v)
     return new Response(rewrittenManifest, { status: upstreamResponse.status, headers })
   }
   const headers = new Headers(upstreamResponse.headers)
+  const cacheControl = getVideoProxyCacheControl(objectPath, manifestType)
+  if (cacheControl) headers.set('Cache-Control', cacheControl)
   for (const [k, v] of Object.entries(corsHeaders as CorsHeaders)) headers.set(k, v)
   return new Response(upstreamResponse.body, { status: upstreamResponse.status, headers })
 }
@@ -2455,6 +2459,21 @@ function getManifestType(objectPath: any, upstreamResponse: any) {
   if (objectPath.endsWith('.m3u8')) return 'hls'
   const ct = upstreamResponse.headers.get('content-type') ?? ''
   if (/application\/(vnd\.apple\.mpegurl|x-mpegurl)|audio\/mpegurl/i.test(ct)) return 'hls'
+  return null
+}
+
+export function getVideoProxyCacheControl(objectPath: any, manifestType: any) {
+  if (manifestType === 'hls') {
+    // Playlists are frequently rewritten (preview boundaries, tokenized URLs), so
+    // keep them short-lived while still allowing CDN edge caching.
+    return 'public, max-age=60, s-maxage=60'
+  }
+
+  // HLS media segments and init files are immutable once published in VOD flows.
+  if (objectPath.endsWith('.m4s') || /(^|\/)init[^/]*\.mp4$/i.test(objectPath)) {
+    return 'public, max-age=31536000, immutable'
+  }
+
   return null
 }
 
