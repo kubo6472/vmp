@@ -317,15 +317,6 @@ function json(res, obj, status = 200) {
   res.end(JSON.stringify(obj, null, 2))
 }
 
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
 function dashboardHtml() {
   return `<!DOCTYPE html>
 <html lang="en">

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildEntrypointCandidates } from '../src/mediaEntrypoints.js'
-import { getVideoProxyCacheControl } from '../src/index.js'
+import { getVideoProxyCacheControl } from '../src/mediaEntrypoints.js'
 
 describe('buildEntrypointCandidates', () => {
   it('keeps HLS-first order by default', () => {
