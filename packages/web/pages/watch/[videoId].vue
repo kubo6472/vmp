@@ -67,7 +67,7 @@
           <div class="relative bg-black rounded-lg overflow-hidden">
             <!-- Premium Banner -->
             <div
-              v-if="!videoData.hasAccess && !isFullPublicPreview"
+              v-if="!videoData.hasAccess && effectiveFullDuration > 0 && !isFullPublicPreview"
               class="absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-yellow-500/90 to-yellow-600/90 backdrop-blur-sm text-black px-4 py-2 flex items-center justify-between"
             >
               <div class="flex items-center space-x-2">
@@ -132,7 +132,7 @@
                     <div class="relative w-full h-1 group-hover/controls:h-1.5 rounded-full pointer-events-none transition-all">
                       <div class="absolute inset-0 rounded-full bg-white/25"></div>
                       <div
-                        v-if="!videoData.hasAccess && !isFullPublicPreview"
+                        v-if="!videoData.hasAccess && effectiveFullDuration > 0 && !isFullPublicPreview"
                         class="absolute inset-y-0 rounded-r-full bg-white/5"
                         :style="{ left: previewPercentage + '%' }"
                       ></div>
@@ -145,7 +145,7 @@
                         :style="{ left: progressPercentage + '%' }"
                       ></div>
                       <div
-                        v-if="!videoData.hasAccess && !isFullPublicPreview"
+                        v-if="!videoData.hasAccess && effectiveFullDuration > 0 && !isFullPublicPreview"
                         class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-yellow-400 border-2 border-black rounded-full flex items-center justify-center shadow-[0_0_0_3px_rgba(250,204,21,0.3)] z-10"
                         :style="{ left: previewPercentage + '%' }"
                       >

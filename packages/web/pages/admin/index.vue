@@ -562,7 +562,7 @@
                             v-if="video.scheduled_publish_at"
                             class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50 self-start"
                             :disabled="statusUpdating[video.id]"
-                            @click="updateVideoStatus(video, 'draft', '')"
+                            @click="clearScheduleFromForm(video)"
                           >Clear schedule</button>
                         </div>
                         <div v-if="video.publish_status === 'published'" class="flex flex-col gap-1 min-w-[11rem]">
@@ -587,7 +587,7 @@
                           <button
                             class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50"
                             :disabled="statusUpdating[video.id]"
-                            @click="updateVideoPublishedAt(video, '')"
+                            @click="clearPublishedFromForm(video)"
                           >Clear publish date</button>
                         </div>
                         <button
@@ -2549,7 +2549,13 @@ const parseEuropeanDateTimeToIso = (raw: string): string | null => {
   if (!Number.isFinite(d) || !Number.isFinite(mo) || !Number.isFinite(y) || !Number.isFinite(h) || !Number.isFinite(mi)) return null
   if (mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59) return null
   const local = new Date(y, mo - 1, d, h, mi, 0, 0)
-  if (local.getFullYear() !== y || local.getMonth() !== mo - 1 || local.getDate() !== d) return null
+  if (
+    local.getFullYear() !== y ||
+    local.getMonth() !== mo - 1 ||
+    local.getDate() !== d ||
+    local.getHours() !== h ||
+    local.getMinutes() !== mi
+  ) return null
   return local.toISOString()
 }
 
@@ -4247,7 +4253,9 @@ async function applyUploadDateFromPanel(video: Video) {
 }
 
 async function applyScheduleFromForm(video: Video) {
-  const raw = scheduleTextDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.scheduled_publish_at || video.upload_date)
+  const raw = scheduleTextDraft.value[video.id] ?? (video.scheduled_publish_at
+    ? formatEuropeanDateTimeFromAny(video.scheduled_publish_at)
+    : '')
   const trimmed = raw.trim()
   if (!trimmed) {
     await updateVideoStatus(video, 'draft', '')
@@ -4261,6 +4269,14 @@ async function applyScheduleFromForm(video: Video) {
   }
   await updateVideoStatus(video, 'draft', iso)
   clearScheduleTextDraft(video.id)
+}
+
+async function clearScheduleFromForm(video: Video) {
+  await updateVideoStatus(video, 'draft', '')
+  const latest = uploads.value.find(v => v.id === video.id)
+  if (!latest?.scheduled_publish_at) {
+    clearScheduleTextDraft(video.id)
+  }
 }
 
 async function applyPublishedAtFromForm(video: Video) {
@@ -4278,6 +4294,14 @@ async function applyPublishedAtFromForm(video: Video) {
   }
   await updateVideoPublishedAt(video, iso)
   clearPublishedTextDraft(video.id)
+}
+
+async function clearPublishedFromForm(video: Video) {
+  await updateVideoPublishedAt(video, '')
+  const latest = uploads.value.find(v => v.id === video.id)
+  if (!latest?.published_at) {
+    clearPublishedTextDraft(video.id)
+  }
 }
 
 async function updateVideoPublishedAt(video: Video, rawValue: string) {
