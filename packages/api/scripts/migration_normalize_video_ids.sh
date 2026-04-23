@@ -75,11 +75,11 @@ column_exists() {
 video_id_hash8() {
   local input="$1"
   if command -v sha256sum >/dev/null 2>&1; then
-    printf '%s' "$input" | sha256sum | awk '{print substr($1,1,8)}'
+    printf '%s' "$input" | sha256sum | awk '{print substr($1,1,16)}'
     return
   fi
   if command -v shasum >/dev/null 2>&1; then
-    printf '%s' "$input" | shasum -a 256 | awk '{print substr($1,1,8)}'
+    printf '%s' "$input" | shasum -a 256 | awk '{print substr($1,1,16)}'
     return
   fi
   printf '00000000'
