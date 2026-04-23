@@ -1571,9 +1571,10 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   const hasDescription = Object.prototype.hasOwnProperty.call(body, 'description')
   const hasScheduledPublishAt = Object.prototype.hasOwnProperty.call(body, 'scheduledPublishAt')
   const hasPublishedAt = Object.prototype.hasOwnProperty.call(body, 'publishedAt')
+  const hasUploadDate = Object.prototype.hasOwnProperty.call(body, 'uploadDate')
 
-  if (!hasStatus && !hasTitle && !hasSlug && !hasCategoryId && !hasDescription && !hasScheduledPublishAt && !hasPublishedAt) {
-    return jsonResponse({ error: 'At least one of status, title, slug, description, categoryId, scheduledPublishAt, or publishedAt must be provided' }, 400, corsHeaders)
+  if (!hasStatus && !hasTitle && !hasSlug && !hasCategoryId && !hasDescription && !hasScheduledPublishAt && !hasPublishedAt && !hasUploadDate) {
+    return jsonResponse({ error: 'At least one of status, title, slug, description, categoryId, scheduledPublishAt, publishedAt, or uploadDate must be provided' }, 400, corsHeaders)
   }
   if (hasTitle && (typeof body.title !== 'string' || body.title.trim().length === 0)) {
     return jsonResponse({ error: 'title must not be empty' }, 400, corsHeaders)
@@ -1593,6 +1594,10 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   const scheduledPublishAt = normalizeScheduledPublishAt(body.scheduledPublishAt, { allowNull: true, allowPast: body.status === 'published' })
   if (hasScheduledPublishAt && scheduledPublishAt.invalid) {
     return jsonResponse({ error: 'scheduledPublishAt must be a valid ISO timestamp, or null to clear schedule' }, 400, corsHeaders)
+  }
+  const uploadDateNorm = hasUploadDate ? normalizePublishedAt(body.uploadDate, { allowNull: false }) : null
+  if (hasUploadDate && uploadDateNorm && uploadDateNorm.invalid) {
+    return jsonResponse({ error: 'uploadDate must be a valid ISO timestamp' }, 400, corsHeaders)
   }
   const publishedAt = normalizePublishedAt(body.publishedAt, { allowNull: true })
   if (hasPublishedAt && publishedAt.invalid) {
@@ -1702,13 +1707,24 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
     }
     if (hasScheduledPublishAt) {
       if (scheduledPublishAt.value) {
-        await db.prepare(`
-          UPDATE videos
-          SET scheduled_publish_at = ?,
-              publish_status = CASE WHEN publish_status = 'archived' THEN 'archived' ELSE 'draft' END,
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).bind(scheduledPublishAt.value, videoId).run()
+        if (scheduledPublishAt.backdatesUpload) {
+          await db.prepare(`
+            UPDATE videos
+            SET upload_date = ?,
+                scheduled_publish_at = NULL,
+                publish_status = CASE WHEN publish_status = 'archived' THEN 'archived' ELSE 'draft' END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).bind(scheduledPublishAt.value, videoId).run()
+        } else {
+          await db.prepare(`
+            UPDATE videos
+            SET scheduled_publish_at = ?,
+                publish_status = CASE WHEN publish_status = 'archived' THEN 'archived' ELSE 'draft' END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).bind(scheduledPublishAt.value, videoId).run()
+        }
       } else {
         await db.prepare(`
           UPDATE videos
@@ -1717,6 +1733,14 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
           WHERE id = ?
         `).bind(videoId).run()
       }
+    }
+    if (hasUploadDate && uploadDateNorm?.value) {
+      await db.prepare(`
+        UPDATE videos
+        SET upload_date = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(uploadDateNorm.value, videoId).run()
     }
     if (hasPublishedAt) {
       await db.prepare(`
@@ -1755,7 +1779,7 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
     }
 
     const video = await db.prepare(`
-      SELECT v.id, v.title, v.description, v.status, v.publish_status, v.published_at, v.scheduled_publish_at, v.notified_at, v.updated_at, v.slug, vca.category_id,
+      SELECT v.id, v.title, v.description, v.status, v.publish_status, v.published_at, v.scheduled_publish_at, v.notified_at, v.updated_at, v.slug, v.upload_date, vca.category_id,
              ls.provider AS livestream_provider,
              ls.status AS livestream_status,
              ls.stream_id AS livestream_stream_id,
@@ -2669,18 +2693,14 @@ function normalizeHomepageLayoutVariant(raw: any) {
 
 export function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boolean, allowPast?: boolean } = {}) {
   if (raw == null || raw === '') {
-    return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
+    return options.allowNull ? { value: null, invalid: false, backdatesUpload: false } : { value: null, invalid: true, backdatesUpload: false }
   }
-  if (typeof raw !== 'string') return { value: null, invalid: true }
+  if (typeof raw !== 'string') return { value: null, invalid: true, backdatesUpload: false }
   const text = raw.trim()
-  if (!text) return options.allowNull ? { value: null, invalid: false } : { value: null, invalid: true }
+  if (!text) return options.allowNull ? { value: null, invalid: false, backdatesUpload: false } : { value: null, invalid: true, backdatesUpload: false }
 
   const t = parseAdminTimestampToUtcMillis(text)
-  if (!Number.isFinite(t)) return { value: null, invalid: true }
-
-  // For scheduling we enforce future timestamps (with 60s grace). For backdating
-  // published videos, allow past timestamps explicitly.
-  if (!options.allowPast && t + 60_000 <= Date.now()) return { value: null, invalid: true }
+  if (!Number.isFinite(t)) return { value: null, invalid: true, backdatesUpload: false }
 
   const d = new Date(t)
   const yyyy = d.getUTCFullYear()
@@ -2689,7 +2709,17 @@ export function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boo
   const hh = String(d.getUTCHours()).padStart(2, '0')
   const mi = String(d.getUTCMinutes()).padStart(2, '0')
   const ss = String(d.getUTCSeconds()).padStart(2, '0')
-  return { value: `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`, invalid: false }
+  const value = `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`
+
+  // Future (60s grace): normal schedule. Past: rewrite upload_date for drafts instead of auto-publishing.
+  const isPastOrNow = t + 60_000 <= Date.now()
+  if (options.allowPast) {
+    return { value, invalid: false, backdatesUpload: false }
+  }
+  if (isPastOrNow) {
+    return { value, invalid: false, backdatesUpload: true }
+  }
+  return { value, invalid: false, backdatesUpload: false }
 }
 
 export function normalizePublishedAt(raw: any, options: { allowNull?: boolean } = {}) {

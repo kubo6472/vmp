@@ -27,4 +27,17 @@ describe('normalizeScheduledPublishAt', () => {
     assert.equal(normalized.invalid, true)
     assert.equal(normalized.value, null)
   })
+
+  it('marks past timestamps as upload backdate (draft scheduling path)', () => {
+    const normalized = normalizeScheduledPublishAt('2000-01-01 00:00:00', { allowNull: true })
+    assert.equal(normalized.invalid, false)
+    assert.equal(normalized.value, '2000-01-01 00:00:00')
+    assert.equal(normalized.backdatesUpload, true)
+  })
+
+  it('does not set backdatesUpload when allowPast is true', () => {
+    const normalized = normalizeScheduledPublishAt('2000-01-01 00:00:00', { allowNull: true, allowPast: true })
+    assert.equal(normalized.invalid, false)
+    assert.equal(normalized.backdatesUpload, false)
+  })
 })

@@ -2,7 +2,7 @@
   <div class="min-h-screen overflow-x-hidden bg-gray-50 dark:bg-gray-950">
     <AppHeader />
 
-    <PremiumOverlay :show="showPremiumOverlay" :video-id="videoId" />
+    <PremiumOverlay :show="showPremiumOverlay && !isFullPublicPreview" :video-id="videoId" />
 
     <div class="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <!-- Loading State -->
@@ -67,7 +67,7 @@
           <div class="relative bg-black rounded-lg overflow-hidden">
             <!-- Premium Banner -->
             <div
-              v-if="!videoData.hasAccess"
+              v-if="!videoData.hasAccess && !isFullPublicPreview"
               class="absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-yellow-500/90 to-yellow-600/90 backdrop-blur-sm text-black px-4 py-2 flex items-center justify-between"
             >
               <div class="flex items-center space-x-2">
@@ -132,7 +132,7 @@
                     <div class="relative w-full h-1 group-hover/controls:h-1.5 rounded-full pointer-events-none transition-all">
                       <div class="absolute inset-0 rounded-full bg-white/25"></div>
                       <div
-                        v-if="!videoData.hasAccess"
+                        v-if="!videoData.hasAccess && !isFullPublicPreview"
                         class="absolute inset-y-0 rounded-r-full bg-white/5"
                         :style="{ left: previewPercentage + '%' }"
                       ></div>
@@ -145,7 +145,7 @@
                         :style="{ left: progressPercentage + '%' }"
                       ></div>
                       <div
-                        v-if="!videoData.hasAccess"
+                        v-if="!videoData.hasAccess && !isFullPublicPreview"
                         class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-yellow-400 border-2 border-black rounded-full flex items-center justify-center shadow-[0_0_0_3px_rgba(250,204,21,0.3)] z-10"
                         :style="{ left: previewPercentage + '%' }"
                       >
@@ -228,6 +228,9 @@
                 <span>{{ strings.premiumAccess }}</span>
               </span>
 
+              <span v-else-if="isFullPublicPreview" class="flex items-center space-x-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                <span>{{ strings.freeToWatch }}</span>
+              </span>
               <span v-else class="flex items-center space-x-1">
                 <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                   <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
@@ -350,6 +353,15 @@ const effectiveFullDuration = computed(() =>
   resolvedFullDuration.value || videoData.value?.video?.fullDuration || 0
 )
 
+/** Full-length preview for non-subscribers (admin set preview lock to full duration). */
+const isFullPublicPreview = computed(() => {
+  const v = videoData.value
+  if (!v?.video || v.hasAccess) return false
+  const prev = v.video.previewDuration
+  const full = effectiveFullDuration.value
+  return typeof prev === 'number' && full > 0 && prev >= full
+})
+
 // ── Computed helpers ─────────────────────────────────────────────────────────
 
 const progressPercentage = computed(() => {
@@ -400,6 +412,11 @@ const handleSeekbarInput = (event: Event) => {
   const previewDuration = videoData.value?.video?.previewDuration
 
   if (!videoData.value?.hasAccess && previewDuration && requestedTime >= previewDuration) {
+    if (isFullPublicPreview.value) {
+      currentTime.value = requestedTime
+      if (videoElement.value) videoElement.value.currentTime = requestedTime
+      return
+    }
     input.value        = String(previewDuration)
     currentTime.value  = previewDuration
     const video = videoElement.value
@@ -414,7 +431,7 @@ const handleSeekbarInput = (event: Event) => {
 
 const enforcePreviewLimit = (video: HTMLVideoElement) => {
   const previewDuration = videoData.value?.video?.previewDuration
-  if (videoData.value?.hasAccess || !previewDuration) return
+  if (videoData.value?.hasAccess || !previewDuration || isFullPublicPreview.value) return
   if (video.currentTime <= previewDuration) return
   video.currentTime = previewDuration
   video.pause()

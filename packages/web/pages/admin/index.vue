@@ -423,6 +423,12 @@
                         >
                           {{ video.publish_status ?? 'draft' }}
                         </span>
+                        <span
+                          v-if="video.publish_status === 'draft' && video.scheduled_publish_at"
+                          class="block text-[11px] font-semibold text-sky-600 dark:text-sky-400"
+                        >
+                          Scheduled
+                        </span>
                         <span v-if="video.livestream_provider" class="block text-[11px] text-purple-600 dark:text-purple-300">
                           stream: {{ video.livestream_status || 'draft' }}
                         </span>
@@ -472,8 +478,39 @@
                     <td class="py-3 pr-4 text-gray-600 dark:text-gray-400 whitespace-nowrap">
                       {{ Number(video.total_views || 0).toLocaleString() }}
                     </td>
-                    <td class="py-3 pr-4 text-gray-600 dark:text-gray-400 whitespace-nowrap">
-                      {{ formatDate(video.upload_date) }}
+                    <td class="py-3 pr-4 text-gray-600 dark:text-gray-400 align-top">
+                      <button
+                        type="button"
+                        class="text-left underline decoration-dotted hover:text-gray-900 dark:hover:text-gray-200 whitespace-nowrap"
+                        :title="'Edit upload date or schedule'"
+                        @click="toggleSchedulePanel(video)"
+                      >
+                        {{ formatDate(video.upload_date) }}
+                      </button>
+                      <div
+                        v-if="schedulePanelVideoId === video.id"
+                        class="mt-2 p-2 rounded border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-950/50 space-y-2 max-w-[14rem]"
+                      >
+                        <label class="block text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Upload date</label>
+                        <input
+                          :value="uploadDateEditDraft[video.id] ?? formatEuropeanDateTimeFromAny(video.upload_date)"
+                          type="text"
+                          inputmode="numeric"
+                          autocomplete="off"
+                          :placeholder="scheduleInputPlaceholder"
+                          class="w-full px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white font-mono"
+                          :disabled="statusUpdating[video.id]"
+                          @input="(e) => setUploadDateDraft(video.id, (e.target as HTMLInputElement).value)"
+                        />
+                        <button
+                          type="button"
+                          class="w-full px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white font-medium disabled:opacity-50"
+                          :disabled="statusUpdating[video.id]"
+                          @click="applyUploadDateFromPanel(video)"
+                        >
+                          Save upload date
+                        </button>
+                      </div>
                     </td>
                     <td class="py-3 pr-4">
                       <button
@@ -502,29 +539,53 @@
                           :disabled="statusUpdating[video.id]"
                           @click="updateVideoStatus(video, 'published', null)"
                         >Publish</button>
-                        <div v-if="video.publish_status === 'draft'" class="flex flex-wrap items-center gap-2">
+                        <div v-if="video.publish_status === 'draft'" class="flex flex-col gap-1 min-w-[11rem]">
                           <input
-                            :value="parseIsoForInput(video.scheduled_publish_at)"
-                            type="datetime-local"
-                            class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white"
+                            :value="scheduleInputDisplay(video)"
+                            type="text"
+                            inputmode="numeric"
+                            autocomplete="off"
+                            :placeholder="scheduleInputPlaceholder"
+                            class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white font-mono w-full max-w-[11rem]"
                             :disabled="statusUpdating[video.id]"
-                            @change="(e) => updateVideoStatus(video, 'draft', parseLocalDateTimeToIso((e.target as HTMLInputElement).value || ''))"
+                            @input="(e) => setScheduleDraft(video.id, (e.target as HTMLInputElement).value)"
+                            @change="applyScheduleFromForm(video)"
                           />
                           <button
+                            type="button"
+                            class="px-2 py-1 text-xs rounded bg-sky-600 hover:bg-sky-700 text-white font-medium disabled:opacity-50 self-start"
+                            :disabled="statusUpdating[video.id]"
+                            @click="applyScheduleFromForm(video)"
+                          >
+                            Apply schedule
+                          </button>
+                          <button
                             v-if="video.scheduled_publish_at"
-                            class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50"
+                            class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50 self-start"
                             :disabled="statusUpdating[video.id]"
                             @click="updateVideoStatus(video, 'draft', '')"
                           >Clear schedule</button>
                         </div>
-                        <div v-if="video.publish_status === 'published'" class="flex flex-wrap items-center gap-2">
+                        <div v-if="video.publish_status === 'published'" class="flex flex-col gap-1 min-w-[11rem]">
                           <input
-                            :value="parseIsoForInput(video.published_at)"
-                            type="datetime-local"
-                            class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white"
+                            :value="publishedInputDisplay(video)"
+                            type="text"
+                            inputmode="numeric"
+                            autocomplete="off"
+                            :placeholder="scheduleInputPlaceholder"
+                            class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white font-mono w-full max-w-[11rem]"
                             :disabled="statusUpdating[video.id]"
-                            @change="(e) => updateVideoPublishedAt(video, parseLocalDateTimeToIso((e.target as HTMLInputElement).value || ''))"
+                            @input="(e) => setPublishedDraft(video.id, (e.target as HTMLInputElement).value)"
+                            @change="applyPublishedAtFromForm(video)"
                           />
+                          <button
+                            type="button"
+                            class="px-2 py-1 text-xs rounded bg-sky-600 hover:bg-sky-700 text-white font-medium disabled:opacity-50 self-start"
+                            :disabled="statusUpdating[video.id]"
+                            @click="applyPublishedAtFromForm(video)"
+                          >
+                            Apply date
+                          </button>
                           <button
                             class="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50"
                             :disabled="statusUpdating[video.id]"
@@ -2012,6 +2073,10 @@ const saveMessageClass = ref('')
 const previewLockByVideoId = ref<Record<string, number>>({})
 const actualDurationByVideoId = ref<Record<string, number>>({})
 const statusUpdating = ref<Record<string, boolean>>({})
+const schedulePanelVideoId = ref<string | null>(null)
+const scheduleTextDraft = ref<Record<string, string>>({})
+const publishedTextDraft = ref<Record<string, string>>({})
+const uploadDateEditDraft = ref<Record<string, string>>({})
 const notifying = ref<Record<string, boolean>>({})
 const trashing = ref<Record<string, boolean>>({})
 const retryingLivestreamProvision = ref<Record<string, boolean>>({})
@@ -2459,22 +2524,88 @@ const formatDate = (raw: string) => {
   const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z'
   return new Date(normalized).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
-const parseIsoForInput = (raw?: string | null) => {
+
+/** European local wall time for admin schedule / publish inputs (24h). */
+const formatEuropeanDateTimeFromAny = (raw?: string | null) => {
   if (!raw) return ''
   const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z'
   const date = new Date(normalized)
   if (Number.isNaN(date.getTime())) return ''
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-  return local.toISOString().slice(0, 16)
+  const dd = String(date.getDate()).padStart(2, '0')
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const yyyy = String(date.getFullYear())
+  const hh = String(date.getHours()).padStart(2, '0')
+  const min = String(date.getMinutes()).padStart(2, '0')
+  return `${dd}.${mm}.${yyyy} ${hh}:${min}`
 }
 
-const parseLocalDateTimeToIso = (raw?: string | null) => {
-  if (!raw) return ''
-  const date = new Date(raw)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toISOString()
+/** Parse `DD.MM.YYYY HH:mm` or `D.M.YYYY H:mm` in local timezone → ISO for API. */
+const parseEuropeanDateTimeToIso = (raw: string): string | null => {
+  const m = raw.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})$/)
+  if (!m) return null
+  const d = Number(m[1])
+  const mo = Number(m[2])
+  const y = Number(m[3])
+  const h = Number(m[4])
+  const mi = Number(m[5])
+  if (!Number.isFinite(d) || !Number.isFinite(mo) || !Number.isFinite(y) || !Number.isFinite(h) || !Number.isFinite(mi)) return null
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59) return null
+  const local = new Date(y, mo - 1, d, h, mi, 0, 0)
+  if (local.getFullYear() !== y || local.getMonth() !== mo - 1 || local.getDate() !== d) return null
+  return local.toISOString()
 }
 
+const scheduleInputPlaceholder = 'DD.MM.YYYY HH:mm'
+
+const scheduleInputDisplay = (video: Video) =>
+  scheduleTextDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.scheduled_publish_at || null)
+
+const publishedInputDisplay = (video: Video) =>
+  publishedTextDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.published_at || null)
+
+const setScheduleDraft = (videoId: string, value: string) => {
+  scheduleTextDraft.value = { ...scheduleTextDraft.value, [videoId]: value }
+}
+
+const setPublishedDraft = (videoId: string, value: string) => {
+  publishedTextDraft.value = { ...publishedTextDraft.value, [videoId]: value }
+}
+
+const toggleSchedulePanel = (video: Video) => {
+  if (schedulePanelVideoId.value === video.id) {
+    schedulePanelVideoId.value = null
+    return
+  }
+  schedulePanelVideoId.value = video.id
+  if (!scheduleTextDraft.value[video.id]) {
+    scheduleTextDraft.value = {
+      ...scheduleTextDraft.value,
+      [video.id]: formatEuropeanDateTimeFromAny(video.scheduled_publish_at || video.upload_date),
+    }
+  }
+  uploadDateEditDraft.value = {
+    ...uploadDateEditDraft.value,
+    [video.id]: formatEuropeanDateTimeFromAny(video.upload_date),
+  }
+}
+
+const setUploadDateDraft = (videoId: string, value: string) => {
+  uploadDateEditDraft.value = { ...uploadDateEditDraft.value, [videoId]: value }
+}
+
+const clearScheduleTextDraft = (videoId: string) => {
+  const next = { ...scheduleTextDraft.value }
+  delete next[videoId]
+  scheduleTextDraft.value = next
+}
+
+const clearPublishedTextDraft = (videoId: string) => {
+  const next = { ...publishedTextDraft.value }
+  delete next[videoId]
+  publishedTextDraft.value = next
+}
+
+/** Promo code expiry still uses native datetime-local input. */
 const parseOptionalLocalDateTimeToIso = (raw?: string | null) => {
   if (!raw) return null
   const date = new Date(raw)
@@ -4053,9 +4184,15 @@ async function updateVideoStatus(
       uploads.value[idx] = { ...cur, ...updated }
     }
     const publishedAtChanged = publishedAt !== null
-    showToast('success', publishedAtChanged
-      ? `Published timestamp updated for ${video.title}.`
-      : `Status updated: ${video.title} → ${newStatus}.`)
+    let statusToast = `Status updated: ${video.title} → ${newStatus}.`
+    if (publishedAtChanged) {
+      statusToast = `Published timestamp updated for ${video.title}.`
+    } else if (scheduledPublishAt !== null && scheduledPublishAt !== '') {
+      statusToast = updated.scheduled_publish_at
+        ? `Publish scheduled for ${video.title}.`
+        : `Display date (upload) updated for ${video.title}.`
+    }
+    showToast('success', statusToast)
   } catch (e: any) {
     saveMessage.value = `Failed to update "${video.title}": ${e.message}`
     showToast('error', `Failed to update ${video.title}: ${e.message}`)
@@ -4065,10 +4202,96 @@ async function updateVideoStatus(
   }
 }
 
+function parseAdminDateTimeToIso(raw: string): string | null {
+  if (!raw?.trim()) return null
+  const euro = parseEuropeanDateTimeToIso(raw.trim())
+  if (euro) return euro
+  const t = Date.parse(raw.trim())
+  if (!Number.isNaN(t)) return new Date(t).toISOString()
+  return null
+}
+
+async function patchVideoUploadDate(video: Video, iso: string) {
+  statusUpdating.value[video.id] = true
+  try {
+    const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ uploadDate: iso }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    const { video: updated } = await res.json()
+    const idx = uploads.value.findIndex(v => v.id === video.id)
+    if (idx !== -1) {
+      const cur = uploads.value[idx]!
+      uploads.value[idx] = { ...cur, ...updated }
+    }
+    uploadDateEditDraft.value = {
+      ...uploadDateEditDraft.value,
+      [video.id]: formatEuropeanDateTimeFromAny(updated.upload_date),
+    }
+    showToast('success', `Upload date updated for ${video.title}.`)
+  } catch (e: any) {
+    showToast('error', `Failed to update upload date: ${e.message}`)
+  } finally {
+    statusUpdating.value[video.id] = false
+  }
+}
+
+async function applyUploadDateFromPanel(video: Video) {
+  const raw = uploadDateEditDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.upload_date)
+  const iso = parseAdminDateTimeToIso(raw)
+  if (!iso) {
+    showToast('error', `Use ${scheduleInputPlaceholder} (24-hour).`)
+    return
+  }
+  await patchVideoUploadDate(video, iso)
+}
+
+async function applyScheduleFromForm(video: Video) {
+  const raw = scheduleTextDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.scheduled_publish_at || video.upload_date)
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    await updateVideoStatus(video, 'draft', '')
+    clearScheduleTextDraft(video.id)
+    return
+  }
+  const iso = parseAdminDateTimeToIso(trimmed)
+  if (!iso) {
+    showToast('error', `Use ${scheduleInputPlaceholder} (24-hour).`)
+    return
+  }
+  await updateVideoStatus(video, 'draft', iso)
+  clearScheduleTextDraft(video.id)
+}
+
+async function applyPublishedAtFromForm(video: Video) {
+  const raw = publishedTextDraft.value[video.id] ?? formatEuropeanDateTimeFromAny(video.published_at || null)
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    await updateVideoPublishedAt(video, '')
+    clearPublishedTextDraft(video.id)
+    return
+  }
+  const iso = parseAdminDateTimeToIso(trimmed)
+  if (!iso) {
+    showToast('error', `Use ${scheduleInputPlaceholder} (24-hour).`)
+    return
+  }
+  await updateVideoPublishedAt(video, iso)
+  clearPublishedTextDraft(video.id)
+}
+
 async function updateVideoPublishedAt(video: Video, rawValue: string) {
   statusUpdating.value[video.id] = true
   try {
-    const nextIso = rawValue ? parseLocalDateTimeToIso(rawValue) : null
+    const nextIso = rawValue ? parseAdminDateTimeToIso(rawValue) : null
+    if (rawValue && !nextIso) {
+      throw new Error(`Invalid date — use ${scheduleInputPlaceholder} (24-hour).`)
+    }
     const res = await fetch(`${config.public.apiUrl}/api/admin/videos/${video.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...authHeader() },

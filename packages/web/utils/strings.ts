@@ -49,6 +49,8 @@ const strings = {
   previewMode: 'Preview Mode',
   upgradeToWatch: 'Upgrade to watch full video',
   premiumAccess: 'Premium Access',
+  /** Shown when the full video is unlocked for anonymous viewers (preview lock = full duration). */
+  freeToWatch: 'Free to watch',
   previewOnly: (duration: string) => `Preview Only (${duration})`,
   upNext: 'Up Next',
   videoBuffering: 'Video is buffering',
