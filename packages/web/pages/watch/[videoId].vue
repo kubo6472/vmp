@@ -359,7 +359,8 @@ const isFullPublicPreview = computed(() => {
   if (!v?.video || v.hasAccess) return false
   const prev = v.video.previewDuration
   const full = effectiveFullDuration.value
-  return typeof prev === 'number' && full > 0 && prev >= full
+  const EPSILON_SECONDS = 0.5
+  return typeof prev === 'number' && full > 0 && prev >= (full - EPSILON_SECONDS)
 })
 
 // ── Computed helpers ─────────────────────────────────────────────────────────

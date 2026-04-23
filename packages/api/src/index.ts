@@ -1595,9 +1595,9 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
   if (hasScheduledPublishAt && scheduledPublishAt.invalid) {
     return jsonResponse({ error: 'scheduledPublishAt must be a valid ISO timestamp, or null to clear schedule' }, 400, corsHeaders)
   }
-  const uploadDateNorm = hasUploadDate ? normalizePublishedAt(body.uploadDate, { allowNull: false }) : null
-  if (hasUploadDate && uploadDateNorm && uploadDateNorm.invalid) {
-    return jsonResponse({ error: 'uploadDate must be a valid ISO timestamp' }, 400, corsHeaders)
+  const uploadDateNorm = normalizePublishedAt(body.uploadDate, { allowNull: false })
+  if (hasUploadDate && uploadDateNorm.invalid) {
+    return jsonResponse({ error: 'uploadDate must be a valid ISO timestamp and may not be null' }, 400, corsHeaders)
   }
   const publishedAt = normalizePublishedAt(body.publishedAt, { allowNull: true })
   if (hasPublishedAt && publishedAt.invalid) {
@@ -1614,6 +1614,12 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
       error: 'Conflicting payload: scheduledPublishAt cannot be combined with publishedAt',
       code: 'invalid_payload',
     }, 400, corsHeaders)
+  }
+  if (hasScheduledPublishAt && scheduledPublishAt.backdatesUpload && hasUploadDate) {
+    return jsonResponse({
+      error: 'Conflicting payload: backdating scheduledPublishAt cannot be combined with uploadDate',
+      code: 'invalid_payload',
+    }, 409, corsHeaders)
   }
 
   const db = getDatabaseBinding(env)
@@ -1708,6 +1714,12 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
     if (hasScheduledPublishAt) {
       if (scheduledPublishAt.value) {
         if (scheduledPublishAt.backdatesUpload) {
+          if (videoExists.publish_status === 'published') {
+            return jsonResponse({
+              error: 'Cannot backdate scheduledPublishAt for a published video. Use uploadDate instead.',
+              code: 'invalid_payload',
+            }, 409, corsHeaders)
+          }
           await db.prepare(`
             UPDATE videos
             SET upload_date = ?,
@@ -2692,15 +2704,16 @@ function normalizeHomepageLayoutVariant(raw: any) {
 }
 
 export function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boolean, allowPast?: boolean } = {}) {
+  const makeResult = (value: string | null, invalid: boolean, backdatesUpload = false) => ({ value, invalid, backdatesUpload })
   if (raw == null || raw === '') {
-    return options.allowNull ? { value: null, invalid: false, backdatesUpload: false } : { value: null, invalid: true, backdatesUpload: false }
+    return options.allowNull ? makeResult(null, false) : makeResult(null, true)
   }
-  if (typeof raw !== 'string') return { value: null, invalid: true, backdatesUpload: false }
+  if (typeof raw !== 'string') return makeResult(null, true)
   const text = raw.trim()
-  if (!text) return options.allowNull ? { value: null, invalid: false, backdatesUpload: false } : { value: null, invalid: true, backdatesUpload: false }
+  if (!text) return options.allowNull ? makeResult(null, false) : makeResult(null, true)
 
   const t = parseAdminTimestampToUtcMillis(text)
-  if (!Number.isFinite(t)) return { value: null, invalid: true, backdatesUpload: false }
+  if (!Number.isFinite(t)) return makeResult(null, true)
 
   const d = new Date(t)
   const yyyy = d.getUTCFullYear()
@@ -2712,14 +2725,14 @@ export function normalizeScheduledPublishAt(raw: any, options: { allowNull?: boo
   const value = `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`
 
   // Future (60s grace): normal schedule. Past: rewrite upload_date for drafts instead of auto-publishing.
-  const isPastOrNow = t + 60_000 <= Date.now()
+  const isBackdateable = t + 60_000 <= Date.now()
   if (options.allowPast) {
-    return { value, invalid: false, backdatesUpload: false }
+    return makeResult(value, false)
   }
-  if (isPastOrNow) {
-    return { value, invalid: false, backdatesUpload: true }
+  if (isBackdateable) {
+    return makeResult(value, false, true)
   }
-  return { value, invalid: false, backdatesUpload: false }
+  return makeResult(value, false)
 }
 
 export function normalizePublishedAt(raw: any, options: { allowNull?: boolean } = {}) {

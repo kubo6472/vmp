@@ -40,4 +40,20 @@ describe('normalizeScheduledPublishAt', () => {
     assert.equal(normalized.invalid, false)
     assert.equal(normalized.backdatesUpload, false)
   })
+
+  it('does not backdate inside 60s grace window', () => {
+    const ts = new Date(Date.now() - 30_000).toISOString()
+    const normalized = normalizeScheduledPublishAt(ts, { allowNull: true })
+    assert.equal(normalized.invalid, false)
+    assert.equal(typeof normalized.value, 'string')
+    assert.equal(normalized.backdatesUpload, false)
+  })
+
+  it('backdates when older than 60s grace window', () => {
+    const ts = new Date(Date.now() - 120_000).toISOString()
+    const normalized = normalizeScheduledPublishAt(ts, { allowNull: true })
+    assert.equal(normalized.invalid, false)
+    assert.equal(typeof normalized.value, 'string')
+    assert.equal(normalized.backdatesUpload, true)
+  })
 })

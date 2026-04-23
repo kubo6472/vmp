@@ -549,7 +549,6 @@
                             class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white font-mono w-full max-w-[11rem]"
                             :disabled="statusUpdating[video.id]"
                             @input="(e) => setScheduleDraft(video.id, (e.target as HTMLInputElement).value)"
-                            @change="applyScheduleFromForm(video)"
                           />
                           <button
                             type="button"
@@ -576,7 +575,6 @@
                             class="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-white font-mono w-full max-w-[11rem]"
                             :disabled="statusUpdating[video.id]"
                             @input="(e) => setPublishedDraft(video.id, (e.target as HTMLInputElement).value)"
-                            @change="applyPublishedAtFromForm(video)"
                           />
                           <button
                             type="button"
@@ -2577,12 +2575,6 @@ const toggleSchedulePanel = (video: Video) => {
     return
   }
   schedulePanelVideoId.value = video.id
-  if (!scheduleTextDraft.value[video.id]) {
-    scheduleTextDraft.value = {
-      ...scheduleTextDraft.value,
-      [video.id]: formatEuropeanDateTimeFromAny(video.scheduled_publish_at || video.upload_date),
-    }
-  }
   uploadDateEditDraft.value = {
     ...uploadDateEditDraft.value,
     [video.id]: formatEuropeanDateTimeFromAny(video.upload_date),
@@ -4204,11 +4196,14 @@ async function updateVideoStatus(
 
 function parseAdminDateTimeToIso(raw: string): string | null {
   if (!raw?.trim()) return null
-  const euro = parseEuropeanDateTimeToIso(raw.trim())
+  const trimmed = raw.trim()
+  const euro = parseEuropeanDateTimeToIso(trimmed)
   if (euro) return euro
-  const t = Date.parse(raw.trim())
-  if (!Number.isNaN(t)) return new Date(t).toISOString()
-  return null
+  const strictIso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/
+  if (!strictIso.test(trimmed)) return null
+  const date = new Date(trimmed)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toISOString()
 }
 
 async function patchVideoUploadDate(video: Video, iso: string) {
