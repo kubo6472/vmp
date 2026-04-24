@@ -18,6 +18,8 @@
     "gen:icons": "tsx scripts/gen-icons.ts"
   },
   "dependencies": {
+    "@moq/lite": "^0.2.2",
+    "@moq/watch": "^0.2.10",
     "@nuxtjs/color-mode": "^4.0.0",
     "@vite-pwa/nuxt": "^1.1.1",
     "@vmp/shared": "*",
@@ -30,8 +32,8 @@
   },
   "devDependencies": {
     "@nuxtjs/tailwindcss": "^6.14.0",
-    "@types/qrcode": "^1.5.6",
     "@types/node": "^25.6.0",
+    "@types/qrcode": "^1.5.6",
     "tsx": "^4.20.6",
     "typescript": "^6.0.3",
     "vue-tsc": "^3.2.7",
