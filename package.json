@@ -23,7 +23,7 @@
     "@nx/vite": "22.6.5",
     "nuxt": "^4.0.0",
     "nx": "22.6.5",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.3"
   },
   "engines": {
     "node": ">=20.0.0",
