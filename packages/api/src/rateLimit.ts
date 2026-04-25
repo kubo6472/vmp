@@ -8,32 +8,24 @@
  * and cached in module scope for 60 seconds to avoid re-reading settings on every request.
  */
 
-const rateLimitCacheByEnv = new WeakMap<any, { value: number, expiresAt: number }>()
+import { getSetting } from './settingsStore.js'
 
 /**
  * Read rate_limit_anon from admin_settings, caching for 60 s.
  * Falls back to 5 if the row is missing or invalid.
  */
 async function getRateLimitValue(env: any) {
-  const now = Date.now()
-  const existingCache = rateLimitCacheByEnv.get(env)
-  if (existingCache && now < existingCache.expiresAt) return existingCache.value
-
   try {
-    const db = env.DB || env.video_subscription_db
-    const row = await db
-      .prepare("SELECT value FROM admin_settings WHERE key = 'rate_limit_anon' LIMIT 1")
-      .first()
-    const parsed = row ? parseInt(row.value, 10) : NaN
-    const value = Number.isFinite(parsed) && parsed > 0 ? parsed : 5
-    rateLimitCacheByEnv.set(env, { value, expiresAt: now + 60_000 })
-    return value
+    const raw = await getSetting(env, 'rate_limit_anon', { ttlSeconds: 60, defaultValue: '5' })
+    const parsed = Number.parseInt(String(raw ?? '5'), 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 5
   } catch {
-    if (existingCache) {
-      rateLimitCacheByEnv.set(env, { value: existingCache.value, expiresAt: now + 5_000 })
-      return existingCache.value
+    // Keep retries short on transient failures.
+    try {
+      await getSetting(env, 'rate_limit_anon', { ttlSeconds: 5, defaultValue: '5' })
+    } catch {
+      // Best effort only.
     }
-    rateLimitCacheByEnv.set(env, { value: 5, expiresAt: now + 5_000 })
     return 5
   }
 }
@@ -76,19 +68,26 @@ export async function checkAnonymousRateLimit(request: any, env: any, ctx?: Exec
   }
 
   const limit = await getRateLimitValue(env)
-  const upsert = await db.prepare(`
-    INSERT INTO anonymous_rate_limits (
-      ip, bucket_hour, request_count, expires_at, updated_at
-    ) VALUES (
-      ?, ?, 1, datetime('now', '+3700 seconds'), CURRENT_TIMESTAMP
-    )
-    ON CONFLICT(ip, bucket_hour) DO UPDATE SET
-      request_count = anonymous_rate_limits.request_count + 1,
-      expires_at = datetime('now', '+3700 seconds'),
-      updated_at = CURRENT_TIMESTAMP
-    RETURNING request_count
-  `).bind(ip, hourKey).first()
-  const current = Number.parseInt(String(upsert?.request_count ?? 0), 10) || 0
+  let current = 0
+  try {
+    const upsert = await db.prepare(`
+      INSERT INTO anonymous_rate_limits (
+        ip, bucket_hour, request_count, expires_at, updated_at
+      ) VALUES (
+        ?, ?, 1, datetime('now', '+3700 seconds'), CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(ip, bucket_hour) DO UPDATE SET
+        request_count = anonymous_rate_limits.request_count + 1,
+        expires_at = datetime('now', '+3700 seconds'),
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING request_count
+    `).bind(ip, hourKey).first()
+    current = Number.parseInt(String(upsert?.request_count ?? 0), 10) || 0
+  } catch (error) {
+    // Fail-open for anonymous traffic when D1 is transiently unavailable.
+    console.error('Anonymous rate-limit counter upsert failed; allowing request', { ip, hourKey, error })
+    current = 0
+  }
 
   if (current > limit) {
     // Seconds remaining in the current UTC hour
