@@ -91,17 +91,6 @@
               <span class="sr-only">{{ strings.videoBuffering }}</span>
             </div>
 
-            <div
-              v-if="videoData.video.isLivestream"
-              class="absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-rose-500/90 to-rose-600/90 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between"
-            >
-              <div class="flex items-center space-x-2">
-                <span class="inline-block w-2 h-2 rounded-full bg-white"></span>
-                <span class="font-semibold">Live</span>
-              </div>
-              <span class="text-sm">Realtime stream</span>
-            </div>
-
             <button
               v-if="autoplayBlocked"
               type="button"
@@ -197,11 +186,76 @@
                 </media-control-bar>
               </div>
             </media-controller>
-            <canvas
+            <div
               v-else
-              ref="liveCanvas"
-              class="block w-full aspect-video"
-            />
+              ref="liveMoqShellRef"
+              class="watch-live-moq-shell group/livemoq relative block w-full aspect-video bg-black"
+            >
+              <canvas ref="liveCanvas" class="block w-full h-full" />
+              <div
+                v-if="hasLivestreamMoqSource"
+                class="watch-live-moq-controls-container"
+              >
+                <media-control-bar class="watch-live-moq-control-bar" noautohide>
+                  <button
+                    type="button"
+                    class="watch-live-moq-icon-btn"
+                    :aria-label="liveMoqIsPaused ? strings.playVideo : strings.pauseVideo"
+                    @click="handleLiveMoqPlayPause"
+                  >
+                    <svg v-if="liveMoqIsPaused" class="w-7 h-7" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                    <svg v-else class="w-7 h-7" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="watch-live-moq-live-edge-btn"
+                    :aria-label="strings.goToLive"
+                    @click="liveMoqGoLive"
+                  >
+                    <span class="inline-block w-2 h-2 rounded-full bg-rose-500 shrink-0" aria-hidden="true"></span>
+                    <span>{{ strings.live }}</span>
+                  </button>
+                  <span class="flex-1 min-w-2"></span>
+                  <button
+                    type="button"
+                    class="watch-live-moq-icon-btn"
+                    :aria-label="liveMoqIsMuted ? strings.unmute : strings.mute"
+                    @click="liveMoqToggleMute"
+                  >
+                    <svg v-if="liveMoqIsMuted" class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
+                    </svg>
+                    <svg v-else class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                    </svg>
+                  </button>
+                  <input
+                    type="range"
+                    class="watch-live-moq-volume"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    :value="liveMoqVolume"
+                    :aria-label="strings.volume"
+                    @input="onLiveMoqVolumeInput"
+                  />
+                  <button
+                    type="button"
+                    class="watch-live-moq-icon-btn"
+                    :aria-label="strings.fullscreen"
+                    @click="liveMoqToggleFullscreen"
+                  >
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+                    </svg>
+                  </button>
+                </media-control-bar>
+              </div>
+            </div>
             <div
               v-if="videoData.video.isLivestream && !hasAnyLivestreamPlaybackSource"
               class="absolute inset-0 z-10 bg-black/85 flex items-center justify-center px-6 text-center"
@@ -220,40 +274,44 @@
             </h1>
 
             <div class="flex items-center space-x-4 text-sm text-gray-600 dark:text-gray-400 mb-4">
-              <span class="flex items-center space-x-1">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span>{{ effectiveFullDuration ? formatDuration(effectiveFullDuration) : '--' }}</span>
-              </span>
-
               <span
                 v-if="videoData.video.isLivestream"
-                class="flex items-center space-x-1 text-rose-600 dark:text-rose-400 font-semibold"
+                class="inline-flex items-center gap-2 rounded px-2 py-0.5 text-rose-600 dark:text-rose-400 font-semibold"
               >
-                <span class="inline-block w-2 h-2 rounded-full bg-rose-500"></span>
-                <span>Livestream · {{ videoData.video.livestreamStatus || 'scheduled' }}</span>
+                <span class="inline-block w-2.5 h-3 rounded-sm bg-rose-500 shrink-0" aria-hidden="true"></span>
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="inline-block w-2 h-2 rounded-full bg-rose-500 shrink-0" aria-hidden="true"></span>
+                  <span>{{ strings.live }}</span>
+                </span>
               </span>
+              <template v-else>
+                <span class="flex items-center space-x-1">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>{{ effectiveFullDuration ? formatDuration(effectiveFullDuration) : '--' }}</span>
+                </span>
 
-              <span
-                v-else-if="videoData.hasAccess"
-                class="flex items-center space-x-1 text-yellow-600 dark:text-yellow-400 font-semibold"
-              >
-                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                </svg>
-                <span>{{ strings.premiumAccess }}</span>
-              </span>
+                <span
+                  v-if="videoData.hasAccess"
+                  class="flex items-center space-x-1 text-yellow-600 dark:text-yellow-400 font-semibold"
+                >
+                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                  </svg>
+                  <span>{{ strings.premiumAccess }}</span>
+                </span>
 
-              <span v-else-if="isFullPublicPreview" class="flex items-center space-x-1 text-emerald-600 dark:text-emerald-400 font-medium">
-                <span>{{ strings.freeToWatch }}</span>
-              </span>
-              <span v-else class="flex items-center space-x-1">
-                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
-                </svg>
-                <span>{{ strings.previewOnly(videoData.video.previewDuration != null ? formatDuration(videoData.video.previewDuration) : '--') }}</span>
-              </span>
+                <span v-else-if="isFullPublicPreview" class="flex items-center space-x-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                  <span>{{ strings.freeToWatch }}</span>
+                </span>
+                <span v-else class="flex items-center space-x-1">
+                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
+                  </svg>
+                  <span>{{ strings.previewOnly(videoData.video.previewDuration != null ? formatDuration(videoData.video.previewDuration) : '--') }}</span>
+                </span>
+              </template>
             </div>
 
             <div
@@ -282,11 +340,24 @@
                       :alt="rec.title"
                       class="w-full h-full object-cover"
                     />
-                    <div class="absolute bottom-1 right-1 bg-black bg-opacity-80 text-white text-xs px-1.5 py-0.5 rounded">
+                    <div
+                      v-if="isLiveRecommendation(rec)"
+                      class="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+                    >
+                      <span class="inline-block w-1.5 h-2 rounded-sm bg-rose-500 shrink-0" aria-hidden="true"></span>
+                      <span class="inline-flex items-center gap-0.5 font-semibold">
+                        <span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" aria-hidden="true"></span>
+                        Live
+                      </span>
+                    </div>
+                    <div
+                      v-else
+                      class="absolute bottom-1 right-1 bg-black bg-opacity-80 text-white text-xs px-1.5 py-0.5 rounded"
+                    >
                       {{ rec.full_duration ? formatDuration(rec.full_duration) : '--' }}
                     </div>
                     <div
-                      v-if="rec.full_duration > 0 ? rec.preview_duration < rec.full_duration : rec.preview_duration > 0"
+                      v-if="!isLiveRecommendation(rec) && (rec.full_duration > 0 ? rec.preview_duration < rec.full_duration : rec.preview_duration > 0)"
                       class="absolute top-1 left-1 bg-yellow-500 text-black text-xs font-semibold px-1.5 py-0.5 rounded"
                     >
                       PRO
@@ -317,7 +388,9 @@ import { useRoute } from 'vue-router'
 import { useRuntimeConfig } from '#app'
 import 'media-chrome'
 import 'videojs-video-element'
+import type { Broadcast, MultiBackend } from '@moq/watch'
 import { resolvePlaylistDuration } from '~/composables/useHlsDuration'
+import { isLiveRecommendation, useMoqLivePlayerControls } from '~/composables/useMoqLivePlayerControls'
 import { sizeUrl } from '~/composables/useThumbnail'
 import { renderMarkdownToHtml } from '~/utils/markdown'
 import strings from '~/utils/strings'
@@ -377,7 +450,32 @@ const rateLimitLimit      = ref(0)
 const autoplayBlocked     = ref(false)
 const autoplayMuting      = ref(false)
 const autoplayPlayError   = ref(false)
-const liveCanvas          = ref<HTMLCanvasElement | null>(null)
+const liveCanvas = ref<HTMLCanvasElement | null>(null)
+
+const {
+  shellRef: liveMoqShellRef,
+  attach: attachLiveMoqControls,
+  detach: detachLiveMoqControls,
+  isPaused: liveMoqIsPaused,
+  volume01: liveMoqVolume,
+  isMuted: liveMoqIsMuted,
+  togglePause: liveMoqTogglePause,
+  goLive: liveMoqGoLive,
+  toggleMute: liveMoqToggleMute,
+  setVolume: liveMoqSetVolume,
+  toggleFullscreen: liveMoqToggleFullscreen
+} = useMoqLivePlayerControls()
+
+const handleLiveMoqPlayPause = () => {
+  if (liveMoqIsPaused.value) liveMoqGoLive()
+  else liveMoqTogglePause()
+}
+
+const onLiveMoqVolumeInput = (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const v = Number.parseFloat(input.value)
+  if (Number.isFinite(v)) liveMoqSetVolume(v)
+}
 
 const videoId = computed(() => String(route.params.videoId ?? ''))
 
@@ -509,17 +607,14 @@ let handleMediaError:     (() => void) | null = null
 let handleWaiting:        (() => void) | null = null
 let handlePlaying:        (() => void) | null = null
 let handleCanPlay:        (() => void) | null = null
-let livestreamRuntime: {
-  connection: unknown
-  broadcast: unknown
-  sync: unknown
-  videoSource: unknown
-  videoDecoder: unknown
-  videoRenderer: unknown
-  audioSource: unknown
-  audioDecoder: unknown
-  audioEmitter: unknown
-} | null = null
+type Closable = { close?: () => void }
+type LivestreamRuntime = {
+  connection: Closable | null
+  broadcast: Closable | null
+  moqBackend: Closable | null
+}
+
+let livestreamRuntime: LivestreamRuntime | null = null
 let reloadInFlight = false
 let currentRouteRequestId = 0
 let activeLoadAbortController: AbortController | null = null
@@ -703,56 +798,38 @@ const initializeLivestreamRuntime = async (
 
   teardownVideoListeners()
   teardownLivestreamRuntime()
-  let partialRuntime: {
-    connection?: unknown
-    broadcast?: unknown
-    sync?: unknown
-    videoSource?: unknown
-    videoDecoder?: unknown
-    videoRenderer?: unknown
-    audioSource?: unknown
-    audioDecoder?: unknown
-    audioEmitter?: unknown
-  } = {}
+  let partialRuntime: LivestreamRuntime = {
+    connection: null,
+    broadcast: null,
+    moqBackend: null
+  }
 
   try {
     const { moq, watch } = await ensureMoqModules()
-    const connection = new moq.Connection.Reload({
+    const connection: Closable = new moq.Connection.Reload({
       url: new URL(moqEndpoint),
       enabled: true
     })
     partialRuntime.connection = connection
 
-    const broadcast = new watch.Broadcast({
+    const broadcast: Broadcast = new watch.Broadcast({
       connection: connection.established,
       enabled: true,
       name: moq.Path.from(moqBroadcast)
     })
     partialRuntime.broadcast = broadcast
 
-    const sync = new watch.Sync()
-    partialRuntime.sync = sync
-
-    const videoSource = new watch.Video.Source(sync, { broadcast })
-    partialRuntime.videoSource = videoSource
-
-    const videoDecoder = new watch.Video.Decoder(videoSource)
-    partialRuntime.videoDecoder = videoDecoder
-
-    const videoRenderer = new watch.Video.Renderer(videoDecoder, { canvas, paused: false })
-    partialRuntime.videoRenderer = videoRenderer
-
-    const audioSource = new watch.Audio.Source(sync, { broadcast })
-    partialRuntime.audioSource = audioSource
-
-    const audioDecoder = new watch.Audio.Decoder(audioSource)
-    partialRuntime.audioDecoder = audioDecoder
-
-    const audioEmitter = new watch.Audio.Emitter(audioDecoder, { paused: false })
-    partialRuntime.audioEmitter = audioEmitter
+    const moqBackend: MultiBackend = new watch.MultiBackend({
+      element: canvas,
+      broadcast,
+      latency: 'real-time',
+      paused: false
+    })
+    partialRuntime.moqBackend = moqBackend
+    attachLiveMoqControls(moqBackend, broadcast)
 
     ensureActive()
-    livestreamRuntime = partialRuntime as typeof livestreamRuntime
+    livestreamRuntime = partialRuntime
   } catch (error) {
     teardownLivestreamRuntime(partialRuntime)
     throw error
@@ -946,15 +1023,20 @@ function teardownVideoListeners() {
   if (handleCanPlay)        { video.removeEventListener('canplay', handleCanPlay);                handleCanPlay        = null }
 }
 
-function teardownLivestreamRuntime(runtimeToDispose?: Record<string, unknown> | null) {
+function teardownLivestreamRuntime(runtimeToDispose?: LivestreamRuntime | null) {
   const source = runtimeToDispose ?? livestreamRuntime
-  const instances = source ? Object.values(source) : []
-  for (const instance of instances) {
-    const resource = instance as { close?: () => void; destroy?: () => void; stop?: () => void } | undefined
-    resource?.stop?.()
-    resource?.destroy?.()
-    resource?.close?.()
+  // Detach controls when tearing down the active runtime, or any runtime
+  // that has a moqBackend (which is where attachLiveMoqControls is wired).
+  const shouldDetach =
+    !runtimeToDispose ||
+    runtimeToDispose === livestreamRuntime ||
+    Boolean(source?.moqBackend)
+  if (shouldDetach) {
+    detachLiveMoqControls()
   }
+  source?.moqBackend?.close?.()
+  source?.broadcast?.close?.()
+  source?.connection?.close?.()
   if (!runtimeToDispose || runtimeToDispose === livestreamRuntime) {
     livestreamRuntime = null
   }
@@ -1006,5 +1088,87 @@ function teardownLivestreamRuntime(runtimeToDispose?: Record<string, unknown> | 
 @media (min-width: 640px) {
   .watch-seekbar-row { padding: 0 16px; }
   .watch-media-control-bar { padding: 2px 12px 8px; }
+}
+
+.watch-live-moq-shell {
+  --media-control-background: transparent;
+  --media-control-color: #ffffff;
+}
+
+.watch-live-moq-controls-container {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.5) 60%, transparent 100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.watch-live-moq-shell:hover .watch-live-moq-controls-container,
+.watch-live-moq-shell:focus-within .watch-live-moq-controls-container {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.watch-live-moq-control-bar {
+  position: relative;
+  z-index: 20;
+  padding: 2px 8px 8px;
+  --media-control-background: transparent;
+}
+
+.watch-live-moq-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0.25rem;
+  color: #fff;
+  border-radius: 0.25rem;
+  transition: background 0.15s ease;
+}
+
+.watch-live-moq-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.watch-live-moq-live-edge-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  margin-left: 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #fecdd3;
+  border-radius: 0.25rem;
+  transition: background 0.15s ease;
+}
+
+.watch-live-moq-live-edge-btn:hover {
+  background: rgba(244, 63, 94, 0.25);
+}
+
+.watch-live-moq-volume {
+  width: 4.5rem;
+  max-width: 22vw;
+  height: 0.25rem;
+  margin: 0 0.25rem;
+  cursor: pointer;
+  accent-color: #3b82f6;
+  vertical-align: middle;
+}
+
+@media (min-width: 640px) {
+  .watch-live-moq-volume {
+    width: 5.5rem;
+  }
+  .watch-live-moq-control-bar {
+    padding: 2px 12px 10px;
+  }
 }
 </style>
