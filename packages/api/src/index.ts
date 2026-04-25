@@ -87,6 +87,37 @@ function getPublicErrorMessage(fallback = 'Internal server error'): string {
   return fallback
 }
 
+const MAX_MOQ_ENDPOINT_LENGTH = 2048
+const MAX_MOQ_BROADCAST_LENGTH = 128
+
+function validateMoqEndpoint(value: string): { ok: true } | { ok: false, error: string } {
+  if (!value) return { ok: false, error: 'moqEndpoint is required' }
+  if (value.length > MAX_MOQ_ENDPOINT_LENGTH) {
+    return { ok: false, error: `moqEndpoint exceeds max length (${MAX_MOQ_ENDPOINT_LENGTH} chars)` }
+  }
+  let parsedEndpoint: URL
+  try {
+    parsedEndpoint = new URL(value)
+  } catch {
+    return { ok: false, error: 'moqEndpoint must be a valid URL' }
+  }
+  if (!['https:', 'http:'].includes(parsedEndpoint.protocol)) {
+    return { ok: false, error: 'moqEndpoint must use http or https scheme' }
+  }
+  return { ok: true }
+}
+
+function validateMoqBroadcast(value: string): { ok: true } | { ok: false, error: string } {
+  if (!value) return { ok: false, error: 'moqBroadcast is required' }
+  if (value.length > MAX_MOQ_BROADCAST_LENGTH) {
+    return { ok: false, error: `moqBroadcast exceeds max length (${MAX_MOQ_BROADCAST_LENGTH} chars)` }
+  }
+  if (/[\p{C}\s]/u.test(value)) {
+    return { ok: false, error: 'moqBroadcast contains invalid control/whitespace characters' }
+  }
+  return { ok: true }
+}
+
 function getErrorField(error: unknown, key: string): unknown {
   if (typeof error !== 'object' || error === null) return undefined
   return (error as Record<string, unknown>)[key]
@@ -754,9 +785,13 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any, ctx?:
         livestreamMoqEndpoint,
         livestreamMoqBroadcast,
         livestreamRecordingVideoId: livestreamRecordingId,
-        livestreamUnavailableReason: isLivestream && !playlistUrl && !(livestreamMoqEndpoint && livestreamMoqBroadcast)
-          ? 'Live stream is not configured. Add MoQ endpoint + broadcast, or attach a recorded VOD.'
-          : null,
+        livestreamUnavailableReason: (() => {
+          if (!isLivestream || playlistUrl) return null
+          if (livestream?.provider === 'moq' && !(livestreamMoqEndpoint && livestreamMoqBroadcast)) {
+            return 'Live stream is not configured. Add MoQ endpoint + broadcast, or attach a recorded VOD.'
+          }
+          return 'Live stream is not configured. Provide playback or ingest credentials, or attach a recorded VOD.'
+        })(),
       },
       chapters: [
         { title: 'Preview', startTime: 0, endTime: previewDuration, accessible: true },
@@ -1296,23 +1331,10 @@ async function handleAdminLivestreamCreate(request: any, env: any, corsHeaders: 
   const moqBroadcast = typeof body.moqBroadcast === 'string' && body.moqBroadcast.trim()
     ? body.moqBroadcast.trim()
     : ''
-  if (!moqEndpoint) return jsonResponse({ error: 'moqEndpoint is required' }, 400, corsHeaders)
-  if (!moqBroadcast) return jsonResponse({ error: 'moqBroadcast is required' }, 400, corsHeaders)
-  if (moqBroadcast.length > 128) {
-    return jsonResponse({ error: 'moqBroadcast exceeds max length (128 chars)' }, 400, corsHeaders)
-  }
-  if (/[\p{C}\s]/u.test(moqBroadcast)) {
-    return jsonResponse({ error: 'moqBroadcast contains invalid control/whitespace characters' }, 400, corsHeaders)
-  }
-  let parsedEndpoint: URL
-  try {
-    parsedEndpoint = new URL(moqEndpoint)
-  } catch {
-    return jsonResponse({ error: 'moqEndpoint must be a valid URL' }, 400, corsHeaders)
-  }
-  if (!['https:', 'http:'].includes(parsedEndpoint.protocol)) {
-    return jsonResponse({ error: 'moqEndpoint must use http or https scheme' }, 400, corsHeaders)
-  }
+  const endpointValidation = validateMoqEndpoint(moqEndpoint)
+  if (!endpointValidation.ok) return jsonResponse({ error: endpointValidation.error }, 400, corsHeaders)
+  const broadcastValidation = validateMoqBroadcast(moqBroadcast)
+  if (!broadcastValidation.ok) return jsonResponse({ error: broadcastValidation.error }, 400, corsHeaders)
 
   const categoryId = typeof body.categoryId === 'string' && body.categoryId.trim() ? body.categoryId.trim() : null
   const db = getDatabaseBinding(env)
@@ -1422,12 +1444,22 @@ async function handleAdminLivestreamUpdate(request: any, env: any, corsHeaders: 
     values.push(typeof body.ingestUrl === 'string' && body.ingestUrl.trim() ? body.ingestUrl.trim() : null)
   }
   if (Object.prototype.hasOwnProperty.call(body, 'moqEndpoint')) {
+    const moqEndpoint = typeof body.moqEndpoint === 'string' && body.moqEndpoint.trim() ? body.moqEndpoint.trim() : null
+    if (moqEndpoint !== null) {
+      const endpointValidation = validateMoqEndpoint(moqEndpoint)
+      if (!endpointValidation.ok) return jsonResponse({ error: endpointValidation.error }, 400, corsHeaders)
+    }
     updates.push('moq_endpoint = ?')
-    values.push(typeof body.moqEndpoint === 'string' && body.moqEndpoint.trim() ? body.moqEndpoint.trim() : null)
+    values.push(moqEndpoint)
   }
   if (Object.prototype.hasOwnProperty.call(body, 'moqBroadcast')) {
+    const moqBroadcast = typeof body.moqBroadcast === 'string' && body.moqBroadcast.trim() ? body.moqBroadcast.trim() : null
+    if (moqBroadcast !== null) {
+      const broadcastValidation = validateMoqBroadcast(moqBroadcast)
+      if (!broadcastValidation.ok) return jsonResponse({ error: broadcastValidation.error }, 400, corsHeaders)
+    }
     updates.push('moq_broadcast = ?')
-    values.push(typeof body.moqBroadcast === 'string' && body.moqBroadcast.trim() ? body.moqBroadcast.trim() : null)
+    values.push(moqBroadcast)
   }
   if (Object.prototype.hasOwnProperty.call(body, 'playbackUrl')) {
     const playbackUrl = typeof body.playbackUrl === 'string' && body.playbackUrl.trim() ? body.playbackUrl.trim() : null
