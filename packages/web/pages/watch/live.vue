@@ -51,9 +51,6 @@
               class="text-gray-700 dark:text-gray-300 leading-relaxed prose prose-sm dark:prose-invert max-w-none"
               v-html="liveDescriptionHtml"
             ></div>
-            <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">
-              {{ strings.livestreamRealtimeNote }}
-            </p>
           </div>
         </div>
 

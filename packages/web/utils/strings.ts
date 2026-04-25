@@ -58,7 +58,6 @@ const strings = {
   videoPlaybackError: 'Video playback error. The HLS stream could not be loaded.',
   livestreamUnavailable: 'Livestream feed unavailable',
   livestreamUnavailableDetail: 'The stream is not currently connected. Attach a recording or update the livestream playback URL in admin.',
-  livestreamRealtimeNote: 'Live playback depends on RealtimeKit ingest/playback availability. Rewind/time-shift and tokenized segment protection are limited until a VOD recording is attached.',
 
   // ── Rate limit ─────────────────────────────────────────────────────────────
   rateLimitTitle: 'Free preview limit reached',
