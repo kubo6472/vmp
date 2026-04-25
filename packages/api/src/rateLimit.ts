@@ -8,8 +8,7 @@
  * and cached in module scope for 60 seconds to avoid re-reading settings on every request.
  */
 
-let cachedRateLimit: any = null
-let cacheExpiresAt = 0
+const rateLimitCacheByEnv = new WeakMap<any, { value: number, expiresAt: number }>()
 
 /**
  * Read rate_limit_anon from admin_settings, caching for 60 s.
@@ -17,7 +16,8 @@ let cacheExpiresAt = 0
  */
 async function getRateLimitValue(env: any) {
   const now = Date.now()
-  if (cachedRateLimit !== null && now < cacheExpiresAt) return cachedRateLimit
+  const existingCache = rateLimitCacheByEnv.get(env)
+  if (existingCache && now < existingCache.expiresAt) return existingCache.value
 
   try {
     const db = env.DB || env.video_subscription_db
@@ -25,15 +25,15 @@ async function getRateLimitValue(env: any) {
       .prepare("SELECT value FROM admin_settings WHERE key = 'rate_limit_anon' LIMIT 1")
       .first()
     const parsed = row ? parseInt(row.value, 10) : NaN
-    cachedRateLimit = Number.isFinite(parsed) && parsed > 0 ? parsed : 5
-    cacheExpiresAt = now + 60_000
-    return cachedRateLimit
+    const value = Number.isFinite(parsed) && parsed > 0 ? parsed : 5
+    rateLimitCacheByEnv.set(env, { value, expiresAt: now + 60_000 })
+    return value
   } catch {
-    if (cachedRateLimit !== null) {
-      cacheExpiresAt = now + 5_000
-      return cachedRateLimit
+    if (existingCache) {
+      rateLimitCacheByEnv.set(env, { value: existingCache.value, expiresAt: now + 5_000 })
+      return existingCache.value
     }
-    cacheExpiresAt = now + 5_000
+    rateLimitCacheByEnv.set(env, { value: 5, expiresAt: now + 5_000 })
     return 5
   }
 }

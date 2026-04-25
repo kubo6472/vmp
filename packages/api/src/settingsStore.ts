@@ -28,6 +28,20 @@ export interface SettingsOptions {
   bypassKv?: boolean
 }
 
+/**
+ * Invalidates one setting key from this isolate's in-memory cache.
+ *
+ * When `persistVersion` is true (default), this also updates the shared
+ * `settings_changed_at` marker (`SETTINGS_VERSION_KEY`) in D1 and refreshes the
+ * local version via `bumpLocalSettingsVersion`, so other isolates will observe
+ * the new version on their next `getSettingsVersion` refresh.
+ *
+ * When `persistVersion` is false, invalidation is local-only and does not write
+ * a new shared version marker; other isolates may continue serving cached values
+ * until their `cachedSettingsVersionExpiresAt` window (`SETTINGS_VERSION_CACHE_MS`)
+ * elapses and they re-read `settings_changed_at`.
+ */
+
 function normalizeCacheTtlSeconds(key: string, ttlSeconds: number) {
   if (key.startsWith(STRIPE_SETTING_PREFIX)) return Math.min(Math.max(1, ttlSeconds), STRIPE_SETTING_TTL_SECONDS)
   return Math.max(1, ttlSeconds)
@@ -89,7 +103,9 @@ export async function getSetting(env: any, key: any, options: SettingsOptions = 
     value = row?.value ?? defaultValue
     hasDbRowValue = row != null && row.value != null
   } catch {
-    value = defaultValue
+    const existing = inMemorySettingsCache.get(cacheKey)
+    value = existing?.value ?? defaultValue
+    hasDbRowValue = existing != null
   }
 
   if (hasDbRowValue) {
@@ -178,13 +194,15 @@ export async function setSetting(env: any, key: any, value: any, options: Settin
 
   bumpLocalSettingsVersion(version)
 
-  inMemorySettingsCache.set(cacheKey, {
-    value: normalized,
-    expiresAt: Date.now() + normalizeCacheTtlSeconds(cacheKey, ttlSeconds) * 1000,
-    version,
-  })
-
-  if (cacheKey.startsWith(STRIPE_SETTING_PREFIX)) invalidateLocalSettingCacheOnly(cacheKey)
+  if (cacheKey.startsWith(STRIPE_SETTING_PREFIX)) {
+    invalidateLocalSettingCacheOnly(cacheKey)
+  } else {
+    inMemorySettingsCache.set(cacheKey, {
+      value: normalized,
+      expiresAt: Date.now() + normalizeCacheTtlSeconds(cacheKey, ttlSeconds) * 1000,
+      version,
+    })
+  }
 }
 
 export function buildSettingsStatements(env: any, entries: any) {
@@ -221,7 +239,10 @@ export async function setSettings(env: any, entries: any, options: SettingsOptio
     const normalized = value == null ? '' : String(value)
     const cacheKey = String(key)
     const adjustedExpiresAt = Date.now() + normalizeCacheTtlSeconds(cacheKey, ttlSeconds) * 1000
-    inMemorySettingsCache.set(cacheKey, { value: normalized, expiresAt: adjustedExpiresAt, version })
-    if (cacheKey.startsWith(STRIPE_SETTING_PREFIX)) invalidateLocalSettingCacheOnly(cacheKey)
+    if (cacheKey.startsWith(STRIPE_SETTING_PREFIX)) {
+      invalidateLocalSettingCacheOnly(cacheKey)
+    } else {
+      inMemorySettingsCache.set(cacheKey, { value: normalized, expiresAt: adjustedExpiresAt, version })
+    }
   }
 }
