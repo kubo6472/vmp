@@ -101,8 +101,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRuntimeConfig } from '#app'
-import * as Moq from '@moq/lite'
-import * as Watch from '@moq/watch'
 import { sizeUrl } from '~/composables/useThumbnail'
 import { renderMarkdownToHtml } from '~/utils/markdown'
 import strings from '~/utils/strings'
@@ -117,6 +115,24 @@ const liveVideo = ref<{ id: string; title: string; description: string } | null>
 const liveTitle = computed(() => liveVideo.value?.title?.trim() || 'Live Stream')
 const liveDescription = computed(() => liveVideo.value?.description?.trim() || strings.noDescription)
 const liveDescriptionHtml = computed(() => renderMarkdownToHtml(liveDescription.value))
+
+let moqModule: Awaited<typeof import('@moq/lite')> | null = null
+let watchModule: Awaited<typeof import('@moq/watch')> | null = null
+
+const ensureMoqModules = async () => {
+  if (import.meta.server) {
+    throw new Error('Livestream playback is only available in the browser.')
+  }
+  if (!moqModule || !watchModule) {
+    const [moq, watch] = await Promise.all([
+      import('@moq/lite'),
+      import('@moq/watch')
+    ])
+    moqModule = moq
+    watchModule = watch
+  }
+  return { moq: moqModule, watch: watchModule }
+}
 
 let runtime: {
   connection: unknown
@@ -180,6 +196,7 @@ onMounted(async () => {
       throw new Error(strings.livestreamUnavailableDetail)
     }
 
+    const { moq, watch } = await ensureMoqModules()
     loading.value = false
     await nextTick()
     const canvasEl = canvas.value
@@ -188,30 +205,30 @@ onMounted(async () => {
     }
 
     // A MoQ connection that is automatically re-established on drop.
-    const connection = new Moq.Connection.Reload({
+    const connection = new moq.Connection.Reload({
       url: new URL(moqEndpoint),
       enabled: true
     })
 
     // The MoQ broadcast being fetched.
-    const broadcast = new Watch.Broadcast({
+    const broadcast = new watch.Broadcast({
       connection: connection.established,
       enabled: true,
-      name: Moq.Path.from(moqBroadcast)
+      name: moq.Path.from(moqBroadcast)
     })
 
     // Synchronize audio and video playback.
-    const sync = new Watch.Sync()
+    const sync = new watch.Sync()
 
     // Decode and render video into the page canvas.
-    const videoSource = new Watch.Video.Source(sync, { broadcast })
-    const videoDecoder = new Watch.Video.Decoder(videoSource)
-    const videoRenderer = new Watch.Video.Renderer(videoDecoder, { canvas: canvasEl, paused: false })
+    const videoSource = new watch.Video.Source(sync, { broadcast })
+    const videoDecoder = new watch.Video.Decoder(videoSource)
+    const videoRenderer = new watch.Video.Renderer(videoDecoder, { canvas: canvasEl, paused: false })
 
     // Decode and emit audio through WebAudio.
-    const audioSource = new Watch.Audio.Source(sync, { broadcast })
-    const audioDecoder = new Watch.Audio.Decoder(audioSource)
-    const audioEmitter = new Watch.Audio.Emitter(audioDecoder, { paused: false })
+    const audioSource = new watch.Audio.Source(sync, { broadcast })
+    const audioDecoder = new watch.Audio.Decoder(audioSource)
+    const audioEmitter = new watch.Audio.Emitter(audioDecoder, { paused: false })
 
     runtime = {
       connection,

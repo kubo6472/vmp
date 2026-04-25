@@ -318,8 +318,6 @@
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRuntimeConfig } from '#app'
-import * as Moq from '@moq/lite'
-import * as Watch from '@moq/watch'
 import 'media-chrome'
 import 'videojs-video-element'
 import { resolvePlaylistDuration } from '~/composables/useHlsDuration'
@@ -329,6 +327,24 @@ import strings from '~/utils/strings'
 
 const route  = useRoute()
 const config = useRuntimeConfig()
+
+let moqModule: Awaited<typeof import('@moq/lite')> | null = null
+let watchModule: Awaited<typeof import('@moq/watch')> | null = null
+
+const ensureMoqModules = async () => {
+  if (import.meta.server) {
+    throw new Error('Livestream playback is only available in the browser.')
+  }
+  if (!moqModule || !watchModule) {
+    const [moq, watch] = await Promise.all([
+      import('@moq/lite'),
+      import('@moq/watch')
+    ])
+    moqModule = moq
+    watchModule = watch
+  }
+  return { moq: moqModule, watch: watchModule }
+}
 
 // ── Auth — userId now comes from the session, not a query param ──────────────
 //
@@ -700,38 +716,39 @@ const initializeLivestreamRuntime = async (
   } = {}
 
   try {
-    const connection = new Moq.Connection.Reload({
+    const { moq, watch } = await ensureMoqModules()
+    const connection = new moq.Connection.Reload({
       url: new URL(moqEndpoint),
       enabled: true
     })
     partialRuntime.connection = connection
 
-    const broadcast = new Watch.Broadcast({
+    const broadcast = new watch.Broadcast({
       connection: connection.established,
       enabled: true,
-      name: Moq.Path.from(moqBroadcast)
+      name: moq.Path.from(moqBroadcast)
     })
     partialRuntime.broadcast = broadcast
 
-    const sync = new Watch.Sync()
+    const sync = new watch.Sync()
     partialRuntime.sync = sync
 
-    const videoSource = new Watch.Video.Source(sync, { broadcast })
+    const videoSource = new watch.Video.Source(sync, { broadcast })
     partialRuntime.videoSource = videoSource
 
-    const videoDecoder = new Watch.Video.Decoder(videoSource)
+    const videoDecoder = new watch.Video.Decoder(videoSource)
     partialRuntime.videoDecoder = videoDecoder
 
-    const videoRenderer = new Watch.Video.Renderer(videoDecoder, { canvas, paused: false })
+    const videoRenderer = new watch.Video.Renderer(videoDecoder, { canvas, paused: false })
     partialRuntime.videoRenderer = videoRenderer
 
-    const audioSource = new Watch.Audio.Source(sync, { broadcast })
+    const audioSource = new watch.Audio.Source(sync, { broadcast })
     partialRuntime.audioSource = audioSource
 
-    const audioDecoder = new Watch.Audio.Decoder(audioSource)
+    const audioDecoder = new watch.Audio.Decoder(audioSource)
     partialRuntime.audioDecoder = audioDecoder
 
-    const audioEmitter = new Watch.Audio.Emitter(audioDecoder, { paused: false })
+    const audioEmitter = new watch.Audio.Emitter(audioDecoder, { paused: false })
     partialRuntime.audioEmitter = audioEmitter
 
     ensureActive()
