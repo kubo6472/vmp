@@ -21,6 +21,7 @@
   "devDependencies": {
     "@nx/nuxt": "22.6.5",
     "@nx/vite": "22.6.5",
+    "@vue/language-core": "^3.2.7",
     "nuxt": "^4.0.0",
     "nx": "22.6.5",
     "typescript": "^6.0.3"
@@ -32,6 +33,5 @@
   "overrides": {
     "serialize-javascript": ">=7.0.3",
     "brace-expansion": ">=5.0.5"
-  },
-  "dependencies": {}
+  }
 }

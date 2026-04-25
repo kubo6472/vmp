@@ -806,7 +806,7 @@ const initializeLivestreamRuntime = async (
 
   try {
     const { moq, watch } = await ensureMoqModules()
-    const connection: Closable = new moq.Connection.Reload({
+    const connection = new moq.Connection.Reload({
       url: new URL(moqEndpoint),
       enabled: true
     })
