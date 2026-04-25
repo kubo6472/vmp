@@ -118,6 +118,20 @@ function validateMoqBroadcast(value: string): { ok: true } | { ok: false, error:
   return { ok: true }
 }
 
+function deriveEffectiveLivestreamStatus(
+  livestreamStatusRaw: unknown,
+  videoPublishStatusRaw: unknown,
+): string {
+  const livestreamStatus = normalizeLivestreamStatus(livestreamStatusRaw, 'draft')
+  if (livestreamStatus !== 'draft') return livestreamStatus
+  const videoPublishStatus = typeof videoPublishStatusRaw === 'string'
+    ? videoPublishStatusRaw.trim().toLowerCase()
+    : ''
+  if (videoPublishStatus === 'published') return 'ready'
+  if (videoPublishStatus === 'archived') return 'ended'
+  return livestreamStatus
+}
+
 function getErrorField(error: unknown, key: string): unknown {
   if (typeof error !== 'object' || error === null) return undefined
   return (error as Record<string, unknown>)[key]
@@ -690,7 +704,7 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any, ctx?:
     const hasAccess = hasPremiumAccess || !hasVideoMetadata
     const previewDuration = video?.preview_duration ?? video?.full_duration ?? 0
     const isLivestream = Boolean(livestream)
-    const livestreamStatus = normalizeLivestreamStatus(livestream?.status, 'draft')
+    const livestreamStatus = deriveEffectiveLivestreamStatus(livestream?.status, video?.publish_status)
     const hasLivestreamPlaybackUrl = typeof livestream?.playback_url === 'string' && livestream.playback_url.trim().length > 0
     const livestreamPlaybackUrl = hasLivestreamPlaybackUrl ? livestream.playback_url.trim() : null
     const isMoqLivestream = livestream?.provider === 'moq'
@@ -1291,7 +1305,14 @@ async function handleAdminVideosList(request: any, env: any, corsHeaders: any) {
       } else if (env.BUCKET) {
         r2Exists = await hasProcessedPlaybackArtifact(env.BUCKET, video.id)
       }
-      return { ...video, r2_exists: r2Exists }
+      const effectiveLivestreamStatus = video?.livestream_provider
+        ? deriveEffectiveLivestreamStatus(video.livestream_status, video.publish_status)
+        : video?.livestream_status ?? null
+      return {
+        ...video,
+        livestream_status: effectiveLivestreamStatus,
+        r2_exists: r2Exists,
+      }
     }))
 
     return jsonResponse({ videos: annotated }, 200, corsHeaders)
@@ -1824,6 +1845,9 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
       WHERE v.id = ?
     `).bind(videoId).first()
     if (!video) return jsonResponse({ error: 'Video not found' }, 404, corsHeaders)
+    if (video.livestream_provider) {
+      video.livestream_status = deriveEffectiveLivestreamStatus(video.livestream_status, video.publish_status)
+    }
 
     // Automatic notifications on publish are intentionally disabled.
     void transitionedToPublished
