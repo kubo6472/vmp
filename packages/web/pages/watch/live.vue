@@ -99,7 +99,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRuntimeConfig } from '#app'
 import * as Moq from '@moq/lite'
 import * as Watch from '@moq/watch'
@@ -113,9 +113,10 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 const recommendations = ref<any[]>([])
 
-const liveTitle = 'Live Stream'
-const liveDescription = 'Realtime livestream playback. Access is gated at the stream level rather than preview windows.'
-const liveDescriptionHtml = computed(() => renderMarkdownToHtml(liveDescription))
+const liveVideo = ref<{ id: string; title: string; description: string } | null>(null)
+const liveTitle = computed(() => liveVideo.value?.title?.trim() || 'Live Stream')
+const liveDescription = computed(() => liveVideo.value?.description?.trim() || strings.noDescription)
+const liveDescriptionHtml = computed(() => renderMarkdownToHtml(liveDescription.value))
 
 let runtime: {
   connection: unknown
@@ -150,19 +151,22 @@ onMounted(async () => {
   loading.value = true
   error.value = null
 
-  if (!canvas.value) {
-    error.value = 'Live player failed to initialize.'
-    loading.value = false
-    return
-  }
-
   try {
     const accessResponse = await fetch(`${config.public.apiUrl}/api/video-access/live`)
     if (!accessResponse.ok) {
       throw new Error('Failed to load livestream access')
     }
     const accessData = await accessResponse.json()
+    const videoId = typeof accessData?.videoId === 'string' ? accessData.videoId : 'live'
+    if (videoId === 'live') {
+      throw new Error('Livestream route is not configured. Create a livestream video with slug "live" or use /watch/:videoId.')
+    }
     const hasAccess = Boolean(accessData?.hasAccess)
+    liveVideo.value = {
+      id: videoId,
+      title: typeof accessData?.video?.title === 'string' ? accessData.video.title : 'Live Stream',
+      description: typeof accessData?.video?.description === 'string' ? accessData.video.description : '',
+    }
     const moqEndpoint = typeof accessData?.video?.livestreamMoqEndpoint === 'string'
       ? accessData.video.livestreamMoqEndpoint.trim()
       : ''
@@ -174,6 +178,13 @@ onMounted(async () => {
     }
     if (!moqEndpoint || !moqBroadcast) {
       throw new Error(strings.livestreamUnavailableDetail)
+    }
+
+    loading.value = false
+    await nextTick()
+    const canvasEl = canvas.value
+    if (!canvasEl) {
+      throw new Error('Live player failed to initialize.')
     }
 
     // A MoQ connection that is automatically re-established on drop.
@@ -195,7 +206,7 @@ onMounted(async () => {
     // Decode and render video into the page canvas.
     const videoSource = new Watch.Video.Source(sync, { broadcast })
     const videoDecoder = new Watch.Video.Decoder(videoSource)
-    const videoRenderer = new Watch.Video.Renderer(videoDecoder, { canvas: canvas.value, paused: false })
+    const videoRenderer = new Watch.Video.Renderer(videoDecoder, { canvas: canvasEl, paused: false })
 
     // Decode and emit audio through WebAudio.
     const audioSource = new Watch.Audio.Source(sync, { broadcast })
@@ -215,10 +226,11 @@ onMounted(async () => {
     }
   } catch (e) {
     console.error('Failed to initialize live stream player', e)
-    error.value = strings.videoPlaybackError
+    const message = e instanceof Error ? e.message : ''
+    error.value = message || strings.videoPlaybackError
   } finally {
     await loadRecommendations()
-    loading.value = false
+    if (loading.value) loading.value = false
   }
 })
 

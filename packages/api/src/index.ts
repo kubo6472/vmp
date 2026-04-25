@@ -635,7 +635,7 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any, ctx?:
     const resolvedVideoId = video?.id ?? videoId
     const livestream = video
       ? await db.prepare(`
-          SELECT video_id, provider, stream_id, stream_key, ingest_url, playback_url, status, recording_video_id, started_at, ended_at
+          SELECT video_id, provider, stream_id, stream_key, ingest_url, playback_url, status, moq_endpoint, moq_broadcast, recording_video_id, started_at, ended_at
           FROM livestreams
           WHERE video_id = ?
           LIMIT 1
@@ -1236,6 +1236,8 @@ async function handleAdminVideosList(request: any, env: any, corsHeaders: any) {
              ls.stream_id AS livestream_stream_id,
              ls.stream_key AS livestream_stream_key,
              ls.ingest_url AS livestream_ingest_url,
+             ls.moq_endpoint AS livestream_moq_endpoint,
+             ls.moq_broadcast AS livestream_moq_broadcast,
              ls.playback_url AS livestream_playback_url,
              ls.recording_video_id AS livestream_recording_video_id
       FROM videos v
@@ -1367,6 +1369,8 @@ async function getAdminVideoById(db: any, videoId: string) {
            ls.stream_id AS livestream_stream_id,
            ls.stream_key AS livestream_stream_key,
            ls.ingest_url AS livestream_ingest_url,
+           ls.moq_endpoint AS livestream_moq_endpoint,
+           ls.moq_broadcast AS livestream_moq_broadcast,
            ls.playback_url AS livestream_playback_url,
            ls.recording_video_id AS livestream_recording_video_id
     FROM videos v
@@ -1391,12 +1395,16 @@ async function handleAdminLivestreamUpdate(request: any, env: any, corsHeaders: 
   const body = await request.json().catch(() => null)
   if (!body || typeof body !== 'object') return jsonResponse({ error: 'Request body is required' }, 400, corsHeaders)
 
+  const allowedProviders = new Set(['moq', 'cloudflare_realtime', 'realtimekit'])
   const updates = []
   const values = []
   if (typeof body.provider === 'string') {
     const provider = body.provider.trim()
     if (!provider) {
       return jsonResponse({ error: 'provider must not be empty when provided' }, 400, corsHeaders)
+    }
+    if (!allowedProviders.has(provider)) {
+      return jsonResponse({ error: `provider must be one of: ${Array.from(allowedProviders).join(', ')}` }, 400, corsHeaders)
     }
     updates.push('provider = ?')
     values.push(provider)
@@ -1412,6 +1420,14 @@ async function handleAdminLivestreamUpdate(request: any, env: any, corsHeaders: 
   if (Object.prototype.hasOwnProperty.call(body, 'ingestUrl')) {
     updates.push('ingest_url = ?')
     values.push(typeof body.ingestUrl === 'string' && body.ingestUrl.trim() ? body.ingestUrl.trim() : null)
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'moqEndpoint')) {
+    updates.push('moq_endpoint = ?')
+    values.push(typeof body.moqEndpoint === 'string' && body.moqEndpoint.trim() ? body.moqEndpoint.trim() : null)
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'moqBroadcast')) {
+    updates.push('moq_broadcast = ?')
+    values.push(typeof body.moqBroadcast === 'string' && body.moqBroadcast.trim() ? body.moqBroadcast.trim() : null)
   }
   if (Object.prototype.hasOwnProperty.call(body, 'playbackUrl')) {
     const playbackUrl = typeof body.playbackUrl === 'string' && body.playbackUrl.trim() ? body.playbackUrl.trim() : null
@@ -1508,7 +1524,8 @@ async function handleAdminLivestreamProvision(request: any, env: any, corsHeader
     WHERE video_id = ?
   `).bind('ready', videoId).run()
   const updatedVideo = await getAdminVideoById(db, videoId)
-  return jsonResponse({ ok: true, skipped: true, mode: 'manual_moq', video: updatedVideo }, 200, corsHeaders)
+  const mode = provider ? `manual_${provider}` : 'manual_unknown'
+  return jsonResponse({ ok: true, skipped: true, mode, video: updatedVideo }, 200, corsHeaders)
 }
 
 async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHeaders: any) {
@@ -1764,6 +1781,8 @@ async function handleAdminVideoUpdate(request: any, env: any, ctx: any, corsHead
              ls.stream_id AS livestream_stream_id,
              ls.stream_key AS livestream_stream_key,
              ls.ingest_url AS livestream_ingest_url,
+             ls.moq_endpoint AS livestream_moq_endpoint,
+             ls.moq_broadcast AS livestream_moq_broadcast,
              ls.playback_url AS livestream_playback_url,
              ls.recording_video_id AS livestream_recording_video_id
       FROM videos v
