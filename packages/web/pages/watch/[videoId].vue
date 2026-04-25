@@ -91,6 +91,17 @@
               <span class="sr-only">{{ strings.videoBuffering }}</span>
             </div>
 
+            <div
+              v-if="videoData.video.isLivestream"
+              class="absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-rose-500/90 to-rose-600/90 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-between"
+            >
+              <div class="flex items-center space-x-2">
+                <span class="inline-block w-2 h-2 rounded-full bg-white"></span>
+                <span class="font-semibold">Live</span>
+              </div>
+              <span class="text-sm">Realtime stream</span>
+            </div>
+
             <button
               v-if="autoplayBlocked"
               type="button"
@@ -107,6 +118,7 @@
 
             <!-- Video Player -->
             <media-controller
+              v-if="!videoData.video.isLivestream"
               id="watch-media-controller"
               class="watch-media-controller group/controls block w-full aspect-video relative"
               @click.capture="handleUserPlaybackInteraction"
@@ -185,8 +197,13 @@
                 </media-control-bar>
               </div>
             </media-controller>
+            <canvas
+              v-else
+              ref="liveCanvas"
+              class="block w-full aspect-video"
+            />
             <div
-              v-if="videoData.video.isLivestream && !videoData.video.playlistUrl"
+              v-if="videoData.video.isLivestream && !hasLivestreamPlaybackSource"
               class="absolute inset-0 z-10 bg-black/85 flex items-center justify-center px-6 text-center"
             >
               <div>
@@ -301,6 +318,8 @@
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRuntimeConfig } from '#app'
+import * as Moq from '@moq/lite'
+import * as Watch from '@moq/watch'
 import 'media-chrome'
 import 'videojs-video-element'
 import { resolvePlaylistDuration } from '~/composables/useHlsDuration'
@@ -345,6 +364,7 @@ const rateLimitLimit      = ref(0)
 const autoplayBlocked     = ref(false)
 const autoplayMuting      = ref(false)
 const autoplayPlayError   = ref(false)
+const liveCanvas          = ref<HTMLCanvasElement | null>(null)
 
 const videoId = computed(() => String(route.params.videoId ?? ''))
 
@@ -364,6 +384,22 @@ const isFullPublicPreview = computed(() => {
   const EPSILON_SECONDS = 0.5
   return typeof prev === 'number' && full > 0 && prev >= (full - EPSILON_SECONDS)
 })
+const hasLivestreamMoqSource = computed(() =>
+  Boolean(
+    videoData.value?.video?.isLivestream &&
+    typeof videoData.value?.video?.livestreamMoqEndpoint === 'string' &&
+    videoData.value?.video?.livestreamMoqEndpoint.trim().length > 0 &&
+    typeof videoData.value?.video?.livestreamMoqBroadcast === 'string' &&
+    videoData.value?.video?.livestreamMoqBroadcast.trim().length > 0
+  )
+)
+const hasLivestreamPlaybackSource = computed(() =>
+  Boolean(
+    videoData.value?.video?.isLivestream &&
+    typeof videoData.value?.video?.playlistUrl === 'string' &&
+    videoData.value?.video?.playlistUrl.trim().length > 0
+  )
+)
 
 // ── Computed helpers ─────────────────────────────────────────────────────────
 
@@ -447,13 +483,27 @@ const enforcePreviewLimit = (video: HTMLVideoElement) => {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
-onUnmounted(teardownVideoListeners)
+onUnmounted(() => {
+  teardownVideoListeners()
+  teardownLivestreamRuntime()
+})
 
 let handleLoadedMetadata: (() => void) | null = null
 let handleMediaError:     (() => void) | null = null
 let handleWaiting:        (() => void) | null = null
 let handlePlaying:        (() => void) | null = null
 let handleCanPlay:        (() => void) | null = null
+let livestreamRuntime: {
+  connection: unknown
+  broadcast: unknown
+  sync: unknown
+  videoSource: unknown
+  videoDecoder: unknown
+  videoRenderer: unknown
+  audioSource: unknown
+  audioDecoder: unknown
+  audioEmitter: unknown
+} | null = null
 let reloadInFlight = false
 let currentRouteRequestId = 0
 let activeLoadAbortController: AbortController | null = null
@@ -562,6 +612,7 @@ const loadVideoForRoute = async (targetVideoId: string, options: LoadVideoForRou
   currentTime.value = 0
   loading.value = true
   error.value = null
+  teardownLivestreamRuntime()
 
   try {
     await fetchVideoAccess({
@@ -592,6 +643,19 @@ const loadVideoForRoute = async (targetVideoId: string, options: LoadVideoForRou
     loading.value = false
     await nextTick()
     ensureCurrent()
+    if (videoData.value?.video?.isLivestream) {
+      if (hasLivestreamMoqSource.value && !rateLimited.value) {
+        error.value = null
+        await initializeLivestreamRuntime(
+          String(videoData.value.video.livestreamMoqEndpoint),
+          String(videoData.value.video.livestreamMoqBroadcast),
+          guard,
+          options.signal
+        )
+        ensureCurrent()
+      }
+      return
+    }
     const playlistUrl = videoData.value?.video?.playlistUrl
     if (playlistUrl && !rateLimited.value) {
       error.value = null
@@ -602,6 +666,79 @@ const loadVideoForRoute = async (targetVideoId: string, options: LoadVideoForRou
     if (e.name === 'AbortError' || options.signal?.aborted || !guard()) return
     error.value = e.message
     loading.value = false
+  }
+}
+
+const initializeLivestreamRuntime = async (
+  moqEndpoint: string,
+  moqBroadcast: string,
+  isCurrentInvocation: () => boolean = () => true,
+  signal?: AbortSignal
+) => {
+  const ensureActive = () => {
+    if (signal?.aborted || !isCurrentInvocation()) {
+      throw new DOMException('Request aborted', 'AbortError')
+    }
+  }
+
+  ensureActive()
+  const canvas = liveCanvas.value
+  if (!canvas) throw new Error('Live canvas is unavailable')
+
+  teardownVideoListeners()
+  teardownLivestreamRuntime()
+  let partialRuntime: {
+    connection?: unknown
+    broadcast?: unknown
+    sync?: unknown
+    videoSource?: unknown
+    videoDecoder?: unknown
+    videoRenderer?: unknown
+    audioSource?: unknown
+    audioDecoder?: unknown
+    audioEmitter?: unknown
+  } = {}
+
+  try {
+    const connection = new Moq.Connection.Reload({
+      url: new URL(moqEndpoint),
+      enabled: true
+    })
+    partialRuntime.connection = connection
+
+    const broadcast = new Watch.Broadcast({
+      connection: connection.established,
+      enabled: true,
+      name: Moq.Path.from(moqBroadcast)
+    })
+    partialRuntime.broadcast = broadcast
+
+    const sync = new Watch.Sync()
+    partialRuntime.sync = sync
+
+    const videoSource = new Watch.Video.Source(sync, { broadcast })
+    partialRuntime.videoSource = videoSource
+
+    const videoDecoder = new Watch.Video.Decoder(videoSource)
+    partialRuntime.videoDecoder = videoDecoder
+
+    const videoRenderer = new Watch.Video.Renderer(videoDecoder, { canvas, paused: false })
+    partialRuntime.videoRenderer = videoRenderer
+
+    const audioSource = new Watch.Audio.Source(sync, { broadcast })
+    partialRuntime.audioSource = audioSource
+
+    const audioDecoder = new Watch.Audio.Decoder(audioSource)
+    partialRuntime.audioDecoder = audioDecoder
+
+    const audioEmitter = new Watch.Audio.Emitter(audioDecoder, { paused: false })
+    partialRuntime.audioEmitter = audioEmitter
+
+    ensureActive()
+    livestreamRuntime = partialRuntime as typeof livestreamRuntime
+  } catch (error) {
+    teardownLivestreamRuntime(partialRuntime)
+    throw error
   }
 }
 
@@ -790,6 +927,20 @@ function teardownVideoListeners() {
   if (handleWaiting)        { video.removeEventListener('waiting', handleWaiting);                handleWaiting        = null }
   if (handlePlaying)        { video.removeEventListener('playing', handlePlaying);                handlePlaying        = null }
   if (handleCanPlay)        { video.removeEventListener('canplay', handleCanPlay);                handleCanPlay        = null }
+}
+
+function teardownLivestreamRuntime(runtimeToDispose?: Record<string, unknown> | null) {
+  const source = runtimeToDispose ?? livestreamRuntime
+  const instances = source ? Object.values(source) : []
+  for (const instance of instances) {
+    const resource = instance as { close?: () => void; destroy?: () => void; stop?: () => void } | undefined
+    resource?.stop?.()
+    resource?.destroy?.()
+    resource?.close?.()
+  }
+  if (!runtimeToDispose || runtimeToDispose === livestreamRuntime) {
+    livestreamRuntime = null
+  }
 }
 </script>
 

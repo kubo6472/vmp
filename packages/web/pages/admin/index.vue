@@ -433,17 +433,17 @@
                           stream: {{ video.livestream_status || 'draft' }}
                         </span>
                         <span v-if="video.livestream_ingest_url" class="block text-[11px] text-gray-600 dark:text-gray-300 truncate max-w-[18rem]" :title="video.livestream_ingest_url">
-                          ingest: {{ video.livestream_ingest_url }}
+                          endpoint: {{ video.livestream_ingest_url }}
                         </span>
                         <span v-if="video.livestream_stream_key" class="block text-[11px] text-gray-600 dark:text-gray-300 font-mono">
-                          key: {{ video.livestream_stream_key }}
+                          broadcast: {{ video.livestream_stream_key }}
                         </span>
                         <button
                           v-if="video.livestream_provider && video.livestream_status === 'failed' && !retryingLivestreamProvision[video.id]"
                           class="block text-[11px] text-red-600 dark:text-red-300 hover:underline"
                           @click="retryLivestreamProvision(video)"
                         >
-                          retry provisioning
+                          refresh status
                         </button>
                       </div>
                     </td>
@@ -1712,7 +1712,7 @@
         <div class="flex items-center justify-between mb-4">
           <div>
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Create livestream video</h3>
-            <p class="text-sm text-gray-600 dark:text-gray-400">Creates a standard video row. Cloudflare Realtime provisioning runs automatically and returns ingest credentials.</p>
+            <p class="text-sm text-gray-600 dark:text-gray-400">Creates a standard video row configured for MoQ playback (endpoint + broadcast name).</p>
           </div>
           <button class="text-sm text-gray-600 dark:text-gray-300 hover:underline" @click="closeLivestreamModal">Close</button>
         </div>
@@ -1725,8 +1725,9 @@
           </label>
           <label class="text-sm text-gray-700 dark:text-gray-300">Initial stream status
             <select v-model="livestreamModal.form.status" class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
-              <option value="provisioning">provisioning</option>
               <option value="draft">draft</option>
+              <option value="ready">ready</option>
+              <option value="live">live</option>
             </select>
           </label>
           <label class="text-sm text-gray-700 dark:text-gray-300">Publish status
@@ -1738,8 +1739,24 @@
           <label class="text-sm text-gray-700 dark:text-gray-300 md:col-span-2">Description
             <textarea v-model="livestreamModal.form.description" rows="2" class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"></textarea>
           </label>
+          <label class="text-sm text-gray-700 dark:text-gray-300">MoQ endpoint URL
+            <input
+              v-model="livestreamModal.form.moqEndpoint"
+              type="url"
+              placeholder="https://cdn.moq.dev/anon"
+              class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"
+            />
+          </label>
+          <label class="text-sm text-gray-700 dark:text-gray-300">MoQ broadcast name
+            <input
+              v-model="livestreamModal.form.moqBroadcast"
+              type="text"
+              placeholder="obstesting123"
+              class="mt-1 w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"
+            />
+          </label>
         </div>
-        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">After creation, use the generated RTMP URL and stream key in OBS: <span class="font-mono">Settings → Stream → Server + Stream Key</span>.</p>
+        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">The watch page will use these MoQ fields directly for livestream playback.</p>
         <p v-if="livestreamModal.error" class="mt-3 text-sm text-red-600 dark:text-red-300">{{ livestreamModal.error }}</p>
         <div class="mt-4 flex justify-end gap-2">
           <button class="px-3 py-2 rounded border border-gray-300 dark:border-gray-700 text-sm" @click="closeLivestreamModal">Cancel</button>
@@ -2029,6 +2046,8 @@ interface Video {
   livestream_stream_id?: string | null
   livestream_stream_key?: string | null
   livestream_ingest_url?: string | null
+  livestream_moq_endpoint?: string | null
+  livestream_moq_broadcast?: string | null
   livestream_playback_url?: string | null
   livestream_recording_video_id?: string | null
 }
@@ -2194,8 +2213,10 @@ const livestreamModal = ref({
     title: '',
     description: '',
     slug: '',
-    status: 'provisioning',
+    status: 'draft',
     publishStatus: 'draft',
+    moqEndpoint: '',
+    moqBroadcast: '',
   },
 })
 const componentTypes: BlockType[] = ['top_video', 'featured_row', 'category', 'split_horizontal', 'split_vertical']
@@ -2853,8 +2874,10 @@ const resetLivestreamModal = () => {
       title: '',
       description: '',
       slug: '',
-      status: 'provisioning',
+      status: 'draft',
       publishStatus: 'draft',
+      moqEndpoint: '',
+      moqBroadcast: '',
     },
   }
 }
@@ -2874,6 +2897,16 @@ const createLivestream = async () => {
     livestreamModal.value.error = 'Title is required.'
     return
   }
+  const moqEndpoint = livestreamModal.value.form.moqEndpoint.trim()
+  const moqBroadcast = livestreamModal.value.form.moqBroadcast.trim()
+  if (!moqEndpoint) {
+    livestreamModal.value.error = 'MoQ endpoint is required.'
+    return
+  }
+  if (!moqBroadcast) {
+    livestreamModal.value.error = 'MoQ broadcast name is required.'
+    return
+  }
   livestreamModal.value.saving = true
   livestreamModal.value.error = ''
   try {
@@ -2883,6 +2916,8 @@ const createLivestream = async () => {
       slug: livestreamModal.value.form.slug.trim() || null,
       status: livestreamModal.value.form.status,
       publishStatus: livestreamModal.value.form.publishStatus,
+      moqEndpoint,
+      moqBroadcast,
     }
     const res = await fetch(`${config.public.apiUrl}/api/admin/videos/livestreams`, {
       method: 'POST',
@@ -2891,11 +2926,7 @@ const createLivestream = async () => {
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-    if (data?.provisioning?.ok === false) {
-      showToast('error', `Livestream created but provisioning failed: ${data?.provisioning?.error || 'unknown error'}`)
-    } else {
-      showToast('success', 'Livestream video created and provisioned.')
-    }
+    showToast('success', 'Livestream video created with MoQ playback settings.')
     resetLivestreamModal()
     await loadVideos()
   } catch (e: any) {
@@ -2915,10 +2946,10 @@ const retryLivestreamProvision = async (video: Video) => {
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-    showToast('success', 'Livestream provisioning retried successfully.')
+    showToast('success', 'Livestream status refreshed.')
     await loadVideos()
   } catch (e: any) {
-    showToast('error', e.message || 'Failed to retry livestream provisioning.')
+    showToast('error', e.message || 'Failed to refresh livestream status.')
   } finally {
     retryingLivestreamProvision.value[video.id] = false
   }
