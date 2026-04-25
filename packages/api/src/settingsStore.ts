@@ -1,9 +1,9 @@
 /**
- * KV-tolerant settings store.
+ * Settings store backed by D1 with per-isolate in-memory caching.
  *
- * Source of truth remains D1 `admin_settings` for durability and relational safety.
- * KV is used as a global, low-latency read cache for settings that are tolerant
- * to brief staleness.
+ * Source of truth is always D1 `admin_settings`.
+ * To avoid hot-path DB reads we keep a short-lived in-memory cache per worker
+ * isolate, which has zero external write amplification.
  */
 
 function getDb(env: any) {
@@ -12,34 +12,24 @@ function getDb(env: any) {
   return db
 }
 
-function getSettingsKv(env: any) {
-  // Dedicated namespace for settings cache; fallback keeps older environments working.
-  return env.SETTINGS_KV || env.RATE_LIMIT_KV || null
-}
-
-function kvKey(key: any) {
-  return `settings:${key}`
-}
+const inMemorySettingsCache = new Map<string, { value: any, expiresAt: number }>()
 
 export interface SettingsOptions {
   ttlSeconds?: number
   defaultValue?: any
+  // Kept for backwards compatibility with older callsites.
   bypassKv?: boolean
 }
 
 export async function getSetting(env: any, key: any, options: SettingsOptions = {}) {
-  const { ttlSeconds = 300, defaultValue = null, bypassKv = false } = options
+  const { ttlSeconds = 300, defaultValue = null } = options
   const db = getDb(env)
-  const kv = getSettingsKv(env)
-  const keyName = kvKey(key)
+  const cacheKey = String(key)
+  const now = Date.now()
 
-  if (!bypassKv && kv) {
-    try {
-      const cached = await kv.get(keyName)
-      if (cached !== null) return cached
-    } catch {
-      // KV miss/failure falls back to D1.
-    }
+  const cached = inMemorySettingsCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cached.value
   }
 
   let value: any
@@ -52,12 +42,13 @@ export async function getSetting(env: any, key: any, options: SettingsOptions = 
     value = defaultValue
   }
 
-  if (kv && hasDbRowValue) {
-    try {
-      await kv.put(keyName, value == null ? '' : String(value), { expirationTtl: ttlSeconds })
-    } catch {
-      // Best-effort cache write only.
-    }
+  if (hasDbRowValue) {
+    inMemorySettingsCache.set(cacheKey, {
+      value,
+      expiresAt: now + Math.max(1, ttlSeconds) * 1000,
+    })
+  } else {
+    inMemorySettingsCache.delete(cacheKey)
   }
 
   return value
@@ -71,7 +62,6 @@ export async function getSettings(env: any, keys: any, options: SettingsOptions 
 export async function setSetting(env: any, key: any, value: any, options: SettingsOptions = {}) {
   const { ttlSeconds = 300 } = options
   const db = getDb(env)
-  const kv = getSettingsKv(env)
   const normalized = value == null ? '' : String(value)
 
   await db.prepare(`
@@ -79,13 +69,10 @@ export async function setSetting(env: any, key: any, value: any, options: Settin
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
   `).bind(key, normalized).run()
 
-  if (kv) {
-    try {
-      await kv.put(kvKey(key), normalized, { expirationTtl: ttlSeconds })
-    } catch {
-      // D1 write succeeded; cache can self-heal on next read.
-    }
-  }
+  inMemorySettingsCache.set(String(key), {
+    value: normalized,
+    expiresAt: Date.now() + Math.max(1, ttlSeconds) * 1000,
+  })
 }
 
 export function buildSettingsStatements(env: any, entries: any) {
@@ -105,7 +92,6 @@ export function buildSettingsStatements(env: any, entries: any) {
 export async function setSettings(env: any, entries: any, options: SettingsOptions = {}) {
   const { ttlSeconds = 300 } = options
   const db = getDb(env)
-  const kv = getSettingsKv(env)
 
   if (!Array.isArray(entries) || entries.length === 0) return
 
@@ -113,14 +99,9 @@ export async function setSettings(env: any, entries: any, options: SettingsOptio
   const statements = buildSettingsStatements(env, entries)
   await db.batch(statements)
 
-  if (kv) {
-    for (const [key, value] of entries) {
-      try {
-        const normalized = value == null ? '' : String(value)
-        await kv.put(kvKey(key), normalized, { expirationTtl: ttlSeconds })
-      } catch {
-        // D1 write transaction already committed; cache can self-heal on read.
-      }
-    }
+  const expiresAt = Date.now() + Math.max(1, ttlSeconds) * 1000
+  for (const [key, value] of entries) {
+    const normalized = value == null ? '' : String(value)
+    inMemorySettingsCache.set(String(key), { value: normalized, expiresAt })
   }
 }

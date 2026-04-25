@@ -1,14 +1,11 @@
 /**
  * packages/api/src/rateLimit.js
  *
- * KV-backed hourly rate limiter for anonymous video-access requests.
+ * D1-backed hourly rate limiter for anonymous video-access requests.
  *
- * Key format : ratelimit:{ip}:{YYYY-MM-DDTHH}   (hourly bucket)
- * Value      : integer count (stringified)
- * TTL        : 3700 s  (a little over an hour so the key outlives the window)
- *
+ * Counter key: (ip, bucket_hour) where bucket_hour = YYYY-MM-DDTHH in UTC.
  * The limit value is read from admin_settings (key "rate_limit_anon", default 5)
- * and cached in module scope for 60 seconds to avoid a D1 hit on every request.
+ * and cached in module scope for 60 seconds to avoid re-reading settings on every request.
  */
 
 let cachedRateLimit: any = null
@@ -41,12 +38,13 @@ async function getRateLimitValue(env: any) {
  * Check (and increment) the hourly counter for an anonymous request.
  *
  * Returns:
- *   null                              — KV not bound, rate limiting skipped
+ *   null                              — D1 binding not configured, rate limiting skipped
  *   { limited: false, current, limit } — request is allowed
  *   { limited: true, retryAfter, limit, current } — request is blocked (429)
  */
 export async function checkAnonymousRateLimit(request: any, env: any) {
-  if (!env.RATE_LIMIT_KV) return null // binding not configured — skip silently
+  const db = env.DB || env.video_subscription_db
+  if (!db) return null // Database binding not configured — skip silently
 
   // Use CF-Connecting-IP (set by Cloudflare) as the client identifier.
   // Fall back to X-Forwarded-For for local dev / non-CF environments.
@@ -58,13 +56,23 @@ export async function checkAnonymousRateLimit(request: any, env: any) {
   const now = new Date()
   // e.g. "2026-03-30T14" — one bucket per UTC hour
   const hourKey = now.toISOString().slice(0, 13)
-  const key = `ratelimit:${ip}:${hourKey}`
 
   const limit = await getRateLimitValue(env)
-  const stored = await env.RATE_LIMIT_KV.get(key)
-  const current = stored ? parseInt(stored, 10) : 0
+  const upsert = await db.prepare(`
+    INSERT INTO anonymous_rate_limits (
+      ip, bucket_hour, request_count, expires_at, updated_at
+    ) VALUES (
+      ?, ?, 1, datetime('now', '+3700 seconds'), CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(ip, bucket_hour) DO UPDATE SET
+      request_count = anonymous_rate_limits.request_count + 1,
+      expires_at = datetime('now', '+3700 seconds'),
+      updated_at = CURRENT_TIMESTAMP
+    RETURNING request_count
+  `).bind(ip, hourKey).first()
+  const current = Number.parseInt(String(upsert?.request_count ?? 0), 10) || 0
 
-  if (current >= limit) {
+  if (current > limit) {
     // Seconds remaining in the current UTC hour
     const minutesElapsed = now.getUTCMinutes()
     const secondsElapsed = now.getUTCSeconds()
@@ -73,7 +81,14 @@ export async function checkAnonymousRateLimit(request: any, env: any) {
     return { limited: true, retryAfter, limit, current }
   }
 
-  // Increment; TTL 3700 s keeps the key alive past the hour boundary
-  await env.RATE_LIMIT_KV.put(key, String(current + 1), { expirationTtl: 3700 })
-  return { limited: false, current: current + 1, limit }
+  // Opportunistic cleanup keeps the table bounded without cron-only dependence.
+  if (Math.random() < 0.01) {
+    try {
+      await db.prepare('DELETE FROM anonymous_rate_limits WHERE expires_at <= CURRENT_TIMESTAMP').run()
+    } catch {
+      // Cleanup failures are non-fatal for request handling.
+    }
+  }
+
+  return { limited: false, current, limit }
 }
