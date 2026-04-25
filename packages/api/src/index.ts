@@ -745,11 +745,12 @@ async function handleVideoAccess(request: any, env: any, corsHeaders: any, ctx?:
     let playlistUrl: string | null = basePlaylistUrl
     if (isLivestream) {
       const shouldUseLivePlayback = ['live', 'ready', 'provisioning', 'scheduled', 'draft'].includes(livestreamStatus)
+      const hasRealtimePlaybackSource = Boolean(livestreamPlaybackUrl) || Boolean(livestreamMoqEndpoint && livestreamMoqBroadcast)
       if (shouldUseLivePlayback && livestreamPlaybackUrl && hasPremiumAccess) {
         playlistUrl = livestreamPlaybackUrl
-      } else if (!shouldPreferVodRecording) {
-        // For MoQ livestreams, playback happens in the frontend player runtime,
-        // not via HLS playlistUrl.
+      } else if (!shouldPreferVodRecording && hasRealtimePlaybackSource) {
+        // For active realtime livestream inputs, playback happens in the frontend
+        // runtime (MoQ) or dedicated live HLS endpoint, not via stored VOD media.
         playlistUrl = null
       }
     }

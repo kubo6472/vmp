@@ -203,7 +203,7 @@
               class="block w-full aspect-video"
             />
             <div
-              v-if="videoData.video.isLivestream && !hasLivestreamPlaybackSource"
+              v-if="videoData.video.isLivestream && !hasAnyLivestreamPlaybackSource"
               class="absolute inset-0 z-10 bg-black/85 flex items-center justify-center px-6 text-center"
             >
               <div>
@@ -415,6 +415,9 @@ const hasLivestreamPlaybackSource = computed(() =>
     typeof videoData.value?.video?.playlistUrl === 'string' &&
     videoData.value?.video?.playlistUrl.trim().length > 0
   )
+)
+const hasAnyLivestreamPlaybackSource = computed(() =>
+  hasLivestreamMoqSource.value || hasLivestreamPlaybackSource.value
 )
 
 // ── Computed helpers ─────────────────────────────────────────────────────────
