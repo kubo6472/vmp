@@ -23,6 +23,9 @@
           >
             Open default mail app
           </a>
+          <p class="mt-2 text-[11px] text-green-400">
+            If this browser does not open the link inside the app, copy/paste it into this browser to keep your session flow consistent.
+          </p>
         </div>
 
         <div v-else>

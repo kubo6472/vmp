@@ -27,6 +27,7 @@ const strings = {
   notificationsBlocked: 'Notifications blocked by browser',
   notificationsOn: 'Notifications on — click to disable',
   notificationsClickEnable: 'Click to enable new video notifications',
+  notificationsUnsupportedContext: 'Notifications are unavailable in this browser context.',
   notificationsEnabled: 'Notifications enabled.',
   notificationsTurnedOff: 'Notifications turned off.',
 

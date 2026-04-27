@@ -119,6 +119,7 @@ const { siteSettings, fetchSiteSettings } = useSiteSettings()
 onMounted(() => fetchSiteSettings())
 const {
   isSupported: pushSupported,
+  supportReason: pushSupportReason,
   permission: pushPermission,
   isSubscribed: pushSubscribed,
   pushError,
@@ -148,6 +149,11 @@ function showPushToast(type: 'success' | 'error', message: string) {
 }
 
 async function handleBellClick() {
+  if (!pushSupported.value) {
+    showPushToast('error', pushSupportReason.value || 'Push notifications are not supported in this browser.')
+    dropdownOpen.value = false
+    return
+  }
   if (pushPermission.value === 'denied') {
     showPushToast('error', pushError.value || 'Notifications are blocked in your browser settings.')
     clearPushError()

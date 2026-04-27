@@ -50,12 +50,34 @@ r2_path() {
   printf "%s/%s" "$root" "$rel"
 }
 
-REMOTE_FULL="$(r2_path "videos/${VIDEO_ID}/${MP3_FULL}")"
 LOCAL_IN="$TMP_DIR/${MP3_FULL}"
 LOCAL_OUT="$TMP_DIR/${MP3_OUT}"
 
-echo "Downloading ${REMOTE_FULL}"
-rclone copyto "$REMOTE_FULL" "$LOCAL_IN"
+download_first_existing_mp3() {
+  local candidates=(
+    "videos/${VIDEO_ID}/${MP3_FULL}"
+    "videos/${VIDEO_ID}/processed/${MP3_FULL}"
+    "videos/${VIDEO_ID}/processed/audio/${MP3_FULL}"
+  )
+  local rel
+  for rel in "${candidates[@]}"; do
+    local remote
+    remote="$(r2_path "$rel")"
+    if rclone copyto "$remote" "$LOCAL_IN" 2>/dev/null; then
+      if [ -s "$LOCAL_IN" ]; then
+        echo "Downloaded source MP3 from ${remote}"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+echo "Downloading source podcast MP3 for ${VIDEO_ID}"
+if ! download_first_existing_mp3; then
+  echo "Missing source MP3 for ${VIDEO_ID} (checked root + processed paths)" >&2
+  exit 1
+fi
 
 if [ ! -s "$LOCAL_IN" ]; then
   echo "Missing or empty ${MP3_FULL} for ${VIDEO_ID}" >&2
