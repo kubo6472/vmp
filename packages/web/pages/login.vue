@@ -17,6 +17,9 @@
         <div v-if="sent" class="rounded-lg bg-green-950 border border-green-800 px-4 py-3 text-sm text-green-300 leading-relaxed">
           ✓ Check your inbox — a sign-in link is on its way.
           <br><span class="text-green-500 text-xs">It expires in 15 minutes.</span>
+          <p class="mt-2 text-[11px] text-green-400">
+            If this browser does not open the link inside the app, copy/paste it into this browser to keep your session flow consistent.
+          </p>
         </div>
 
         <div v-else>
@@ -56,9 +59,17 @@
 const route  = useRoute()
 const { signIn, isLoggedIn } = useAuth()
 
+// Must start with a single slash; rejects //evil.com and external URLs.
+function safeRedirect(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const t = value.trim()
+  if (!t.startsWith('/') || t.startsWith('//') || t.length > 1024) return fallback
+  return t
+}
+
 // Capture the redirect target before any navigation.
 // The middleware sets this to e.g. /admin when an unauthed user hits that route.
-const redirectTo = (route.query.redirect as string) || '/'
+const redirectTo = safeRedirect(route.query.redirect, '/')
 
 // Already logged in — skip the login page entirely
 if (isLoggedIn.value) {
@@ -75,16 +86,14 @@ async function submit() {
   loading.value  = true
   errorMessage.value = ''
   try {
-    await signIn(email.value)
+    await signIn(email.value, redirectTo)
     sent.value = true
     // Note: we don't redirect here. The user will click the magic link in their
     // email, land on /auth/verify?token=..., and verify.vue will redirect to
     // redirectTo after successful verification.
     //
-    // To pass the redirect through the email link we'd need to encode it in the
-    // magic link URL. For now the verify page always redirects to /, which is
-    // fine — the admin link is still visible in the header once they're logged in.
-    // Full round-trip redirect is a quality-of-life improvement for later.
+    // Redirect preference is forwarded in the magic-link request and encoded
+    // into the emailed verify URL by the API.
   } catch (err: any) {
     errorMessage.value = err.message || 'Something went wrong. Please try again.'
   } finally {

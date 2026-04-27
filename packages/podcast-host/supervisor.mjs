@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 /**
- * VMP media host supervisor: runs video_pipeline_watch.sh, serves local dashboard + webhook API.
+ * VMP media host supervisor: runs pipeline_watch.mjs, serves local dashboard + webhook API.
  *
  * Environment:
  *   VMP_WEBHOOK_SECRET     — HMAC secret (same as admin_settings); required unless VMP_REQUIRE_WEBHOOK_SECRET=0
  *   VMP_UI_HOST            — default 127.0.0.1
  *   VMP_UI_PORT            — default 8788
- *   VMP_PIPELINE_SCRIPT    — default: bin/video_pipeline_watch.sh next to this file
+ *   VMP_PIPELINE_SCRIPT    — default: pipeline_watch.mjs next to this file
+ *   VMP_RENDER_SCRIPT      — path to render script; default: render_podcast_preview_mp3.mjs next to this file
  *   VMP_RUN_PIPELINE       — default 1; set 0 to only run UI + preview jobs (no watchfolder)
  *   VMP_PREVIEW_CONCURRENCY — max concurrent preview encodes (default 1)
  *
- * Systemd: one unit runs this process; it spawns the bash pipeline as a child.
+ * Systemd: one unit runs this process; it spawns the Node pipeline watcher as a child.
  */
 
 import http from 'node:http'
@@ -23,8 +24,8 @@ import fs from 'node:fs'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const pkgRoot = __dirname
 
-const pipelineScript = process.env.VMP_PIPELINE_SCRIPT || path.join(pkgRoot, 'bin', 'video_pipeline_watch.sh')
-const renderScript = process.env.VMP_RENDER_SCRIPT || path.join(pkgRoot, 'render_podcast_preview_mp3.sh')
+const pipelineScript = process.env.VMP_PIPELINE_SCRIPT || path.join(pkgRoot, 'pipeline_watch.mjs')
+const renderScript = process.env.VMP_RENDER_SCRIPT || path.join(pkgRoot, 'render_podcast_preview_mp3.mjs')
 
 const requireWebhookSecret = process.env.VMP_REQUIRE_WEBHOOK_SECRET !== '0'
 const secret = process.env.VMP_WEBHOOK_SECRET?.trim()
@@ -38,6 +39,36 @@ const uiPort = Number.parseInt(process.env.VMP_UI_PORT || '8788', 10)
 const runPipeline = process.env.VMP_RUN_PIPELINE !== '0'
 const previewConcurrency = Math.max(1, Number.parseInt(process.env.VMP_PREVIEW_CONCURRENCY || '1', 10) || 1)
 const MAX_BODY_SIZE = 10 * 1024 * 1024 // 10 MB
+
+function validateScriptPath(rawPath, label, envVarName, defaultScriptName) {
+  const resolved = path.resolve(rawPath)
+  const basename = path.basename(resolved)
+  if (!fs.existsSync(resolved)) {
+    throw new Error(
+      `${label} script not found at ${resolved}. ` +
+      `Update ${envVarName} to a valid .mjs script path.`
+    )
+  }
+  if (basename.endsWith('.sh')) {
+    throw new Error(
+      `${label} script points to deprecated shell script ${resolved}. ` +
+      `Use the Node script (${defaultScriptName}) instead.`
+    )
+  }
+  return resolved
+}
+
+let resolvedPipelineScript = pipelineScript
+let resolvedRenderScript = renderScript
+try {
+  resolvedPipelineScript = validateScriptPath(pipelineScript, 'Pipeline', 'VMP_PIPELINE_SCRIPT', 'pipeline_watch.mjs')
+  resolvedRenderScript = validateScriptPath(renderScript, 'Render', 'VMP_RENDER_SCRIPT', 'render_podcast_preview_mp3.mjs')
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err)
+  console.error(`[vmp-podcast-host] ${message}`)
+  console.error('[vmp-podcast-host] Migration note: legacy .sh scripts were removed; update env overrides to the new .mjs entrypoints.')
+  process.exit(1)
+}
 
 /** @type {{ id: string, type: string, videoId?: string, status: string, detail?: string, source?: string, stage?: string, startedAt?: string, updatedAt?: string, finishedAt?: string }[]} */
 const jobs = []
@@ -151,11 +182,7 @@ function startPipeline() {
     pushLog('Pipeline disabled (VMP_RUN_PIPELINE=0)')
     return
   }
-  if (!fs.existsSync(pipelineScript)) {
-    pushLog(`ERROR: pipeline script missing: ${pipelineScript}`)
-    return
-  }
-  pipelineChild = spawn('bash', [pipelineScript], {
+  pipelineChild = spawn('node', [resolvedPipelineScript], {
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -164,7 +191,7 @@ function startPipeline() {
   pipelineState.exited = false
   pipelineState.code = null
   pipelineState.signal = null
-  pushLog(`Started pipeline pid=${pipelineState.pid} (${pipelineScript})`)
+  pushLog(`Started pipeline pid=${pipelineState.pid} (${resolvedPipelineScript})`)
 
   let stdoutBuffer = ''
   let stderrBuffer = ''
@@ -270,7 +297,7 @@ function drainPreviewQueue() {
       row.status = 'running'
       row.startedAt = new Date().toISOString()
     }
-    const child = spawn('bash', [renderScript, task.videoId, String(task.previewSeconds)], {
+    const child = spawn('node', [resolvedRenderScript, task.videoId, String(task.previewSeconds)], {
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -437,7 +464,8 @@ const server = http.createServer(async (req, res) => {
     }))
     json(res, {
       pipeline: {
-        script: pipelineScript,
+        script: resolvedPipelineScript,
+        renderScript: resolvedRenderScript,
         runPipeline,
         pid: pipelineState.pid,
         startedAt: pipelineState.startedAt,

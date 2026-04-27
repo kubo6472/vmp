@@ -111,7 +111,7 @@ function buildRssXml({
       `<description><![CDATA[${cdataSafe(item.description)}]]></description>`,
       `<guid isPermaLink="false">${xmlEscape(item.guid)}</guid>`,
       `<pubDate>${xmlEscape(item.pubDate)}</pubDate>`,
-      `<enclosure url="${xmlEscape(item.enclosureUrl)}" type="${xmlEscape(item.enclosureType)}" />`,
+      `<enclosure url="${xmlEscape(item.enclosureUrl)}" type="${xmlEscape(item.enclosureType)}" length="${xmlEscape(item.enclosureLength)}" />`,
       item.imageUrl ? `<itunes:image href="${xmlEscape(item.imageUrl)}" />` : '',
       `<itunes:duration>${xmlEscape(item.itunesDuration)}</itunes:duration>`,
       '<itunes:explicit>false</itunes:explicit>',
@@ -215,15 +215,49 @@ async function buildRssEnclosureForVideo({
   }
 
   let itunesDurationStr: string
-  const mediaDuration = v.full_duration ?? v.preview_duration ?? 0
+  const previewDuration = Number(v.preview_duration ?? 0) || 0
+  const fullDuration = Number(v.full_duration ?? 0) || 0
+  const mediaDuration = fullDuration > 0 ? fullDuration : previewDuration
   const isTruncatedPreview = hasPreviewCap
     && typeof previewUntilSeconds === 'number'
     && previewUntilSeconds > 0
     && previewUntilSeconds < mediaDuration
+  const effectiveDurationSeconds = isTruncatedPreview
+    ? previewUntilSeconds
+    : (mediaDuration > 0 ? mediaDuration : (hasPreviewCap ? previewUntilSeconds : 0))
   if (isTruncatedPreview) {
     itunesDurationStr = secondsToItunesDuration(previewUntilSeconds)
   } else {
     itunesDurationStr = secondsToItunesDuration(mediaDuration)
+  }
+  const enclosureType = inferEnclosureContentType(entrypointUrl)
+  let enclosureLength = 0
+  try {
+    const headUrl = enclosureType === 'application/vnd.apple.mpegurl' ? enclosureUrl : entrypointUrl
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 1200)
+    try {
+      const head = await fetch(headUrl, { method: 'HEAD', signal: controller.signal })
+      if (head.ok) {
+        const contentLength = Number(head.headers.get('content-length') || 0)
+        if (Number.isFinite(contentLength) && contentLength > 0) enclosureLength = contentLength
+      }
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  } catch {
+    // Best-effort; RSS generation must not fail if HEAD is unavailable.
+  }
+  if (!enclosureLength) {
+    if (enclosureType === 'application/vnd.apple.mpegurl') {
+      // HLS manifests are tiny text files; keep non-zero for strict clients.
+      enclosureLength = 1024
+    } else if (enclosureType === 'audio/mpeg') {
+      // Last-resort CBR-ish estimate when no byte metadata is available.
+      enclosureLength = Math.max(1, Math.round(effectiveDurationSeconds * 24000))
+    } else {
+      enclosureLength = 1
+    }
   }
 
   return {
@@ -232,7 +266,8 @@ async function buildRssEnclosureForVideo({
     guid: videoId,
     pubDate: toRfc2822Date(v.published_at),
     enclosureUrl,
-    enclosureType: inferEnclosureContentType(entrypointUrl),
+    enclosureType,
+    enclosureLength,
     imageUrl: buildSquareCoverImageUrl(v.thumbnail_url),
     itunesDuration: itunesDurationStr,
   }
@@ -352,22 +387,23 @@ export async function handlePublicFeed(request: any, env: any, corsHeaders: any)
       imageUrl: channelImageUrl,
     }
 
-    const items = []
-    for (const v of videos) {
-      const videoId = v.id
-      if (!videoId) continue
-      const previewDuration = v.preview_duration ?? 0
-      if (!previewDuration || previewDuration <= 0) continue
-      const previewUntil = previewDuration
-      items.push(await buildRssEnclosureForVideo({
+    const previewCandidates = videos.filter((v: any) => {
+      const videoId = v?.id
+      const previewDuration = v?.preview_duration ?? 0
+      return Boolean(videoId) && Number(previewDuration) > 0
+    })
+    const items = await Promise.all(previewCandidates.map(async (v: any) => {
+      const videoId = String(v.id)
+      const previewUntil = Number(v.preview_duration) || 0
+      return buildRssEnclosureForVideo({
         request,
         env,
         videoId,
         vtUserId: 'anonymous',
         previewUntilSeconds: previewUntil,
         v,
-      }))
-    }
+      })
+    }))
 
     const xml = buildRssXml({ channel, items })
     await recordFeedPoll(db, publicPollMeta)
@@ -479,34 +515,24 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
       imageUrl: personalChannelImage,
     }
 
-    const items = []
-    for (const v of videos) {
-      const videoId = v.id
-      if (!videoId) continue
-
-      if (!hasPremiumAccess) {
-        const previewDuration = v.preview_duration ?? 0
-        if (!previewDuration || previewDuration <= 0) continue
-        const previewUntil = previewDuration
-        items.push(await buildRssEnclosureForVideo({
-          request,
-          env,
-          videoId,
-          vtUserId: userId,
-          previewUntilSeconds: previewUntil,
-          v,
-        }))
-      } else {
-        items.push(await buildRssEnclosureForVideo({
-          request,
-          env,
-          videoId,
-          vtUserId: userId,
-          previewUntilSeconds: null,
-          v,
-        }))
-      }
-    }
+    const personalCandidates = videos.filter((v: any) => {
+      const videoId = v?.id
+      if (!videoId) return false
+      if (hasPremiumAccess) return true
+      return Number(v?.preview_duration ?? 0) > 0
+    })
+    const items = await Promise.all(personalCandidates.map(async (v: any) => {
+      const videoId = String(v.id)
+      const previewUntilSeconds = hasPremiumAccess ? null : (Number(v.preview_duration) || 0)
+      return buildRssEnclosureForVideo({
+        request,
+        env,
+        videoId,
+        vtUserId: userId,
+        previewUntilSeconds,
+        v,
+      })
+    }))
 
     const xml = buildRssXml({ channel, items })
     await recordFeedPoll(db, userPollMeta)
