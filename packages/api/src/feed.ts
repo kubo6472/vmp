@@ -234,16 +234,18 @@ async function buildRssEnclosureForVideo({
   let enclosureLength = 0
   try {
     const headUrl = enclosureType === 'application/vnd.apple.mpegurl' ? enclosureUrl : entrypointUrl
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 1200)
-    try {
-      const head = await fetch(headUrl, { method: 'HEAD', signal: controller.signal })
-      if (head.ok) {
-        const contentLength = Number(head.headers.get('content-length') || 0)
-        if (Number.isFinite(contentLength) && contentLength > 0) enclosureLength = contentLength
+    if (typeof headUrl === 'string' && headUrl) {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 1200)
+      try {
+        const head = await fetch(headUrl, { method: 'HEAD', signal: controller.signal })
+        if (head.ok) {
+          const contentLength = Number(head.headers.get('content-length') || 0)
+          if (Number.isFinite(contentLength) && contentLength > 0) enclosureLength = contentLength
+        }
+      } finally {
+        clearTimeout(timeoutId)
       }
-    } finally {
-      clearTimeout(timeoutId)
     }
   } catch {
     // Best-effort; RSS generation must not fail if HEAD is unavailable.
