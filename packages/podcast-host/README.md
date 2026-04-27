@@ -2,12 +2,12 @@
 
 Runs on the **media VM** (alongside ffmpeg, shaka-packager, rclone). It bundles:
 
-1. **`bin/video_pipeline_watch.sh`** — watchfolder → encode → Shaka HLS → `podcast.mp3` → R2 (same behaviour as the historical `scripts/video_pipeline_watch.sh`; the repo root script is now a thin wrapper for backwards compatibility).
+1. **`pipeline_watch.mjs`** — watchfolder → encode → Shaka HLS → `podcast.mp3` → R2 (Node supervisor with direct subprocess orchestration and structured logs).
 2. **`supervisor.mjs`** — one long-lived Node process that:
    - spawns the pipeline as a child (optional via `VMP_RUN_PIPELINE`),
    - serves a **local dashboard** at `http://127.0.0.1:8788/` (job queue + pipeline status + log tail),
    - accepts the **same signed webhook** the Worker sends (`POST /api/podcast-preview-rebuild`, HMAC body).
-3. **`render_podcast_preview_mp3.sh`** — builds `podcast_preview.mp3` from full `podcast.mp3` for a given duration (used by the webhook queue).
+3. **`render_podcast_preview_mp3.mjs`** — builds `podcast_preview.mp3` from full `podcast.mp3` for a given duration (used by the webhook queue).
 
 ## Install on the VM
 
@@ -20,7 +20,7 @@ npm install
 
 ## Run (recommended: systemd)
 
-Point `WorkingDirectory` at the repo (or at `packages/podcast-host` if you copy only that package — then set `VMP_PIPELINE_SCRIPT` to the absolute path of `bin/video_pipeline_watch.sh`).
+Point `WorkingDirectory` at the repo (or at `packages/podcast-host` if you copy only that package — then set `VMP_PIPELINE_SCRIPT` to the absolute path of `pipeline_watch.mjs`).
 
 ```ini
 [Service]
@@ -48,7 +48,7 @@ Expose the HTTP port to the Worker only (VPN, SSH tunnel, or reverse proxy with 
 | `VMP_UI_HOST` | Bind address (default `127.0.0.1`) |
 | `VMP_UI_PORT` | Dashboard + webhook port (default `8788`) |
 | `VMP_RUN_PIPELINE` | `1` (default) run watchfolder pipeline; `0` only UI + preview jobs |
-| `VMP_PIPELINE_SCRIPT` | Override path to `video_pipeline_watch.sh` |
+| `VMP_PIPELINE_SCRIPT` | Override path to `pipeline_watch.mjs` |
 | `VMP_PREVIEW_CONCURRENCY` | Parallel preview encodes (default `1`) |
 | `MP3_BITRATE` | Full and preview podcast MP3 bitrate in kbps (default `128`) |
 | `VIDEO_ID_SANITIZE_MODE` | Controls ID derivation from filename stem: `slug-hash` (default), `slug`, `base64url`, `none` |
@@ -64,7 +64,7 @@ Expose the HTTP port to the Worker only (VPN, SSH tunnel, or reverse proxy with 
 ## npm scripts
 
 - `npm run start` — supervisor (pipeline + dashboard + webhook)
-- `npm run pipeline` — bash pipeline only (no Node; for debugging)
+- `npm run pipeline` — pipeline runner (Node orchestrator + subprocess tools)
 - `npm run render -- <video_id> <seconds>` — one-off preview MP3
 - `npm run migrate:r2-video-prefixes` — copy/sync `videos/<old_id>/` prefixes to `videos/<new_id>/` using mapping JSON from API migration
 

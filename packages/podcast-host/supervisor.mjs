@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * VMP media host supervisor: runs video_pipeline_watch.sh, serves local dashboard + webhook API.
+ * VMP media host supervisor: runs pipeline_watch.mjs, serves local dashboard + webhook API.
  *
  * Environment:
  *   VMP_WEBHOOK_SECRET     — HMAC secret (same as admin_settings); required unless VMP_REQUIRE_WEBHOOK_SECRET=0
  *   VMP_UI_HOST            — default 127.0.0.1
  *   VMP_UI_PORT            — default 8788
- *   VMP_PIPELINE_SCRIPT    — default: bin/video_pipeline_watch.sh next to this file
+ *   VMP_PIPELINE_SCRIPT    — default: pipeline_watch.mjs next to this file
  *   VMP_RUN_PIPELINE       — default 1; set 0 to only run UI + preview jobs (no watchfolder)
  *   VMP_PREVIEW_CONCURRENCY — max concurrent preview encodes (default 1)
  *
@@ -23,8 +23,8 @@ import fs from 'node:fs'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const pkgRoot = __dirname
 
-const pipelineScript = process.env.VMP_PIPELINE_SCRIPT || path.join(pkgRoot, 'bin', 'video_pipeline_watch.sh')
-const renderScript = process.env.VMP_RENDER_SCRIPT || path.join(pkgRoot, 'render_podcast_preview_mp3.sh')
+const pipelineScript = process.env.VMP_PIPELINE_SCRIPT || path.join(pkgRoot, 'pipeline_watch.mjs')
+const renderScript = process.env.VMP_RENDER_SCRIPT || path.join(pkgRoot, 'render_podcast_preview_mp3.mjs')
 
 const requireWebhookSecret = process.env.VMP_REQUIRE_WEBHOOK_SECRET !== '0'
 const secret = process.env.VMP_WEBHOOK_SECRET?.trim()
@@ -155,7 +155,7 @@ function startPipeline() {
     pushLog(`ERROR: pipeline script missing: ${pipelineScript}`)
     return
   }
-  pipelineChild = spawn('bash', [pipelineScript], {
+  pipelineChild = spawn('node', [pipelineScript], {
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -270,7 +270,7 @@ function drainPreviewQueue() {
       row.status = 'running'
       row.startedAt = new Date().toISOString()
     }
-    const child = spawn('bash', [renderScript, task.videoId, String(task.previewSeconds)], {
+    const child = spawn('node', [renderScript, task.videoId, String(task.previewSeconds)], {
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

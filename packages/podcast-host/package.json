@@ -7,9 +7,9 @@
   "scripts": {
     "start": "node ./supervisor.mjs",
     "supervisor": "node ./supervisor.mjs",
-    "pipeline": "bash ./bin/video_pipeline_watch.sh",
+    "pipeline": "node ./pipeline_watch.mjs",
     "migrate:r2-video-prefixes": "bash ./bin/video_id_r2_prefix_migrate.sh",
-    "render": "bash ./render_podcast_preview_mp3.sh"
+    "render": "node ./render_podcast_preview_mp3.mjs"
   },
   "engines": {
     "node": ">=20.0.0"
