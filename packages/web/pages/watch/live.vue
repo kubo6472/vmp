@@ -155,7 +155,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRuntimeConfig } from '#app'
 import 'media-chrome'
 import { isLiveRecommendation, useMoqLivePlayerControls } from '~/composables/useMoqLivePlayerControls'
@@ -180,10 +180,25 @@ const {
   toggleFullscreen: liveMoqToggleFullscreen
 } = useMoqLivePlayerControls()
 
+const userInitiatedPaused = ref(false)
+const uiToggleInFlight = ref(false)
 const handleLiveMoqPlayPause = () => {
-  if (liveMoqIsPaused.value) liveMoqGoLive()
-  else liveMoqTogglePause()
+  uiToggleInFlight.value = true
+  if (liveMoqIsPaused.value) {
+    userInitiatedPaused.value = false
+    liveMoqGoLive()
+  } else {
+    userInitiatedPaused.value = true
+    liveMoqTogglePause()
+  }
+  queueMicrotask(() => { uiToggleInFlight.value = false })
 }
+
+watch(liveMoqIsPaused, (isPaused) => {
+  if (!uiToggleInFlight.value) {
+    userInitiatedPaused.value = isPaused
+  }
+})
 
 const onLiveMoqVolumeInput = (e: Event) => {
   const input = e.target as HTMLInputElement
@@ -219,9 +234,11 @@ const ensureMoqModules = async () => {
 
 let runtime: {
   connection: { close?: () => void }
-  broadcast: { close?: () => void }
-  moqBackend: { close: () => void }
+  broadcast: { close?: () => void; reload?: { set?: (value: boolean) => void } }
+  moqBackend: { close?: () => void; paused?: { set?: (value: boolean) => void } }
 } | null = null
+let reconnectInFlight = false
+let reconnectCooldownUntil = 0
 
 const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60)
@@ -245,6 +262,33 @@ const disposeLiveRuntime = (runtimeToDispose?: {
   closeRuntimePart(runtimeToDispose?.moqBackend)
   closeRuntimePart(runtimeToDispose?.broadcast)
   closeRuntimePart(runtimeToDispose?.connection)
+}
+
+const reconnectToLiveEdge = () => {
+  const nowMs = Date.now()
+  if (nowMs < reconnectCooldownUntil) return
+  const current = runtime
+  if (!current || reconnectInFlight) return
+  reconnectInFlight = true
+  reconnectCooldownUntil = nowMs + 1000
+  try {
+    // Sleep/wake often leaves the transport stalled; force a catalog refresh.
+    if (!userInitiatedPaused.value) {
+      current.moqBackend?.paused?.set?.(false)
+    }
+    current.broadcast?.reload?.set?.(true)
+    queueMicrotask(() => {
+      try {
+        current.broadcast?.reload?.set?.(false)
+      } catch {
+        // noop: reconnect lock is always released in finally
+      } finally {
+        reconnectInFlight = false
+      }
+    })
+  } catch {
+    reconnectInFlight = false
+  }
 }
 
 const loadRecommendations = async () => {
@@ -360,10 +404,28 @@ onMounted(async () => {
   }
 })
 
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'visible') reconnectToLiveEdge()
+}
+const handleWindowFocus = () => reconnectToLiveEdge()
+
+onMounted(() => {
+  if (import.meta.client) {
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('pageshow', handleWindowFocus)
+  }
+})
+
 onUnmounted(() => {
   isMounted = false
   disposeLiveRuntime(runtime, true)
   runtime = null
+  if (import.meta.client) {
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.removeEventListener('focus', handleWindowFocus)
+    window.removeEventListener('pageshow', handleWindowFocus)
+  }
 })
 </script>
 

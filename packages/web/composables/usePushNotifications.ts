@@ -10,6 +10,7 @@
  */
 
 import { useAuth } from '~/composables/useAuth'
+import strings from '~/utils/strings'
 
 // Module-level singleton state so all components share the same subscription status
 const isSubscribed = ref(false)
@@ -29,6 +30,25 @@ export function usePushNotifications() {
     'serviceWorker' in navigator &&
     'PushManager' in window,
   )
+
+  const supportReason = computed<string | null>(() => {
+    if (!import.meta.client) return null
+    if (isSupported.value) return null
+    const ua = navigator.userAgent || ''
+    const isTouchMac = /Macintosh/.test(ua) && (
+      (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1)
+      || ('ontouchstart' in window)
+    )
+    const isiOS = /iPad|iPhone|iPod/.test(ua) || isTouchMac
+    const isSafari = /Safari\//.test(ua) && !/Chrome\//.test(ua) && !/CriOS\//.test(ua)
+    if (isiOS && isSafari) {
+      return strings.notificationsUnsupportedIosSafari
+    }
+    if (isSafari) {
+      return strings.notificationsUnsupportedSafari
+    }
+    return strings.notificationsUnsupportedContext
+  })
 
   async function _getVapidPublicKey(): Promise<string> {
     const res = await fetch(`${apiUrl}/api/push/vapid-public-key`)
@@ -265,6 +285,7 @@ export function usePushNotifications() {
 
   return {
     isSupported,
+    supportReason,
     permission: readonly(permission),
     isSubscribed: readonly(isSubscribed),
     pushError: readonly(pushError),
