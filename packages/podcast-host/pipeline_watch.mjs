@@ -164,7 +164,18 @@ async function processVideo(videoId, inputPath, source = 'watchfolder') {
     emitPipelineEvent(videoId, 'package_hls', 'active', 'done')
 
     emitPipelineEvent(videoId, 'upload_assets', 'active', 'start')
-    await run('rclone', ['copy', tmpDir, r2Path(`videos/${videoId}`), '--exclude', '1080p.mp4', '--exclude', '720p.mp4', '--exclude', '480p.mp4', '--ignore-existing', '--transfers', '8', '--checkers', '16'], 'rclone upload assets')
+    await run('rclone', [
+      'copy', tmpDir, r2Path(`videos/${videoId}`),
+      '--exclude', '1080p.mp4',
+      '--exclude', '720p.mp4',
+      '--exclude', '480p.mp4',
+      '--exclude', '.lock',
+      '--exclude', '.done',
+      '--exclude', '*.tmp.*',
+      '--ignore-existing',
+      '--transfers', '8',
+      '--checkers', '16',
+    ], 'rclone upload assets')
     emitPipelineEvent(videoId, 'upload_assets', 'active', 'verified')
 
     if (PREVIEW_MP3_ENABLED && hasAudio && existsSync(path.join(tmpDir, 'podcast.mp3'))) {

@@ -35,7 +35,11 @@ export function usePushNotifications() {
     if (!import.meta.client) return null
     if (isSupported.value) return null
     const ua = navigator.userAgent || ''
-    const isiOS = /iPad|iPhone|iPod/.test(ua)
+    const isTouchMac = /Macintosh/.test(ua) && (
+      (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1)
+      || ('ontouchstart' in window)
+    )
+    const isiOS = /iPad|iPhone|iPod/.test(ua) || isTouchMac
     const isSafari = /Safari\//.test(ua) && !/Chrome\//.test(ua) && !/CriOS\//.test(ua)
     if (isiOS && isSafari) {
       return strings.notificationsUnsupportedIosSafari

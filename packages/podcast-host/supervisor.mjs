@@ -39,7 +39,7 @@ const runPipeline = process.env.VMP_RUN_PIPELINE !== '0'
 const previewConcurrency = Math.max(1, Number.parseInt(process.env.VMP_PREVIEW_CONCURRENCY || '1', 10) || 1)
 const MAX_BODY_SIZE = 10 * 1024 * 1024 // 10 MB
 
-function validateScriptPath(rawPath: string, label: string) {
+function validateScriptPath(rawPath, label) {
   const resolved = path.resolve(rawPath)
   const basename = path.basename(resolved)
   if (!fs.existsSync(resolved)) {

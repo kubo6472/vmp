@@ -231,23 +231,22 @@ async function buildRssEnclosureForVideo({
     itunesDurationStr = secondsToItunesDuration(mediaDuration)
   }
   const enclosureType = inferEnclosureContentType(entrypointUrl)
-  const persistedSize = Number(
-    v.media_size_bytes
-      ?? v.podcast_size_bytes
-      ?? v.audio_size_bytes
-      ?? 0,
-  ) || 0
-  let enclosureLength = persistedSize > 0 ? persistedSize : 0
-  if (!enclosureLength) {
+  let enclosureLength = 0
+  try {
+    const headUrl = enclosureType === 'application/vnd.apple.mpegurl' ? enclosureUrl : entrypointUrl
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 1200)
     try {
-      const head = await fetch(entrypointUrl, { method: 'HEAD' })
+      const head = await fetch(headUrl, { method: 'HEAD', signal: controller.signal })
       if (head.ok) {
         const contentLength = Number(head.headers.get('content-length') || 0)
         if (Number.isFinite(contentLength) && contentLength > 0) enclosureLength = contentLength
       }
-    } catch {
-      // Best-effort; RSS generation must not fail if HEAD is unavailable.
+    } finally {
+      clearTimeout(timeoutId)
     }
+  } catch {
+    // Best-effort; RSS generation must not fail if HEAD is unavailable.
   }
   if (!enclosureLength) {
     if (enclosureType === 'application/vnd.apple.mpegurl') {
@@ -389,21 +388,23 @@ export async function handlePublicFeed(request: any, env: any, corsHeaders: any)
     }
 
     const items = []
-    for (const v of videos) {
-      const videoId = v.id
-      if (!videoId) continue
-      const previewDuration = v.preview_duration ?? 0
-      if (!previewDuration || previewDuration <= 0) continue
-      const previewUntil = previewDuration
-      items.push(await buildRssEnclosureForVideo({
+    const previewCandidates = videos.filter((v: any) => {
+      const videoId = v?.id
+      const previewDuration = v?.preview_duration ?? 0
+      return Boolean(videoId) && Number(previewDuration) > 0
+    })
+    const items = await Promise.all(previewCandidates.map(async (v: any) => {
+      const videoId = String(v.id)
+      const previewUntil = Number(v.preview_duration) || 0
+      return buildRssEnclosureForVideo({
         request,
         env,
         videoId,
         vtUserId: 'anonymous',
         previewUntilSeconds: previewUntil,
         v,
-      }))
-    }
+      })
+    }))
 
     const xml = buildRssXml({ channel, items })
     await recordFeedPoll(db, publicPollMeta)
@@ -515,34 +516,34 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
       imageUrl: personalChannelImage,
     }
 
-    const items = []
-    for (const v of videos) {
-      const videoId = v.id
-      if (!videoId) continue
-
+    const personalCandidates = videos.filter((v: any) => {
+      const videoId = v?.id
+      if (!videoId) return false
+      if (hasPremiumAccess) return true
+      return Number(v?.preview_duration ?? 0) > 0
+    })
+    const items = await Promise.all(personalCandidates.map(async (v: any) => {
+      const videoId = String(v.id)
       if (!hasPremiumAccess) {
-        const previewDuration = v.preview_duration ?? 0
-        if (!previewDuration || previewDuration <= 0) continue
-        const previewUntil = previewDuration
-        items.push(await buildRssEnclosureForVideo({
+        const previewUntil = Number(v.preview_duration) || 0
+        return buildRssEnclosureForVideo({
           request,
           env,
           videoId,
           vtUserId: userId,
           previewUntilSeconds: previewUntil,
           v,
-        }))
-      } else {
-        items.push(await buildRssEnclosureForVideo({
-          request,
-          env,
-          videoId,
-          vtUserId: userId,
-          previewUntilSeconds: null,
-          v,
-        }))
+        })
       }
-    }
+      return buildRssEnclosureForVideo({
+        request,
+        env,
+        videoId,
+        vtUserId: userId,
+        previewUntilSeconds: null,
+        v,
+      })
+    }))
 
     const xml = buildRssXml({ channel, items })
     await recordFeedPoll(db, userPollMeta)

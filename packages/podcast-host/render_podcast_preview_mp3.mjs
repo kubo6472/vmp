@@ -33,6 +33,7 @@ function r2Path(root, relativePath) {
 function run(command, args, label) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env })
+    activeChild = child
     let stderr = ''
     child.stdout.on('data', (chunk) => process.stdout.write(chunk))
     child.stderr.on('data', (chunk) => {
@@ -42,6 +43,7 @@ function run(command, args, label) {
     })
     child.on('error', (err) => reject(err))
     child.on('close', (code) => {
+      if (activeChild === child) activeChild = null
       if (code === 0) return resolve(undefined)
       reject(new Error(`${label} failed with exit ${code}: ${stderr.slice(-400)}`))
     })
@@ -54,7 +56,7 @@ async function copyFirstAvailableSource(root, videoId, localIn) {
     r2Path(root, `videos/${videoId}/processed/audio/podcast.mp3`),
     r2Path(root, `videos/${videoId}/processed/podcast.mp3`),
   ]
-  let lastErr: unknown = null
+  let lastErr = null
   for (const remote of candidates) {
     try {
       await run('rclone', ['copyto', remote, localIn], `rclone copyto (${remote})`)
@@ -83,6 +85,14 @@ async function main() {
     await rm(tempDir, { recursive: true, force: true }).catch(() => {})
   }
   const onSigterm = () => {
+    if (activeChild) {
+      try { activeChild.kill('SIGTERM') } catch {}
+      setTimeout(() => {
+        if (activeChild) {
+          try { activeChild.kill('SIGKILL') } catch {}
+        }
+      }, 1500)
+    }
     void cleanupTempDir().finally(() => process.exit(143))
   }
   process.on('SIGTERM', onSigterm)

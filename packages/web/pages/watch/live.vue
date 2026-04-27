@@ -181,7 +181,9 @@ const {
 } = useMoqLivePlayerControls()
 
 const userInitiatedPaused = ref(false)
+const uiToggleInFlight = ref(false)
 const handleLiveMoqPlayPause = () => {
+  uiToggleInFlight.value = true
   if (liveMoqIsPaused.value) {
     userInitiatedPaused.value = false
     liveMoqGoLive()
@@ -189,7 +191,15 @@ const handleLiveMoqPlayPause = () => {
     userInitiatedPaused.value = true
     liveMoqTogglePause()
   }
+  queueMicrotask(() => { uiToggleInFlight.value = false })
 }
+
+watch(liveMoqIsPaused, (isPaused, wasPaused) => {
+  if (isPaused === wasPaused) return
+  if (!uiToggleInFlight.value) {
+    userInitiatedPaused.value = isPaused
+  }
+})
 
 const onLiveMoqVolumeInput = (e: Event) => {
   const input = e.target as HTMLInputElement
