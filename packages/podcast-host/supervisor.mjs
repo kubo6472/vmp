@@ -7,6 +7,7 @@
  *   VMP_UI_HOST            — default 127.0.0.1
  *   VMP_UI_PORT            — default 8788
  *   VMP_PIPELINE_SCRIPT    — default: pipeline_watch.mjs next to this file
+ *   VMP_RENDER_SCRIPT      — path to render script; default: render_podcast_preview_mp3.mjs next to this file
  *   VMP_RUN_PIPELINE       — default 1; set 0 to only run UI + preview jobs (no watchfolder)
  *   VMP_PREVIEW_CONCURRENCY — max concurrent preview encodes (default 1)
  *
@@ -39,19 +40,19 @@ const runPipeline = process.env.VMP_RUN_PIPELINE !== '0'
 const previewConcurrency = Math.max(1, Number.parseInt(process.env.VMP_PREVIEW_CONCURRENCY || '1', 10) || 1)
 const MAX_BODY_SIZE = 10 * 1024 * 1024 // 10 MB
 
-function validateScriptPath(rawPath, label) {
+function validateScriptPath(rawPath, label, envVarName, defaultScriptName) {
   const resolved = path.resolve(rawPath)
   const basename = path.basename(resolved)
   if (!fs.existsSync(resolved)) {
     throw new Error(
       `${label} script not found at ${resolved}. ` +
-      `Update ${label === 'Pipeline' ? 'VMP_PIPELINE_SCRIPT' : 'VMP_RENDER_SCRIPT'} to a valid .mjs script path.`
+      `Update ${envVarName} to a valid .mjs script path.`
     )
   }
   if (basename.endsWith('.sh')) {
     throw new Error(
       `${label} script points to deprecated shell script ${resolved}. ` +
-      `Use the Node script (${label === 'Pipeline' ? 'pipeline_watch.mjs' : 'render_podcast_preview_mp3.mjs'}) instead.`
+      `Use the Node script (${defaultScriptName}) instead.`
     )
   }
   return resolved
@@ -60,8 +61,8 @@ function validateScriptPath(rawPath, label) {
 let resolvedPipelineScript = pipelineScript
 let resolvedRenderScript = renderScript
 try {
-  resolvedPipelineScript = validateScriptPath(pipelineScript, 'Pipeline')
-  resolvedRenderScript = validateScriptPath(renderScript, 'Render')
+  resolvedPipelineScript = validateScriptPath(pipelineScript, 'Pipeline', 'VMP_PIPELINE_SCRIPT', 'pipeline_watch.mjs')
+  resolvedRenderScript = validateScriptPath(renderScript, 'Render', 'VMP_RENDER_SCRIPT', 'render_podcast_preview_mp3.mjs')
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err)
   console.error(`[vmp-podcast-host] ${message}`)
@@ -464,6 +465,7 @@ const server = http.createServer(async (req, res) => {
     json(res, {
       pipeline: {
         script: resolvedPipelineScript,
+        renderScript: resolvedRenderScript,
         runPipeline,
         pid: pipelineState.pid,
         startedAt: pipelineState.startedAt,

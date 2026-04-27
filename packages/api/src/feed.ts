@@ -523,23 +523,13 @@ export async function handlePersonalFeed(request: any, env: any, corsHeaders: an
     })
     const items = await Promise.all(personalCandidates.map(async (v: any) => {
       const videoId = String(v.id)
-      if (!hasPremiumAccess) {
-        const previewUntil = Number(v.preview_duration) || 0
-        return buildRssEnclosureForVideo({
-          request,
-          env,
-          videoId,
-          vtUserId: userId,
-          previewUntilSeconds: previewUntil,
-          v,
-        })
-      }
+      const previewUntilSeconds = hasPremiumAccess ? null : (Number(v.preview_duration) || 0)
       return buildRssEnclosureForVideo({
         request,
         env,
         videoId,
         vtUserId: userId,
-        previewUntilSeconds: null,
+        previewUntilSeconds,
         v,
       })
     }))

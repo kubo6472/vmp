@@ -155,7 +155,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRuntimeConfig } from '#app'
 import 'media-chrome'
 import { isLiveRecommendation, useMoqLivePlayerControls } from '~/composables/useMoqLivePlayerControls'
@@ -194,8 +194,7 @@ const handleLiveMoqPlayPause = () => {
   queueMicrotask(() => { uiToggleInFlight.value = false })
 }
 
-watch(liveMoqIsPaused, (isPaused, wasPaused) => {
-  if (isPaused === wasPaused) return
+watch(liveMoqIsPaused, (isPaused) => {
   if (!uiToggleInFlight.value) {
     userInitiatedPaused.value = isPaused
   }
@@ -279,8 +278,13 @@ const reconnectToLiveEdge = () => {
     }
     current.broadcast?.reload?.set?.(true)
     queueMicrotask(() => {
-      current.broadcast?.reload?.set?.(false)
-      reconnectInFlight = false
+      try {
+        current.broadcast?.reload?.set?.(false)
+      } catch {
+        // noop: reconnect lock is always released in finally
+      } finally {
+        reconnectInFlight = false
+      }
     })
   } catch {
     reconnectInFlight = false
