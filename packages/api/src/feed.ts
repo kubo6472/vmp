@@ -387,7 +387,6 @@ export async function handlePublicFeed(request: any, env: any, corsHeaders: any)
       imageUrl: channelImageUrl,
     }
 
-    const items = []
     const previewCandidates = videos.filter((v: any) => {
       const videoId = v?.id
       const previewDuration = v?.preview_duration ?? 0
