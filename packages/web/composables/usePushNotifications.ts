@@ -30,6 +30,21 @@ export function usePushNotifications() {
     'PushManager' in window,
   )
 
+  const supportReason = computed<string | null>(() => {
+    if (!import.meta.client) return null
+    const ua = navigator.userAgent || ''
+    const isiOS = /iPad|iPhone|iPod/.test(ua)
+    const isSafari = /Safari\//.test(ua) && !/Chrome\//.test(ua) && !/CriOS\//.test(ua)
+    if (isSupported.value) return null
+    if (isiOS && isSafari) {
+      return 'Push notifications are only available after adding this site to your home screen and opening it as an installed web app.'
+    }
+    if (isSafari) {
+      return 'This Safari environment does not currently support web push for this app context.'
+    }
+    return 'Push notifications are not supported in this browser.'
+  })
+
   async function _getVapidPublicKey(): Promise<string> {
     const res = await fetch(`${apiUrl}/api/push/vapid-public-key`)
     if (!res.ok) {
@@ -265,6 +280,7 @@ export function usePushNotifications() {
 
   return {
     isSupported,
+    supportReason,
     permission: readonly(permission),
     isSubscribed: readonly(isSubscribed),
     pushError: readonly(pushError),

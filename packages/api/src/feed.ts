@@ -111,7 +111,7 @@ function buildRssXml({
       `<description><![CDATA[${cdataSafe(item.description)}]]></description>`,
       `<guid isPermaLink="false">${xmlEscape(item.guid)}</guid>`,
       `<pubDate>${xmlEscape(item.pubDate)}</pubDate>`,
-      `<enclosure url="${xmlEscape(item.enclosureUrl)}" type="${xmlEscape(item.enclosureType)}" />`,
+      `<enclosure url="${xmlEscape(item.enclosureUrl)}" type="${xmlEscape(item.enclosureType)}" length="${xmlEscape(item.enclosureLength)}" />`,
       item.imageUrl ? `<itunes:image href="${xmlEscape(item.imageUrl)}" />` : '',
       `<itunes:duration>${xmlEscape(item.itunesDuration)}</itunes:duration>`,
       '<itunes:explicit>false</itunes:explicit>',
@@ -215,16 +215,24 @@ async function buildRssEnclosureForVideo({
   }
 
   let itunesDurationStr: string
-  const mediaDuration = v.full_duration ?? v.preview_duration ?? 0
+  const previewDuration = Number(v.preview_duration ?? 0) || 0
+  const fullDuration = Number(v.full_duration ?? 0) || 0
+  const mediaDuration = fullDuration > 0 ? fullDuration : previewDuration
   const isTruncatedPreview = hasPreviewCap
     && typeof previewUntilSeconds === 'number'
     && previewUntilSeconds > 0
     && previewUntilSeconds < mediaDuration
+  const effectiveDurationSeconds = isTruncatedPreview
+    ? previewUntilSeconds
+    : (mediaDuration > 0 ? mediaDuration : (hasPreviewCap ? previewUntilSeconds : 0))
   if (isTruncatedPreview) {
     itunesDurationStr = secondsToItunesDuration(previewUntilSeconds)
   } else {
     itunesDurationStr = secondsToItunesDuration(mediaDuration)
   }
+  // A realistic enclosure length improves compatibility with podcast clients
+  // that reject feeds when "length" is missing or zero.
+  const enclosureLength = Math.max(1, Math.round(Math.max(1, effectiveDurationSeconds) * 24000))
 
   return {
     title: v.title || `Episode ${videoId}`,
@@ -233,6 +241,7 @@ async function buildRssEnclosureForVideo({
     pubDate: toRfc2822Date(v.published_at),
     enclosureUrl,
     enclosureType: inferEnclosureContentType(entrypointUrl),
+    enclosureLength,
     imageUrl: buildSquareCoverImageUrl(v.thumbnail_url),
     itunesDuration: itunesDurationStr,
   }

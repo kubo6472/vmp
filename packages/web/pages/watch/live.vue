@@ -219,9 +219,10 @@ const ensureMoqModules = async () => {
 
 let runtime: {
   connection: { close?: () => void }
-  broadcast: { close?: () => void }
-  moqBackend: { close: () => void }
+  broadcast: { close?: () => void; reload?: { set?: (value: boolean) => void } }
+  moqBackend: { close?: () => void; paused?: { set?: (value: boolean) => void } }
 } | null = null
+let reconnectInFlight = false
 
 const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60)
@@ -245,6 +246,23 @@ const disposeLiveRuntime = (runtimeToDispose?: {
   closeRuntimePart(runtimeToDispose?.moqBackend)
   closeRuntimePart(runtimeToDispose?.broadcast)
   closeRuntimePart(runtimeToDispose?.connection)
+}
+
+const reconnectToLiveEdge = () => {
+  const current = runtime
+  if (!current || reconnectInFlight) return
+  reconnectInFlight = true
+  try {
+    // Sleep/wake often leaves the transport stalled; force a catalog refresh.
+    current.moqBackend?.paused?.set?.(false)
+    current.broadcast?.reload?.set?.(true)
+    queueMicrotask(() => {
+      current.broadcast?.reload?.set?.(false)
+      reconnectInFlight = false
+    })
+  } catch {
+    reconnectInFlight = false
+  }
 }
 
 const loadRecommendations = async () => {
@@ -365,6 +383,23 @@ onUnmounted(() => {
   disposeLiveRuntime(runtime, true)
   runtime = null
 })
+
+if (import.meta.client) {
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') reconnectToLiveEdge()
+  }
+  const handleWindowFocus = () => reconnectToLiveEdge()
+  onMounted(() => {
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('pageshow', handleWindowFocus)
+  })
+  onUnmounted(() => {
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.removeEventListener('focus', handleWindowFocus)
+    window.removeEventListener('pageshow', handleWindowFocus)
+  })
+}
 </script>
 
 <style scoped>

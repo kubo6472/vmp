@@ -112,7 +112,7 @@ export function buildHomepageRenderModel({
   }).filter((section) => section.allVideos.length > 0)
 
   const sectionByCategoryId = new Map(categorySections.map((section) => [section.category.id, section]))
-  const topVideo = sortedByNewest[0] ?? null
+  const topVideo = sortedByNewest.find((video: any) => !video?.livestream_provider) ?? sortedByNewest[0] ?? null
 
   const buildLeafBlock = (block: HomepageLayoutChildBlock, id: string): HomepageRenderLeafBlock | null => {
     const type = block?.type

@@ -17,6 +17,12 @@
         <div v-if="sent" class="rounded-lg bg-green-950 border border-green-800 px-4 py-3 text-sm text-green-300 leading-relaxed">
           ✓ Check your inbox — a sign-in link is on its way.
           <br><span class="text-green-500 text-xs">It expires in 15 minutes.</span>
+          <a
+            href="mailto:"
+            class="mt-3 inline-flex items-center justify-center rounded-md border border-green-700 px-3 py-1.5 text-xs font-semibold text-green-200 hover:bg-green-900 transition-colors"
+          >
+            Open default mail app
+          </a>
         </div>
 
         <div v-else>
@@ -75,16 +81,14 @@ async function submit() {
   loading.value  = true
   errorMessage.value = ''
   try {
-    await signIn(email.value)
+    await signIn(email.value, redirectTo)
     sent.value = true
     // Note: we don't redirect here. The user will click the magic link in their
     // email, land on /auth/verify?token=..., and verify.vue will redirect to
     // redirectTo after successful verification.
     //
-    // To pass the redirect through the email link we'd need to encode it in the
-    // magic link URL. For now the verify page always redirects to /, which is
-    // fine — the admin link is still visible in the header once they're logged in.
-    // Full round-trip redirect is a quality-of-life improvement for later.
+    // Redirect preference is forwarded in the magic-link request and encoded
+    // into the emailed verify URL by the API.
   } catch (err: any) {
     errorMessage.value = err.message || 'Something went wrong. Please try again.'
   } finally {
