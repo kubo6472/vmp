@@ -180,9 +180,15 @@ const {
   toggleFullscreen: liveMoqToggleFullscreen
 } = useMoqLivePlayerControls()
 
+const userInitiatedPaused = ref(false)
 const handleLiveMoqPlayPause = () => {
-  if (liveMoqIsPaused.value) liveMoqGoLive()
-  else liveMoqTogglePause()
+  if (liveMoqIsPaused.value) {
+    userInitiatedPaused.value = false
+    liveMoqGoLive()
+  } else {
+    userInitiatedPaused.value = true
+    liveMoqTogglePause()
+  }
 }
 
 const onLiveMoqVolumeInput = (e: Event) => {
@@ -223,6 +229,7 @@ let runtime: {
   moqBackend: { close?: () => void; paused?: { set?: (value: boolean) => void } }
 } | null = null
 let reconnectInFlight = false
+let reconnectCooldownUntil = 0
 
 const formatDuration = (seconds: number) => {
   const mins = Math.floor(seconds / 60)
@@ -249,12 +256,17 @@ const disposeLiveRuntime = (runtimeToDispose?: {
 }
 
 const reconnectToLiveEdge = () => {
+  const nowMs = Date.now()
+  if (nowMs < reconnectCooldownUntil) return
   const current = runtime
   if (!current || reconnectInFlight) return
   reconnectInFlight = true
+  reconnectCooldownUntil = nowMs + 1000
   try {
     // Sleep/wake often leaves the transport stalled; force a catalog refresh.
-    current.moqBackend?.paused?.set?.(false)
+    if (!userInitiatedPaused.value) {
+      current.moqBackend?.paused?.set?.(false)
+    }
     current.broadcast?.reload?.set?.(true)
     queueMicrotask(() => {
       current.broadcast?.reload?.set?.(false)
@@ -378,28 +390,29 @@ onMounted(async () => {
   }
 })
 
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'visible') reconnectToLiveEdge()
+}
+const handleWindowFocus = () => reconnectToLiveEdge()
+
+onMounted(() => {
+  if (import.meta.client) {
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('pageshow', handleWindowFocus)
+  }
+})
+
 onUnmounted(() => {
   isMounted = false
   disposeLiveRuntime(runtime, true)
   runtime = null
-})
-
-if (import.meta.client) {
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'visible') reconnectToLiveEdge()
-  }
-  const handleWindowFocus = () => reconnectToLiveEdge()
-  onMounted(() => {
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('focus', handleWindowFocus)
-    window.addEventListener('pageshow', handleWindowFocus)
-  })
-  onUnmounted(() => {
+  if (import.meta.client) {
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('focus', handleWindowFocus)
     window.removeEventListener('pageshow', handleWindowFocus)
-  })
-}
+  }
+})
 </script>
 
 <style scoped>

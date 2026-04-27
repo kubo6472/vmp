@@ -17,12 +17,6 @@
         <div v-if="sent" class="rounded-lg bg-green-950 border border-green-800 px-4 py-3 text-sm text-green-300 leading-relaxed">
           ✓ Check your inbox — a sign-in link is on its way.
           <br><span class="text-green-500 text-xs">It expires in 15 minutes.</span>
-          <a
-            href="mailto:"
-            class="mt-3 inline-flex items-center justify-center rounded-md border border-green-700 px-3 py-1.5 text-xs font-semibold text-green-200 hover:bg-green-900 transition-colors"
-          >
-            Open default mail app
-          </a>
           <p class="mt-2 text-[11px] text-green-400">
             If this browser does not open the link inside the app, copy/paste it into this browser to keep your session flow consistent.
           </p>
@@ -65,9 +59,17 @@
 const route  = useRoute()
 const { signIn, isLoggedIn } = useAuth()
 
+// Must start with a single slash; rejects //evil.com and external URLs.
+function safeRedirect(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const t = value.trim()
+  if (!t.startsWith('/') || t.startsWith('//') || t.length > 1024) return fallback
+  return t
+}
+
 // Capture the redirect target before any navigation.
 // The middleware sets this to e.g. /admin when an unauthed user hits that route.
-const redirectTo = (route.query.redirect as string) || '/'
+const redirectTo = safeRedirect(route.query.redirect, '/')
 
 // Already logged in — skip the login page entirely
 if (isLoggedIn.value) {

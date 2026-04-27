@@ -55,7 +55,7 @@
 
                 <div class="py-1">
                   <button
-                    v-if="pushSupported"
+                    v-if="pushSupported || pushSupportReason"
                     class="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                     :title="pushBellTitle"
                     @click="handleBellClick"
@@ -137,6 +137,7 @@ let pushToastTimer: ReturnType<typeof setTimeout> | null = null
 const isError = computed(() => !!pushError.value || pushToast.value?.type === 'error')
 
 const pushBellTitle = computed(() => {
+  if (!pushSupported.value) return pushSupportReason.value || strings.notificationsUnsupportedContext
   if (pushPermission.value === 'denied') return strings.notificationsBlocked
   if (pushSubscribed.value) return strings.notificationsOn
   return strings.notificationsClickEnable
@@ -150,7 +151,7 @@ function showPushToast(type: 'success' | 'error', message: string) {
 
 async function handleBellClick() {
   if (!pushSupported.value) {
-    showPushToast('error', pushSupportReason.value || 'Push notifications are not supported in this browser.')
+    showPushToast('error', pushSupportReason.value || strings.notificationsUnsupportedContext)
     dropdownOpen.value = false
     return
   }

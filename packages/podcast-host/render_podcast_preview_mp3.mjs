@@ -54,15 +54,18 @@ async function copyFirstAvailableSource(root, videoId, localIn) {
     r2Path(root, `videos/${videoId}/processed/audio/podcast.mp3`),
     r2Path(root, `videos/${videoId}/processed/podcast.mp3`),
   ]
+  let lastErr: unknown = null
   for (const remote of candidates) {
     try {
       await run('rclone', ['copyto', remote, localIn], `rclone copyto (${remote})`)
       return remote
-    } catch {
+    } catch (err) {
+      lastErr = err
       // Try next candidate
     }
   }
-  throw new Error(`Could not locate source podcast MP3 in R2 for video ${videoId}`)
+  const detail = lastErr instanceof Error ? ` Last error: ${lastErr.message}` : ''
+  throw new Error(`Could not locate source podcast MP3 in R2 for video ${videoId}.${detail}`)
 }
 
 async function main() {
@@ -73,6 +76,16 @@ async function main() {
   const tempDir = await mkdtemp(path.join(tmpdir(), `vmp_podcast_preview_${videoId}_`))
   const localIn = path.join(tempDir, 'podcast.mp3')
   const localOut = path.join(tempDir, 'podcast_preview.mp3')
+  let cleaning = false
+  const cleanupTempDir = async () => {
+    if (cleaning) return
+    cleaning = true
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {})
+  }
+  const onSigterm = () => {
+    void cleanupTempDir().finally(() => process.exit(143))
+  }
+  process.on('SIGTERM', onSigterm)
 
   try {
     const sourceUsed = await copyFirstAvailableSource(root, videoId, localIn)
@@ -87,7 +100,8 @@ async function main() {
     await run('rclone', ['copyto', localOut, r2Path(root, `videos/${videoId}/podcast_preview.mp3`)], 'rclone preview upload')
     console.log(`[preview] done video=${videoId} seconds=${previewSeconds}`)
   } finally {
-    await rm(tempDir, { recursive: true, force: true })
+    process.off('SIGTERM', onSigterm)
+    await cleanupTempDir()
   }
 }
 

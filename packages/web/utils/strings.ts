@@ -28,6 +28,8 @@ const strings = {
   notificationsOn: 'Notifications on — click to disable',
   notificationsClickEnable: 'Click to enable new video notifications',
   notificationsUnsupportedContext: 'Notifications are unavailable in this browser context.',
+  notificationsUnsupportedIosSafari: 'On iPhone/iPad, add this site to your Home Screen and open it as an installed web app to enable notifications.',
+  notificationsUnsupportedSafari: 'This Safari context does not currently support web push for this app.',
   notificationsEnabled: 'Notifications enabled.',
   notificationsTurnedOff: 'Notifications turned off.',
 

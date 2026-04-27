@@ -10,6 +10,7 @@
  */
 
 import { useAuth } from '~/composables/useAuth'
+import strings from '~/utils/strings'
 
 // Module-level singleton state so all components share the same subscription status
 const isSubscribed = ref(false)
@@ -32,17 +33,17 @@ export function usePushNotifications() {
 
   const supportReason = computed<string | null>(() => {
     if (!import.meta.client) return null
+    if (isSupported.value) return null
     const ua = navigator.userAgent || ''
     const isiOS = /iPad|iPhone|iPod/.test(ua)
     const isSafari = /Safari\//.test(ua) && !/Chrome\//.test(ua) && !/CriOS\//.test(ua)
-    if (isSupported.value) return null
     if (isiOS && isSafari) {
-      return 'Push notifications are only available after adding this site to your home screen and opening it as an installed web app.'
+      return strings.notificationsUnsupportedIosSafari
     }
     if (isSafari) {
-      return 'This Safari environment does not currently support web push for this app context.'
+      return strings.notificationsUnsupportedSafari
     }
-    return 'Push notifications are not supported in this browser.'
+    return strings.notificationsUnsupportedContext
   })
 
   async function _getVapidPublicKey(): Promise<string> {

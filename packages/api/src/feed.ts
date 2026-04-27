@@ -230,9 +230,36 @@ async function buildRssEnclosureForVideo({
   } else {
     itunesDurationStr = secondsToItunesDuration(mediaDuration)
   }
-  // A realistic enclosure length improves compatibility with podcast clients
-  // that reject feeds when "length" is missing or zero.
-  const enclosureLength = Math.max(1, Math.round(Math.max(1, effectiveDurationSeconds) * 24000))
+  const enclosureType = inferEnclosureContentType(entrypointUrl)
+  const persistedSize = Number(
+    v.media_size_bytes
+      ?? v.podcast_size_bytes
+      ?? v.audio_size_bytes
+      ?? 0,
+  ) || 0
+  let enclosureLength = persistedSize > 0 ? persistedSize : 0
+  if (!enclosureLength) {
+    try {
+      const head = await fetch(entrypointUrl, { method: 'HEAD' })
+      if (head.ok) {
+        const contentLength = Number(head.headers.get('content-length') || 0)
+        if (Number.isFinite(contentLength) && contentLength > 0) enclosureLength = contentLength
+      }
+    } catch {
+      // Best-effort; RSS generation must not fail if HEAD is unavailable.
+    }
+  }
+  if (!enclosureLength) {
+    if (enclosureType === 'application/vnd.apple.mpegurl') {
+      // HLS manifests are tiny text files; keep non-zero for strict clients.
+      enclosureLength = 1024
+    } else if (enclosureType === 'audio/mpeg') {
+      // Last-resort CBR-ish estimate when no byte metadata is available.
+      enclosureLength = Math.max(1, Math.round(effectiveDurationSeconds * 24000))
+    } else {
+      enclosureLength = 1
+    }
+  }
 
   return {
     title: v.title || `Episode ${videoId}`,
@@ -240,7 +267,7 @@ async function buildRssEnclosureForVideo({
     guid: videoId,
     pubDate: toRfc2822Date(v.published_at),
     enclosureUrl,
-    enclosureType: inferEnclosureContentType(entrypointUrl),
+    enclosureType,
     enclosureLength,
     imageUrl: buildSquareCoverImageUrl(v.thumbnail_url),
     itunesDuration: itunesDurationStr,

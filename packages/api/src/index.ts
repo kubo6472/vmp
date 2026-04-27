@@ -493,12 +493,9 @@ async function handleHomepagePlacement(request: any, env: any, corsHeaders: any)
     await ensureAdminSettingsTable(db)
     const [videoRows, catRows, homepageRow] = await Promise.all([
       db.prepare(`
-        SELECT v.id, v.published_at, v.upload_date, vca.category_id,
-               ls.provider AS livestream_provider,
-               ls.status AS livestream_status
+        SELECT v.id, v.published_at, v.upload_date, vca.category_id
         FROM videos v
         LEFT JOIN video_category_assignments vca ON vca.video_id = v.id
-        LEFT JOIN livestreams ls ON ls.video_id = v.id
         WHERE v.publish_status = 'published'
           AND (v.scheduled_publish_at IS NULL OR datetime(v.scheduled_publish_at) <= CURRENT_TIMESTAMP)
       `).all(),

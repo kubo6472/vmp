@@ -14,6 +14,9 @@ const PREVIEW_MP3_ENABLED = process.env.PREVIEW_MP3_ENABLED !== '0'
 const PREVIEW_MP3_SECONDS = Math.max(1, Number.parseInt(process.env.PREVIEW_MP3_SECONDS || '180', 10) || 180)
 const PREVIEW_MP3_LOCK_SECONDS = Math.max(0, Number.parseInt(process.env.PREVIEW_MP3_LOCK_SECONDS || '60', 10) || 60)
 const VIDEO_ID_SANITIZE_MODE = (process.env.VIDEO_ID_SANITIZE_MODE || 'slug-hash').trim()
+const WAIT_STABLE_TIMEOUT_MS = Math.max(1_000, Number.parseInt(process.env.WAIT_STABLE_TIMEOUT_MS || '120000', 10) || 120000)
+const WAIT_STABLE_POLL_MS = Math.max(250, Number.parseInt(process.env.WAIT_STABLE_POLL_MS || '2000', 10) || 2000)
+const WAIT_STABLE_IDLE_POLLS = Math.max(1, Number.parseInt(process.env.WAIT_STABLE_IDLE_POLLS || '1', 10) || 1)
 
 function log(msg) {
   process.stdout.write(`${new Date().toISOString()} ${msg}\n`)
@@ -67,12 +70,20 @@ function sanitizeVideoId(stem) {
 
 async function waitStableSize(filePath) {
   let prev = -1
-  while (true) {
+  let idlePolls = 0
+  const startedAt = Date.now()
+  while (Date.now() - startedAt <= WAIT_STABLE_TIMEOUT_MS) {
     const s = (await stat(filePath)).size
-    if (s === prev) return
+    if (s === prev) {
+      idlePolls += 1
+      if (idlePolls >= WAIT_STABLE_IDLE_POLLS) return
+    } else {
+      idlePolls = 0
+    }
     prev = s
-    await new Promise((r) => setTimeout(r, 2000))
+    await new Promise((r) => setTimeout(r, WAIT_STABLE_POLL_MS))
   }
+  throw new Error(`wait_stable_timeout after ${WAIT_STABLE_TIMEOUT_MS}ms`)
 }
 
 async function detectHasAudio(filePath) {
@@ -194,6 +205,30 @@ function enqueue(videoId, inputPath, source) {
   drain()
 }
 
+async function resolveSanitizedTargetPath(stem, ext, oldPath, source) {
+  const baseId = sanitizeVideoId(stem)
+  if (baseId === stem) {
+    return { safeId: baseId, targetPath: oldPath, renamed: false }
+  }
+  const dir = path.dirname(oldPath)
+  let attempt = 0
+  while (attempt < 1000) {
+    const suffix = attempt === 0 ? '' : `-${attempt}`
+    const candidateId = `${baseId}${suffix}`
+    const candidateFile = `${candidateId}.${ext}`
+    const candidatePath = path.join(dir, candidateFile)
+    if (!existsSync(candidatePath)) {
+      await rename(oldPath, candidatePath)
+      if (attempt > 0) {
+        log(`⚠️ Filename collision in ${source}: '${oldPath}' -> '${candidatePath}' (base '${baseId}' already existed)`)
+      }
+      return { safeId: candidateId, targetPath: candidatePath, renamed: true }
+    }
+    attempt += 1
+  }
+  throw new Error(`unable to resolve sanitized filename collision for ${oldPath}`)
+}
+
 function drain() {
   while (!shuttingDown && running < MAX_JOBS && queue.length > 0) {
     const job = queue.shift()
@@ -215,41 +250,47 @@ async function startupScan() {
   for (const file of entries) {
     if (!/\.(mp4|mkv|mov)$/i.test(file)) continue
     const stem = file.replace(/\.[^.]+$/, '')
-    const safeId = sanitizeVideoId(stem)
     const oldPath = path.join(INBOX_DIR, file)
-    let nextPath = oldPath
-    if (safeId !== stem) {
-      const ext = file.split('.').pop() || 'mp4'
-      const renamed = `${safeId}.${ext}`
-      nextPath = path.join(INBOX_DIR, renamed)
-      if (!existsSync(nextPath)) await rename(oldPath, nextPath)
+    const ext = file.split('.').pop() || 'mp4'
+    const { safeId, targetPath, renamed } = await resolveSanitizedTargetPath(stem, ext, oldPath, 'startup_scan')
+    if (renamed) {
       log(`🧼 Sanitized VIDEO_ID startup_scan: '${stem}' -> '${safeId}'`)
     }
-    enqueue(safeId, nextPath, 'startup_scan')
+    enqueue(safeId, targetPath, 'startup_scan')
   }
 }
 
 function startWatcher() {
   const child = spawn('inotifywait', ['-m', '-e', 'close_write', '--format', '%f', INBOX_DIR], { env: process.env, stdio: ['ignore', 'pipe', 'inherit'] })
-  child.stdout.on('data', async (chunk) => {
-    const lines = chunk.toString().split(/\r?\n/).filter(Boolean)
+  let stdoutBuffer = ''
+  const processLines = async (lines) => {
     for (const file of lines) {
       if (!/\.(mp4|mkv|mov)$/i.test(file)) continue
       const stem = file.replace(/\.[^.]+$/, '')
-      const safeId = sanitizeVideoId(stem)
       const oldPath = path.join(INBOX_DIR, file)
-      let nextPath = oldPath
-      if (safeId !== stem) {
-        const ext = file.split('.').pop() || 'mp4'
-        const renamed = `${safeId}.${ext}`
-        nextPath = path.join(INBOX_DIR, renamed)
-        if (!existsSync(nextPath)) await rename(oldPath, nextPath)
+      const ext = file.split('.').pop() || 'mp4'
+      const { safeId, targetPath, renamed } = await resolveSanitizedTargetPath(stem, ext, oldPath, 'watchfolder')
+      if (renamed) {
         log(`🧼 Sanitized VIDEO_ID watchfolder: '${stem}' -> '${safeId}'`)
       }
-      enqueue(safeId, nextPath, 'watchfolder')
+      enqueue(safeId, targetPath, 'watchfolder')
     }
+  }
+  child.stdout.on('data', async (chunk) => {
+    stdoutBuffer += chunk.toString()
+    const parts = stdoutBuffer.split(/\r?\n/)
+    stdoutBuffer = parts.pop() ?? ''
+    const lines = parts.filter(Boolean)
+    await processLines(lines)
   })
   child.on('close', (code) => {
+    if (stdoutBuffer.trim()) {
+      const trailing = stdoutBuffer.trim()
+      stdoutBuffer = ''
+      processLines([trailing]).catch((err) => {
+        log(`watcher trailing line processing failed: ${err instanceof Error ? err.message : String(err)}`)
+      })
+    }
     if (!shuttingDown) {
       log(`inotifywait exited unexpectedly with code=${code ?? 'null'}`)
       process.exit(1)
