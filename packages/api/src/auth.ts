@@ -989,6 +989,18 @@ export async function requireAuth(request: any, env: any) {
   // Pending 2FA tokens may only be used at /api/auth/2fa/verify — not anywhere else.
   if (payload.pending) throw new Error('2FA verification required');
 
+  // A valid signature proves we issued the token, not that the account still
+  // exists. Access tokens live for 15 minutes, so a deleted user keeps a working
+  // token until it expires. Reject any token whose user row is gone, so account
+  // deletion revokes access on every protected endpoint at once.
+  const sub = typeof payload.sub === 'string' ? payload.sub.trim() : '';
+  if (!sub) throw new Error('Invalid token subject');
+  const userExists = await getDb(env)
+    .prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1')
+    .bind(sub)
+    .first();
+  if (!userExists) throw new Error('User no longer exists');
+
   return payload;
 }
 

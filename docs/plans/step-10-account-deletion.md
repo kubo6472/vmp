@@ -4,6 +4,12 @@
 **Issue:** [#646](https://github.com/tojemoc/vmp/issues/646) (spec [#506](https://github.com/tojemoc/vmp/issues/506) closed)  
 **Status:** Blocked — payment gateway adapter must support provider-agnostic immediate cancellation
 
+### Groundwork landed (independent of the payment blocker)
+
+- `requireAuth` now rejects a valid token whose user row is gone, so a deleted account loses access on every protected endpoint.
+- `einvoices.user_id` is nullable with `ON DELETE SET NULL` (migration `0059`), so a user delete keeps the invoice for statutory retention instead of erasing it.
+- `offline_devices`, `offline_download_licenses`, and `pwa_handoffs` FKs use `ON DELETE CASCADE` (migration `0060`), so `DELETE FROM users` cleans them up. The step-4 explicit deletes for these three tables are no longer needed. The deletion handler still owns invoice PII anonymization and R2 sanitization.
+
 ## Checklist (high level)
 
 - [ ] `requireAuth` hardening (deleted / deletion-pending users)
