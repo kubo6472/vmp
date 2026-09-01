@@ -8,11 +8,46 @@
 -- -> device FK so removing a device drops its licenses (and so the two cascades on a
 -- user delete cannot collide). SQLite cannot ALTER a FOREIGN KEY, so recreate the
 -- tables (see 0006, 0036).
+--
+-- offline_download_licenses.device_id references offline_devices, so recreating
+-- offline_devices needs that child FK out of the way first. SQLite relies on
+-- `PRAGMA foreign_keys = OFF`; Postgres (api-node) drops the child constraint via the
+-- -- POSTGRES: hint below, then gets it back when the licenses table is rebuilt.
 
 PRAGMA foreign_keys = OFF;
 
--- Child first: licenses reference devices. Rebuilt while the old devices table still
--- exists, so the device_id FK stays valid across the swap.
+-- POSTGRES: ALTER TABLE offline_download_licenses DROP CONSTRAINT IF EXISTS offline_download_licenses_device_id_fkey;
+
+-- Parent first: rebuild offline_devices with ON DELETE CASCADE on user_id.
+CREATE TABLE offline_devices__v2 (
+  id                 TEXT PRIMARY KEY,
+  user_id            TEXT NOT NULL,
+  device_name        TEXT NOT NULL,
+  public_key         TEXT,
+  device_token_hash  TEXT NOT NULL,
+  registered_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at       DATETIME,
+  revoked_at         DATETIME,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+INSERT INTO offline_devices__v2 (
+  id, user_id, device_name, public_key, device_token_hash, registered_at,
+  last_seen_at, revoked_at
+)
+SELECT
+  id, user_id, device_name, public_key, device_token_hash, registered_at,
+  last_seen_at, revoked_at
+FROM offline_devices;
+
+DROP TABLE offline_devices;
+ALTER TABLE offline_devices__v2 RENAME TO offline_devices;
+
+CREATE INDEX idx_offline_devices_user ON offline_devices(user_id);
+CREATE UNIQUE INDEX idx_offline_devices_token_hash ON offline_devices(device_token_hash);
+
+-- Child: rebuild offline_download_licenses with ON DELETE CASCADE on user_id and
+-- device_id. On Postgres this recreates the device_id FK dropped above.
 CREATE TABLE offline_download_licenses__v2 (
   id                TEXT PRIMARY KEY,
   user_id           TEXT NOT NULL,
@@ -52,33 +87,7 @@ CREATE INDEX idx_odl_user ON offline_download_licenses(user_id);
 CREATE INDEX idx_odl_device ON offline_download_licenses(device_id);
 CREATE INDEX idx_odl_expires ON offline_download_licenses(expires_at);
 
-CREATE TABLE offline_devices__v2 (
-  id                 TEXT PRIMARY KEY,
-  user_id            TEXT NOT NULL,
-  device_name        TEXT NOT NULL,
-  public_key         TEXT,
-  device_token_hash  TEXT NOT NULL,
-  registered_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  last_seen_at       DATETIME,
-  revoked_at         DATETIME,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
-INSERT INTO offline_devices__v2 (
-  id, user_id, device_name, public_key, device_token_hash, registered_at,
-  last_seen_at, revoked_at
-)
-SELECT
-  id, user_id, device_name, public_key, device_token_hash, registered_at,
-  last_seen_at, revoked_at
-FROM offline_devices;
-
-DROP TABLE offline_devices;
-ALTER TABLE offline_devices__v2 RENAME TO offline_devices;
-
-CREATE INDEX idx_offline_devices_user ON offline_devices(user_id);
-CREATE UNIQUE INDEX idx_offline_devices_token_hash ON offline_devices(device_token_hash);
-
+-- pwa_handoffs has no child tables; a plain rebuild with the new FK is enough.
 CREATE TABLE pwa_handoffs__v2 (
   code TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

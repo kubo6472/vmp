@@ -63,6 +63,28 @@ PRAGMA foreign_keys = ON;`;
   });
 });
 
+describe('translateSqliteDdl migration 0060 account deletion FK cascade', () => {
+  it('drops the licenses->devices FK before the offline_devices table swap', () => {
+    const raw = readFileSync(
+      join(import.meta.dirname, '../../api/migrations/0060_account_deletion_fk_cascade.sql'),
+      'utf8',
+    );
+    const out = translateSqliteDdl(raw);
+    const dropConstraint = out.search(
+      /ALTER TABLE offline_download_licenses DROP CONSTRAINT IF EXISTS offline_download_licenses_device_id_fkey/i,
+    );
+    const dropDevices = out.search(/DROP TABLE offline_devices\b/i);
+    assert.ok(dropConstraint >= 0, 'expected the device_id FK to be dropped for Postgres');
+    assert.ok(dropDevices >= 0, 'expected offline_devices to be recreated');
+    assert.ok(
+      dropConstraint < dropDevices,
+      'device_id FK must be dropped before offline_devices is dropped',
+    );
+    // PRAGMA statements are stripped for Postgres (the word may still appear in comments).
+    assert.doesNotMatch(out, /^\s*PRAGMA\s+foreign_keys/im);
+  });
+});
+
 describe('splitQuestionMarks', () => {
   it('splits placeholders outside quoted strings', () => {
     const parts = splitQuestionMarks(`SELECT * FROM users WHERE id = ? AND email = ?`);
