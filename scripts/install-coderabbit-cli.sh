@@ -18,6 +18,19 @@ curl_https() {
   curl --proto '=https' --tlsv1.2 -fsSL "$@"
 }
 
+# Prefer GNU sha256sum; fall back to macOS/BSD shasum -a 256. Prints digest only.
+file_sha256() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{ print $1 }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{ print $1 }'
+  else
+    echo "neither sha256sum nor shasum is available" >&2
+    return 1
+  fi
+}
+
 detect_platform() {
   local os arch
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -62,7 +75,7 @@ install_coderabbit_cli() {
     echo "no SHA-256 entry for ${asset} in ${CODERABBIT_CLI_VERSION} SHA256SUMS" >&2
     return 1
   fi
-  actual="$(sha256sum "$zip_file" | awk '{ print $1 }')"
+  actual="$(file_sha256 "$zip_file")"
   if [[ "$actual" != "$expected" ]]; then
     echo "SHA-256 mismatch for ${asset}" >&2
     echo "  expected: ${expected}" >&2
