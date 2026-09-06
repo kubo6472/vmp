@@ -191,6 +191,13 @@ class FakePairingDb {
               const row = db.pushTokens.find((t) => t.platform === platform && t.token === token);
               return row ? { id: row.id, user_id: row.user_id } : null;
             }
+            if (normalized.startsWith('SELECT 1 FROM users WHERE id')) {
+              // requireAuth checks the account still exists. Tests that do not seed
+              // users assume the authenticated caller is present.
+              const id = String(args[0]);
+              if (db.users.size === 0) return id ? { 1: 1 } : null;
+              return db.users.has(id) ? { 1: 1 } : null;
+            }
             return null;
           },
         };
