@@ -1,11 +1,11 @@
 {
-  "install": "node -e \"const [major]=process.versions.node.split('.').map(Number); if (major < 20) { console.error('Node 20+ is required for this workspace.'); process.exit(1); }\" && npm -v | node -e \"const fs=require('fs'); const version=fs.readFileSync(0,'utf8').trim(); const major=Number(version.split('.')[0]); if (!Number.isFinite(major) || major < 10) { console.error('npm 10+ is required for this workspace.'); process.exit(1); }\" && npm ci --no-audit --no-fund && npm run typecheck --workspace=@vmp/api && npm exec --workspace=@vmp/web nuxi prepare",
+  "install": "node -e \"const [major]=process.versions.node.split('.').map(Number); if (major < 20) { console.error('Node 20+ is required for this workspace.'); process.exit(1); }\" && npm -v | node -e \"const fs=require('fs'); const version=fs.readFileSync(0,'utf8').trim(); const major=Number(version.split('.')[0]); if (!Number.isFinite(major) || major < 10) { console.error('npm 10+ is required for this workspace.'); process.exit(1); }\" && npm ci --no-audit --no-fund && npm run typecheck --workspace=@vmp/api && npm exec --workspace=@vmp/web nuxi prepare && bash scripts/install-coderabbit-cli.sh",
   "git": {
     "neverPushBranches": ["main"],
     "requirePullRequest": true,
     "notes": "Pushes to main autodeploy staging. Always branch + PR; CodeRabbit reviews PRs. See AGENTS.md and .cursor/rules/git-workflow.mdc."
   },
   "agent": {
-    "notes": "When touching anything related to MoQ livestreams, follow the instructions at https://doc.moq.dev/setup/agent/prompt.md (see AGENTS.md and .cursor/rules/moq-livestreams.mdc)."
+    "notes": "When touching anything related to MoQ livestreams, follow the instructions at https://doc.moq.dev/setup/agent/prompt.md (see AGENTS.md and .cursor/rules/moq-livestreams.mdc). CodeRabbit CLI is installed via scripts/install-coderabbit-cli.sh (cr / coderabbit on PATH). For local review before commit: run `cr review --agent` (or `cr review --agent --uncommitted`) in the background — reviews can take several minutes — then fix critical findings and optionally re-run once. Prefer --agent for structured JSON. Auth uses env secret CODERABBIT_API_KEY (Agentic API key); optional CODERABBIT_REGION=eu for EU orgs. See https://docs.coderabbit.ai/cli/overview."
   }
 }
