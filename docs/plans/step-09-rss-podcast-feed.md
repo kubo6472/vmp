@@ -1,8 +1,8 @@
 # Step 9 — RSS / podcast feed
 
-**Roadmap:** [ROADMAP.md](../../ROADMAP.md) → *Step 9*  
-**Issue:** [#644](https://github.com/tojemoc/vmp/issues/644)  
-**Status:** Implemented (`packages/api/src/feed.ts`, `rssToken.ts`, `rssAccount.ts`)
+**Roadmap:** [ROADMAP.md](../../ROADMAP.md) → *Shipped*  
+**Issue:** [#644](https://github.com/tojemoc/vmp/issues/644) / [TOJ-137](https://linear.app/tojemoc/issue/TOJ-137) (closed)  
+**Status:** Shipped ([#653](https://github.com/tojemoc/vmp/pull/653))
 
 ## Scope
 

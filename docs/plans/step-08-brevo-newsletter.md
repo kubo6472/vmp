@@ -1,8 +1,8 @@
 # Step 8 — Brevo newsletter sync
 
-**Roadmap:** [ROADMAP.md](../../ROADMAP.md) → *Step 8*  
-**Issue:** [#645](https://github.com/tojemoc/vmp/issues/645)  
-**Status:** In progress (PR #657)
+**Roadmap:** [ROADMAP.md](../../ROADMAP.md) → *Shipped*  
+**Issue:** [#645](https://github.com/tojemoc/vmp/issues/645) / [TOJ-138](https://linear.app/tojemoc/issue/TOJ-138) (closed)  
+**Status:** Shipped ([#665](https://github.com/tojemoc/vmp/pull/665); earlier consent attempt #657 closed/superseded)
 
 ## Scope
 
@@ -19,9 +19,10 @@
 
 ## Checklist
 
-- [ ] Newsletter opt-out model (`newsletter_opted_out_at` + account / checkout control)
-- [ ] Brevo sync helper (`add` for paying non-opted-out; `remove` on opt-out or non-paying; honor Brevo suppressions)
-- [ ] Webhook hooks on subscribe, renewal, cancel (preference-aware)
-- [ ] Admin Newsletter UI + send campaign API
-- [ ] `brevo_subscriber_list_id` in admin settings
-- [ ] Tests + staging smoke with `BREVO_API_KEY`
+- [x] Newsletter opt-out model (`newsletter_opted_out_at` + account / checkout control)
+- [x] Brevo sync helper (`add` for paying non-opted-out; `remove` on opt-out or non-paying; honor Brevo suppressions)
+- [x] Webhook hooks on subscribe, renewal, cancel (preference-aware)
+- [x] Admin Newsletter UI + send campaign API
+- [x] `brevo_subscriber_list_id` in admin settings
+- [x] Unit tests (`newsletter-preference.test.ts`)
+- [ ] Staging smoke with live `BREVO_API_KEY` (maintainer ops — not a code blocker)

@@ -29,7 +29,7 @@ Registry: `packages/web/utils/analytics/`.
 
 ### Admin CMS analytics (first-party)
 
-Segment/view analytics for editors live in D1 (`segment_analytics` tables) and `/api/admin/analytics` — not a third-party SDK.
+Video segment/view analytics for editors live in D1 (`video_segment_events`, `video_view_counts`, `video_view_count_sessions` — not a table named `segment_analytics`) and `/api/admin/analytics` — not a third-party SDK. The admin Analytics tab already surfaces views-over-time, per-video view counts, traffic-source split, and views-by-country (from `CF-IPCountry` on the HLS segment proxy).
 
 ## Retired / not loaded
 
@@ -55,4 +55,10 @@ Intentional navigation aborts (`AbortError`, “Request aborted”) are filtered
 
 ## Future work
 
-- CMS analytics expansion (views, referrer, country) — [#643](https://github.com/tojemoc/vmp/issues/643); build on first-party `segment_analytics`, not a new third-party pageview SDK.
+- CMS analytics remaining scope — [#643](https://github.com/tojemoc/vmp/issues/643) / [TOJ-135](https://linear.app/tojemoc/issue/TOJ-135):
+  - [x] Video view counts in admin
+  - [x] Referrer / traffic source breakdown
+  - [x] Country (geo) breakdown
+  - [ ] CMS **page** view counts (only video-segment traffic is counted today)
+  - [ ] “Help sponsor” (or similar) editor workflow — needs a product decision; no sponsor UX exists in-repo
+  - Build on first-party D1 tables above, not a new third-party pageview SDK.

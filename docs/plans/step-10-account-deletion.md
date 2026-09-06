@@ -2,9 +2,11 @@
 
 **Roadmap:** [ROADMAP.md](../../ROADMAP.md) → *Step 10*  
 **Issue:** [#646](https://github.com/tojemoc/vmp/issues/646) (spec [#506](https://github.com/tojemoc/vmp/issues/506) closed)  
-**Status:** Blocked — payment gateway adapter must support provider-agnostic immediate cancellation
+**Status:** In progress (groundwork [#656](https://github.com/tojemoc/vmp/pull/656)); remaining work blocked on provider-agnostic `cancelSubscriptionImmediately`
 
 ## Groundwork landed (independent of the payment blocker)
+
+Shipped in [#656](https://github.com/tojemoc/vmp/pull/656) (Linear [TOJ-136](https://linear.app/tojemoc/issue/TOJ-136)):
 
 - `requireAuth` now rejects a valid token whose user row is gone, so a deleted account loses access on every protected endpoint.
 - `einvoices.user_id` is nullable with `ON DELETE SET NULL` (migration `0059`), so a user delete keeps the invoice for statutory retention instead of erasing it.
@@ -12,11 +14,13 @@
 
 ## Checklist (high level)
 
-- [ ] `requireAuth` hardening (deleted / deletion-pending users)
+- [x] `requireAuth` hardening for **deleted** users (user row missing)
+- [ ] `requireAuth` / refresh / magic-link gate for **deletion-pending** users
 - [ ] Deletion token table + request/confirm API
 - [ ] Durable `account_deletion_jobs` + R2 object inventory
 - [ ] `cancelSubscriptionImmediately` on payment adapter
-- [ ] Invoice anonymization + FK fix (`einvoices`)
+- [x] Invoice FK fix (`einvoices` → `ON DELETE SET NULL`)
+- [ ] Invoice PII anonymization + R2 payload sanitization
 - [ ] Brevo contact deletion path
 - [ ] Account deletion UI + legal copy
 - [ ] Checkout consent persistence (`checkout_consents`)
