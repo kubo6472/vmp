@@ -16,14 +16,22 @@
 -- drops the child constraint via the -- POSTGRES: hint below, then gets it back when
 -- the licenses table is rebuilt.
 --
+-- api-node rewrites CREATE TABLE → CREATE TABLE IF NOT EXISTS for idempotent boots,
+-- so DROP leftover __v2 tables first or a stale shadow table becomes a silent no-op.
+-- Some Postgres backups are also missing offline_download_licenses.manifest_paths
+-- (0037 used IF NOT EXISTS against an older thinner table); add it before the copy.
+--
 -- INSERTs only copy rows whose FK targets still exist so deferred checks at commit
 -- do not fail on orphaned device/license/handoff rows left from earlier cleanup.
+-- SELECT lists use a source alias so Postgres cannot resolve column names against
+-- the INSERT target (__v2) when the source is missing a column.
 
 PRAGMA defer_foreign_keys = ON;
 
 -- POSTGRES: ALTER TABLE offline_download_licenses DROP CONSTRAINT IF EXISTS offline_download_licenses_device_id_fkey;
 
 -- Parent first: rebuild offline_devices with ON DELETE CASCADE on user_id.
+DROP TABLE IF EXISTS offline_devices__v2;
 CREATE TABLE offline_devices__v2 (
   id                 TEXT PRIMARY KEY,
   user_id            TEXT NOT NULL,
@@ -41,10 +49,10 @@ INSERT INTO offline_devices__v2 (
   last_seen_at, revoked_at
 )
 SELECT
-  id, user_id, device_name, public_key, device_token_hash, registered_at,
-  last_seen_at, revoked_at
-FROM offline_devices
-WHERE user_id IN (SELECT id FROM users);
+  src.id, src.user_id, src.device_name, src.public_key, src.device_token_hash,
+  src.registered_at, src.last_seen_at, src.revoked_at
+FROM offline_devices AS src
+WHERE src.user_id IN (SELECT id FROM users);
 
 DROP TABLE offline_devices;
 ALTER TABLE offline_devices__v2 RENAME TO offline_devices;
@@ -52,8 +60,12 @@ ALTER TABLE offline_devices__v2 RENAME TO offline_devices;
 CREATE INDEX idx_offline_devices_user ON offline_devices(user_id);
 CREATE UNIQUE INDEX idx_offline_devices_token_hash ON offline_devices(device_token_hash);
 
+-- Ensure license copy columns exist on Postgres before the rebuild INSERT.
+-- POSTGRES: ALTER TABLE offline_download_licenses ADD COLUMN IF NOT EXISTS manifest_paths TEXT NOT NULL DEFAULT '[]';
+
 -- Child: rebuild offline_download_licenses with ON DELETE CASCADE on user_id and
 -- device_id. On Postgres this recreates the device_id FK dropped above.
+DROP TABLE IF EXISTS offline_download_licenses__v2;
 CREATE TABLE offline_download_licenses__v2 (
   id                TEXT PRIMARY KEY,
   user_id           TEXT NOT NULL,
@@ -81,13 +93,13 @@ INSERT INTO offline_download_licenses__v2 (
   manifest_version
 )
 SELECT
-  id, user_id, video_id, device_id, rendition, status, issued_at, expires_at,
-  last_renewed_at, revoked_at, revoked_reason, manifest_hash, manifest_paths,
-  manifest_version
-FROM offline_download_licenses
-WHERE user_id IN (SELECT id FROM users)
-  AND video_id IN (SELECT id FROM videos)
-  AND device_id IN (SELECT id FROM offline_devices);
+  src.id, src.user_id, src.video_id, src.device_id, src.rendition, src.status,
+  src.issued_at, src.expires_at, src.last_renewed_at, src.revoked_at,
+  src.revoked_reason, src.manifest_hash, src.manifest_paths, src.manifest_version
+FROM offline_download_licenses AS src
+WHERE src.user_id IN (SELECT id FROM users)
+  AND src.video_id IN (SELECT id FROM videos)
+  AND src.device_id IN (SELECT id FROM offline_devices);
 
 DROP TABLE offline_download_licenses;
 ALTER TABLE offline_download_licenses__v2 RENAME TO offline_download_licenses;
@@ -97,6 +109,7 @@ CREATE INDEX idx_odl_device ON offline_download_licenses(device_id);
 CREATE INDEX idx_odl_expires ON offline_download_licenses(expires_at);
 
 -- pwa_handoffs has no child tables; a plain rebuild with the new FK is enough.
+DROP TABLE IF EXISTS pwa_handoffs__v2;
 CREATE TABLE pwa_handoffs__v2 (
   code TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -106,9 +119,9 @@ CREATE TABLE pwa_handoffs__v2 (
 );
 
 INSERT INTO pwa_handoffs__v2 (code, user_id, expires_at, used_at)
-SELECT code, user_id, expires_at, used_at
-FROM pwa_handoffs
-WHERE user_id IN (SELECT id FROM users);
+SELECT src.code, src.user_id, src.expires_at, src.used_at
+FROM pwa_handoffs AS src
+WHERE src.user_id IN (SELECT id FROM users);
 
 DROP TABLE pwa_handoffs;
 ALTER TABLE pwa_handoffs__v2 RENAME TO pwa_handoffs;
