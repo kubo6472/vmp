@@ -69,6 +69,10 @@ describe('translateSqliteDdl migration 0060 account deletion FK cascade', () => 
       join(import.meta.dirname, '../../api/migrations/0060_account_deletion_fk_cascade.sql'),
       'utf8',
     );
+    // D1 ignores PRAGMA foreign_keys = OFF; migrations must defer checks instead.
+    assert.match(raw, /^\s*PRAGMA\s+defer_foreign_keys\s*=\s*ON\s*;/im);
+    assert.doesNotMatch(raw, /^\s*PRAGMA\s+foreign_keys\s*=\s*OFF\s*;/im);
+
     const out = translateSqliteDdl(raw);
     const dropConstraint = out.search(
       /ALTER TABLE offline_download_licenses DROP CONSTRAINT IF EXISTS offline_download_licenses_device_id_fkey/i,
@@ -81,7 +85,7 @@ describe('translateSqliteDdl migration 0060 account deletion FK cascade', () => 
       'device_id FK must be dropped before offline_devices is dropped',
     );
     // PRAGMA statements are stripped for Postgres (the word may still appear in comments).
-    assert.doesNotMatch(out, /^\s*PRAGMA\s+foreign_keys/im);
+    assert.doesNotMatch(out, /^\s*PRAGMA\s+(?:foreign_keys|defer_foreign_keys)/im);
   });
 });
 

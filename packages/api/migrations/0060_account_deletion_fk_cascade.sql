@@ -10,11 +10,16 @@
 -- tables (see 0006, 0036).
 --
 -- offline_download_licenses.device_id references offline_devices, so recreating
--- offline_devices needs that child FK out of the way first. SQLite relies on
--- `PRAGMA foreign_keys = OFF`; Postgres (api-node) drops the child constraint via the
--- -- POSTGRES: hint below, then gets it back when the licenses table is rebuilt.
+-- offline_devices needs that child FK out of the way first. D1 always enforces FKs
+-- (PRAGMA foreign_keys = OFF is a no-op there); use PRAGMA defer_foreign_keys so the
+-- parent DROP/rename can finish before the child table is rebuilt. Postgres (api-node)
+-- drops the child constraint via the -- POSTGRES: hint below, then gets it back when
+-- the licenses table is rebuilt.
+--
+-- INSERTs only copy rows whose FK targets still exist so deferred checks at commit
+-- do not fail on orphaned device/license/handoff rows left from earlier cleanup.
 
-PRAGMA foreign_keys = OFF;
+PRAGMA defer_foreign_keys = ON;
 
 -- POSTGRES: ALTER TABLE offline_download_licenses DROP CONSTRAINT IF EXISTS offline_download_licenses_device_id_fkey;
 
@@ -38,7 +43,8 @@ INSERT INTO offline_devices__v2 (
 SELECT
   id, user_id, device_name, public_key, device_token_hash, registered_at,
   last_seen_at, revoked_at
-FROM offline_devices;
+FROM offline_devices
+WHERE user_id IN (SELECT id FROM users);
 
 DROP TABLE offline_devices;
 ALTER TABLE offline_devices__v2 RENAME TO offline_devices;
@@ -78,7 +84,10 @@ SELECT
   id, user_id, video_id, device_id, rendition, status, issued_at, expires_at,
   last_renewed_at, revoked_at, revoked_reason, manifest_hash, manifest_paths,
   manifest_version
-FROM offline_download_licenses;
+FROM offline_download_licenses
+WHERE user_id IN (SELECT id FROM users)
+  AND video_id IN (SELECT id FROM videos)
+  AND device_id IN (SELECT id FROM offline_devices);
 
 DROP TABLE offline_download_licenses;
 ALTER TABLE offline_download_licenses__v2 RENAME TO offline_download_licenses;
@@ -97,11 +106,13 @@ CREATE TABLE pwa_handoffs__v2 (
 );
 
 INSERT INTO pwa_handoffs__v2 (code, user_id, expires_at, used_at)
-SELECT code, user_id, expires_at, used_at FROM pwa_handoffs;
+SELECT code, user_id, expires_at, used_at
+FROM pwa_handoffs
+WHERE user_id IN (SELECT id FROM users);
 
 DROP TABLE pwa_handoffs;
 ALTER TABLE pwa_handoffs__v2 RENAME TO pwa_handoffs;
 
 CREATE INDEX IF NOT EXISTS idx_pwa_handoffs_code ON pwa_handoffs(code);
 
-PRAGMA foreign_keys = ON;
+PRAGMA defer_foreign_keys = OFF;
