@@ -6,11 +6,11 @@ Each backlog item links a **GitHub tracking issue** in `ROADMAP.md`. PRs should 
 
 | Plan | Roadmap section | Issue |
 |------|-----------------|-------|
-| [analytics-observability.md](analytics-observability.md) | CMS admin analytics (`analytics-observability-cms`) | [#643](https://github.com/tojemoc/vmp/issues/643) |
-| [club-plan-entitlements.md](club-plan-entitlements.md) | Club plan — product entitlements | [#649](https://github.com/tojemoc/vmp/issues/649) |
-| [step-08-brevo-newsletter.md](step-08-brevo-newsletter.md) | Step 8 — Brevo newsletter sync | [#645](https://github.com/tojemoc/vmp/issues/645) |
-| [step-09-rss-podcast-feed.md](step-09-rss-podcast-feed.md) | Step 9 — RSS / podcast feed | [#644](https://github.com/tojemoc/vmp/issues/644) |
-| [step-10-account-deletion.md](step-10-account-deletion.md) | Step 10 — Self-service account deletion | [#646](https://github.com/tojemoc/vmp/issues/646) |
+| [analytics-observability.md](analytics-observability.md) | CMS admin analytics (`analytics-observability-cms`) — in progress | [#643](https://github.com/tojemoc/vmp/issues/643) / TOJ-135 |
+| [club-plan-entitlements.md](club-plan-entitlements.md) | Club plan — product entitlements — in progress | [#649](https://github.com/tojemoc/vmp/issues/649) / TOJ-139 |
+| [step-08-brevo-newsletter.md](step-08-brevo-newsletter.md) | Step 8 — Brevo newsletter sync — **shipped** | [#645](https://github.com/tojemoc/vmp/issues/645) / TOJ-138 (closed) |
+| [step-09-rss-podcast-feed.md](step-09-rss-podcast-feed.md) | Step 9 — RSS / podcast feed — **shipped** | [#644](https://github.com/tojemoc/vmp/issues/644) / TOJ-137 (closed) |
+| [step-10-account-deletion.md](step-10-account-deletion.md) | Step 10 — Self-service account deletion — in progress (groundwork) | [#646](https://github.com/tojemoc/vmp/issues/646) / TOJ-136 |
 
 Other long-running designs outside this folder:
 

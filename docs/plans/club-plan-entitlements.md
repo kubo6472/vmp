@@ -1,8 +1,8 @@
 # Club plan entitlements
 
-**Roadmap:** [ROADMAP.md](../../ROADMAP.md) → *Club plan entitlements*  
-**Issue:** [#649](https://github.com/tojemoc/vmp/issues/649)  
-**Status:** Not started (product spec; partial billing support exists)
+**Roadmap:** [ROADMAP.md](../../ROADMAP.md) → *In progress — Club plan entitlements*  
+**Issue:** [#649](https://github.com/tojemoc/vmp/issues/649) / [TOJ-139](https://linear.app/tojemoc/issue/TOJ-139)  
+**Status:** Concurrent playback **API** shipped ([#655](https://github.com/tojemoc/vmp/pull/655), [#661](https://github.com/tojemoc/vmp/pull/661)); web player wiring + IRL + ad-free remain
 
 ## Product definition (360tka.sk / Stargaze heritage)
 
@@ -27,7 +27,7 @@ Original marketing copy (paraphrased):
 | Yearly-length period | Yes | `periodEndIsoForPlan` treats club like yearly (12 months) |
 | Qerko legacy `subscriptionType: club` | Yes | Fixed: must not collapse to `yearly` on E-shop orders |
 | GoPay / Comgate club checkout | Partial | Provider draft; club uses yearly recurrence where required |
-| Concurrent playback limit | **No** | No server-side session tracking for streams |
+| Concurrent playback limit | **Partial** | `playback_sessions` schema + authenticated mint/heartbeat/release APIs shipped; `video-access` enforces when `concurrent_playback_enforced=1` (default `0`). Web player wiring still pending — do not flip the flag without it. |
 | IRL event access | **No** | No invites, lists, or redemption flow |
 | Ad-free playback | **No** | No ads in product today; no `plan_type` gate for ads |
 
@@ -150,10 +150,10 @@ CREATE INDEX idx_playback_sessions_user_active ON playback_sessions(user_id, las
 
 ## Checklist (copy to ROADMAP when implementing)
 
-- [ ] D1 migration `playback_sessions` + admin_settings keys
-- [ ] API: session register / heartbeat / release
-- [ ] Enforce on `video-access` (+ proxy if needed)
-- [ ] Web player heartbeats + error UI
-- [ ] Tests + staging flag `concurrent_playback_enforced`
+- [x] D1 migration `playback_sessions` + admin_settings keys ([#655](https://github.com/tojemoc/vmp/pull/655))
+- [x] API: session mint / heartbeat / release ([#655](https://github.com/tojemoc/vmp/pull/655), [#661](https://github.com/tojemoc/vmp/pull/661))
+- [x] Enforce on `video-access` when `concurrent_playback_enforced=1` ([#655](https://github.com/tojemoc/vmp/pull/655), [#661](https://github.com/tojemoc/vmp/pull/661))
+- [ ] Web player session mint + heartbeats + limit error UI (not wired yet — do not enable the flag without this)
+- [x] API tests; flag defaults to `concurrent_playback_enforced=0`
 - [ ] IRL events (separate milestone)
 - [ ] Ad-free gate (blocked on ads feature)

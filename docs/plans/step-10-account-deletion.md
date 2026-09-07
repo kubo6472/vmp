@@ -2,9 +2,11 @@
 
 **Roadmap:** [ROADMAP.md](../../ROADMAP.md) → *Step 10*  
 **Issue:** [#646](https://github.com/tojemoc/vmp/issues/646) (spec [#506](https://github.com/tojemoc/vmp/issues/506) closed)  
-**Status:** Blocked — payment gateway adapter must support provider-agnostic immediate cancellation
+**Status:** In progress (groundwork [#656](https://github.com/tojemoc/vmp/pull/656)); remaining work blocked on provider-agnostic `cancelSubscriptionImmediately`
 
 ## Groundwork landed (independent of the payment blocker)
+
+Shipped in [#656](https://github.com/tojemoc/vmp/pull/656) (Linear [TOJ-136](https://linear.app/tojemoc/issue/TOJ-136)):
 
 - `requireAuth` now rejects a valid token whose user row is gone, so a deleted account loses access on every protected endpoint.
 - `einvoices.user_id` is nullable with `ON DELETE SET NULL` (migration `0059`), so a user delete keeps the invoice for statutory retention instead of erasing it.
@@ -12,11 +14,13 @@
 
 ## Checklist (high level)
 
-- [ ] `requireAuth` hardening (deleted / deletion-pending users)
+- [x] `requireAuth` hardening for **deleted** users (user row missing)
+- [ ] `requireAuth` / refresh / magic-link gate for **deletion-pending** users
 - [ ] Deletion token table + request/confirm API
 - [ ] Durable `account_deletion_jobs` + R2 object inventory
 - [ ] `cancelSubscriptionImmediately` on payment adapter
-- [ ] Invoice anonymization + FK fix (`einvoices`)
+- [x] Invoice FK fix (`einvoices` → `ON DELETE SET NULL`)
+- [ ] Invoice PII anonymization + R2 payload sanitization
 - [ ] Brevo contact deletion path
 - [ ] Account deletion UI + legal copy
 - [ ] Checkout consent persistence (`checkout_consents`)
@@ -35,7 +39,7 @@
      - `PaymentProvider.cancelSubscription` today sets `cancel_at_period_end: true` (Stripe provider in `packages/payments/src/providers/stripe/index.ts`) — access continues until period end.
      - Account deletion requires **immediate** access revocation. Extend the payment gateway adapter with an explicit immediate-cancellation capability (e.g. `cancelSubscriptionImmediately`) and call it here; UI copy should state that remaining prepaid access ends immediately (refund eligibility per applicable consumer law — see legal section). If immediate cancel is unavailable for a provider, block deletion with a clear error rather than leaving access active.
      - Make provider cancellation **idempotent** (safe to retry; persist `subscription_cancelled` before proceeding).
-  3. **Anonymize retained billing records** (inside a D1 `db.batch()` transaction together with step 4): `einvoices` currently has `FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE` (`0044_einvoicing.sql`). That cascade would delete invoice rows, which conflicts with CZ/SK accounting law (zákon č. 563/1991 Sb. and its Slovak equivalent — multi-year retention of financial records). Requires a new migration: change FK to `ON DELETE SET NULL`, make `user_id` nullable, and in the deletion handler clear/anonymize buyer PII columns (`buyer_name`, `buyer_email`, `buyer_address_json`, `buyer_vat_id`, `buyer_peppol_*`) while keeping invoice amounts, dates, and retention metadata. **R2 payloads** (`xml_payload_r2_key`, `pdf_payload_r2_key`): ISDOC/UBL XML embeds buyer name, email, address, and VAT ID (`eInvoicing.ts`). Either replace each object with a sanitized archival version stripping buyer PII, or document a lawful-retention policy with access controls on the original object. Preserve amounts, dates, and statutory retention either way. GDPR Art. 17(3)(b) permits this retention where required by law.
+  3. **Anonymize retained billing records** (inside a D1 `db.batch()` transaction together with step 4): migration `0059_einvoices_user_fk_set_null.sql` already made `einvoices.user_id` nullable with `ON DELETE SET NULL` (replacing the `0044_einvoicing.sql` `ON DELETE CASCADE` that would have erased invoice rows). In the deletion handler, clear/anonymize buyer PII columns (`buyer_name`, `buyer_email`, `buyer_address_json`, `buyer_vat_id`, `buyer_peppol_*`) while keeping invoice amounts, dates, and retention metadata. **R2 payloads** (`xml_payload_r2_key`, `pdf_payload_r2_key`): ISDOC/UBL XML embeds buyer name, email, address, and VAT ID (`eInvoicing.ts`). Either replace each object with a sanitized archival version stripping buyer PII, or document a lawful-retention policy with access controls on the original object. Preserve amounts, dates, and statutory retention either way. GDPR Art. 17(3)(b) permits this retention where required by law.
   4. **Explicit cleanup of non-CASCADE FK tables** (same `db.batch()` as step 3):
      - Deletion-token rows: omit if the table uses `ON DELETE CASCADE`; otherwise `DELETE FROM <deletion_tokens> WHERE user_id = ?` in this same batch (required unless `user_id` is nullable with `ON DELETE SET NULL` plus post-job purge)
      - `DELETE FROM users WHERE id = ?` — remaining `ON DELETE CASCADE` / `ON DELETE SET NULL` FKs handle the rest (`offline_devices`, `offline_download_licenses`, `pwa_handoffs` via migration `0060`; `playback_positions`, `refresh_tokens`, `magic_link_tokens`, `push_subscriptions`, `subscriptions`, `native_push_tokens`, `device_pairing_sessions`, `admin_audit_logs` actor/target, etc.).
@@ -44,7 +48,7 @@
   7. Revoke all sessions: refresh tokens deleted by cascade; `requireAuth` must reject access tokens for deleted or deletion-pending users (see below).
 - **Deletion-pending gate** (set atomically when `delete-confirm` creates the job): mark the account `deletion_pending` (column on `users` or job status). Reject deletion-pending accounts in `requireAuth`, `handleRefreshToken`, and magic-link redemption **before** issuing or rotating sessions. Preserve existing behavior for accounts not pending. Add tests covering all three auth paths.
 - **`requireAuth` hardening** (prerequisite): today `requireAuth` only verifies the JWT signature (`auth.ts`); it does not check whether the user row still exists, is deletion-pending, or whether a server-side revocation/version stamp is valid. Extend it to reject tokens for deleted or deletion-pending users (and optionally a `users.token_version` bump on deletion) consistently across all protected endpoints; add tests for deleted users and revoked/outdated tokens.
-- New migration(s): `account_deletion_jobs` + `account_deletion_r2_objects` (`job_id` FK to the job, unique `(job_id, object_key)`) + deletion token table (separate from `magic_link_tokens`; `user_id` `ON DELETE CASCADE`, or nullable `user_id` with `ON DELETE SET NULL`) **and** `einvoices` FK/retention fix described above.
+- New migration(s): `account_deletion_jobs` + `account_deletion_r2_objects` (`job_id` FK to the job, unique `(job_id, object_key)`) + deletion token table (separate from `magic_link_tokens`; `user_id` `ON DELETE CASCADE`, or nullable `user_id` with `ON DELETE SET NULL`). The `einvoices` FK/retention fix already shipped in migration `0059_einvoices_user_fk_set_null.sql`.
 
 #### Web (`@vmp/web`)
 
