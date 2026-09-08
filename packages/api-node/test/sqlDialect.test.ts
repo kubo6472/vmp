@@ -69,19 +69,42 @@ describe('translateSqliteDdl migration 0060 account deletion FK cascade', () => 
       join(import.meta.dirname, '../../api/migrations/0060_account_deletion_fk_cascade.sql'),
       'utf8',
     );
+    // D1 ignores PRAGMA foreign_keys = OFF; migrations must defer checks instead.
+    assert.match(raw, /^\s*PRAGMA\s+defer_foreign_keys\s*=\s*ON\s*;/im);
+    assert.doesNotMatch(raw, /^\s*PRAGMA\s+foreign_keys\s*=\s*OFF\s*;/im);
+    // api-node rewrites CREATE TABLE → IF NOT EXISTS; clear stale __v2 shadows first.
+    assert.match(raw, /DROP TABLE IF EXISTS offline_devices__v2/i);
+    assert.match(raw, /DROP TABLE IF EXISTS offline_download_licenses__v2/i);
+    assert.match(raw, /DROP TABLE IF EXISTS pwa_handoffs__v2/i);
+    // Backfill manifest_paths on Postgres DBs that missed it under CREATE IF NOT EXISTS.
+    assert.match(
+      raw,
+      /--\s*POSTGRES:\s*ALTER TABLE offline_download_licenses ADD COLUMN IF NOT EXISTS manifest_paths/i,
+    );
+    assert.match(raw, /FROM offline_download_licenses AS src/i);
+
     const out = translateSqliteDdl(raw);
     const dropConstraint = out.search(
       /ALTER TABLE offline_download_licenses DROP CONSTRAINT IF EXISTS offline_download_licenses_device_id_fkey/i,
     );
-    const dropDevices = out.search(/DROP TABLE offline_devices\b/i);
+    const addManifestPaths = out.search(
+      /ALTER TABLE offline_download_licenses ADD COLUMN IF NOT EXISTS manifest_paths/i,
+    );
+    const dropDevices = out.search(/DROP TABLE offline_devices\b(?!__)/i);
+    const insertLicenses = out.search(/INSERT INTO offline_download_licenses__v2/i);
     assert.ok(dropConstraint >= 0, 'expected the device_id FK to be dropped for Postgres');
     assert.ok(dropDevices >= 0, 'expected offline_devices to be recreated');
     assert.ok(
       dropConstraint < dropDevices,
       'device_id FK must be dropped before offline_devices is dropped',
     );
+    assert.ok(addManifestPaths >= 0, 'expected Postgres manifest_paths backfill');
+    assert.ok(
+      addManifestPaths < insertLicenses,
+      'manifest_paths must be backfilled before the licenses__v2 INSERT',
+    );
     // PRAGMA statements are stripped for Postgres (the word may still appear in comments).
-    assert.doesNotMatch(out, /^\s*PRAGMA\s+foreign_keys/im);
+    assert.doesNotMatch(out, /^\s*PRAGMA\s+(?:foreign_keys|defer_foreign_keys)/im);
   });
 });
 
