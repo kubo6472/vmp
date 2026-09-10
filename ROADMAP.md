@@ -128,12 +128,13 @@ These are open Linear issues without active implementation milestones on the pro
 
 ### Video startup latency (`video-startup-latency`)
 
-**Plan:** [docs/plans/video-startup-latency.md](docs/plans/video-startup-latency.md)
+**Plan:** [docs/plans/video-startup-latency.md](docs/plans/video-startup-latency.md) · encoding scale: [docs/plans/horizontally-scalable-encoding.md](docs/plans/horizontally-scalable-encoding.md)
 
 Validated ~7s click-to-play (6s R2/CMAF segments via Worker proxy) vs ~3s on the old Bunny-edge stack.
 
 - [ ] Path-keyed Workers Cache for immutable segments + ascending-bandwidth master rewrite + watch waterfall + above-fold prefetch (this PR)
 - [ ] **2s segment duration** for new encodes (Encore GOP 60 + packager `segmentDuration: 2`; re-package existing catalog separately)
+- [ ] **Horizontally scalable encoding** (Compose `docker-compose.scale.yml` high/low worker pools + packager replicas; optional segmented encode)
 - [ ] Optional CDN (Bunny or R2 custom domain) once cacheable URL model allows
 - [ ] PostHog `video_startup_ms` instrumentation
 

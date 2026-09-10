@@ -1,7 +1,7 @@
-# Optional NVIDIA GPU override for encore-web.
+# Optional NVIDIA GPU override for encore-web (single-node encode).
 # Usage: docker compose -f encore/docker-compose.yml -f encore/docker-compose.nvidia.yml up -d
 #
-# If you also use docker-compose.workers.yml, add the same reservations to encore-worker.
+# For scaled workers, use docker-compose.scale.nvidia.yml with docker-compose.scale.yml.
 
 services:
   encore-web:

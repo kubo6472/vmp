@@ -56,10 +56,14 @@ curl -sf http://127.0.0.1:8080/actuator/health
 curl -sf http://127.0.0.1:8788/health
 ```
 
-Tune worker count:
+Tune worker / packager count:
 
 ```bash
-# Optional KEDA-style one-shot workers (not needed for single-VM; encore-web encodes by default):
+# Durable horizontal encode (API-only web + high/low worker pools + packager replicas):
+ENCORE_WORKER_HIGH_REPLICAS=3 ENCORE_WORKER_LOW_REPLICAS=2 ENCORE_PACKAGER_REPLICAS=3 \
+  docker compose -f encore/docker-compose.yml -f encore/docker-compose.scale.yml up -d
+
+# Optional KEDA-style one-shot workers (no loop; exit when idle):
 # docker compose -f encore/docker-compose.yml -f encore/docker-compose.workers.yml up -d
 ```
 

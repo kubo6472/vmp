@@ -1,0 +1,38 @@
+# NVIDIA GPU for scaled Encore workers (+ encore-web for non-scale GPU hosts).
+# Usage (with scale overlay):
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml \
+#     -f docker-compose.scale.nvidia.yml up -d
+
+services:
+  encore-web:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+
+  encore-worker-high:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+
+  encore-worker-low:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}

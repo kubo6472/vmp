@@ -5,7 +5,16 @@
 
 import { mkdir, readdir, rename, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { ENCORE_JOB_PRIORITY } from './encorePriorities.js';
 import { detectGpuEncodeConfig, resolveEncoreProfileBase } from './gpuDetect.js';
+
+/** Optional parallel segment encode (seconds). Requires Encore shared-work-dir. */
+export function encoreSegmentLengthSeconds(): number | undefined {
+  const raw = (process.env.ENCORE_SEGMENT_LENGTH_SECONDS || '').trim();
+  if (!raw) return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
 
 export type EncoreJobStatus =
   | 'NEW'
@@ -99,6 +108,8 @@ export async function submitEncoreJob(options: {
   priority?: number;
   duration?: number;
   seekTo?: number;
+  /** Seconds per segment for parallel encode across workers (needs shared-work-dir). */
+  segmentLength?: number;
 }): Promise<string> {
   const body: Record<string, unknown> = {
     profile: options.profile,
@@ -115,6 +126,9 @@ export async function submitEncoreJob(options: {
   };
   if (options.duration != null) body.duration = options.duration;
   if (options.seekTo != null) body.seekTo = options.seekTo;
+  if (options.segmentLength != null && options.segmentLength > 0) {
+    body.segmentLength = options.segmentLength;
+  }
 
   const res = await encoreFetch('/encoreJobs', {
     method: 'POST',
@@ -264,7 +278,11 @@ export async function transcodeRenditionWithEncore(options: {
     outputFolder: encoreOutDir,
     baseName,
     externalId: `${options.videoId}:${options.rendition}`,
-    priority: options.rendition === '720p' ? 10 : 30,
+    priority:
+      options.rendition === '720p'
+        ? ENCORE_JOB_PRIORITY.RENDITION_720P
+        : ENCORE_JOB_PRIORITY.RENDITION_OTHER,
+    segmentLength: encoreSegmentLengthSeconds(),
   });
 
   await waitForEncoreJob(jobId, {

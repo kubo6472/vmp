@@ -2,7 +2,7 @@
 # Usage: docker compose -f encore/docker-compose.yml -f encore/docker-compose.vaapi.yml up -d
 # Combine with NVIDIA override only if your host supports both paths.
 #
-# If you also use docker-compose.workers.yml, add the same devices to encore-worker.
+# For scaled workers, use docker-compose.scale.vaapi.yml with docker-compose.scale.yml.
 
 services:
   encore-web:
