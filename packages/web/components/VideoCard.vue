@@ -125,10 +125,10 @@
   let intersectionObserver: IntersectionObserver | undefined;
 
   const onPrefetchIntent = () => {
+    // Visibility observer is primary; pointerenter still helps when IO is late
+    // (slow layout) or unsupported.
     if (!props.startupPrefetch) return;
-    if (startupPrefetchMode?.value === 'hover') {
-      enqueueStartupPrefetch?.(prefetchKey.value);
-    }
+    enqueueStartupPrefetch?.(prefetchKey.value);
   };
 
   const { sizedUrl } = useThumbnail(computed(() => props.video.thumbnail_url));
@@ -196,7 +196,7 @@
       !props.startupPrefetch ||
       !enqueueStartupPrefetch ||
       !prefetchKey.value ||
-      startupPrefetchMode?.value !== 'visible'
+      startupPrefetchMode?.value === 'hover'
     ) {
       return;
     }
@@ -211,6 +211,7 @@
       enqueueStartupPrefetch(prefetchKey.value);
       return;
     }
+    // "Above the fold, and then some" — warm roughly another viewport below.
     intersectionObserver = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -221,7 +222,7 @@
           }
         }
       },
-      { rootMargin: '240px 0px', threshold: 0.01 },
+      { rootMargin: '100% 0px', threshold: 0.01 },
     );
     intersectionObserver.observe(node);
   });

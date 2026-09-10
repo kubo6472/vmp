@@ -423,11 +423,11 @@
 
   const config = useRuntimeConfig();
 
-  const { enqueue: enqueueVideoStartupPrefetch } = useVideoStartupPrefetch({
+  const { enqueueMany: enqueueVideoStartupPrefetchMany } = useVideoStartupPrefetch({
     apiUrl: String(config.public.apiUrl),
     authHeaders: () => authHeader(),
     isLoggedIn,
-    segmentCount: 2,
+    segmentCount: 3,
   });
 
   type HomePill = {
@@ -658,13 +658,10 @@
 
   function warmAboveFoldStartupPrefetch() {
     if (!import.meta.client) return;
-    // Logged-in: IntersectionObserver on cards handles "above the fold and then some".
-    // Anonymous: eagerly warm a small above-fold set only (rate_limit_anon default 5/h).
-    const limit = isLoggedIn.value ? 0 : 2;
-    if (limit <= 0) return;
-    for (const key of collectHomepagePrefetchKeys(limit)) {
-      enqueueVideoStartupPrefetch(key);
-    }
+    // Eagerly queue above-the-fold (+ more when logged in). Cards also observe
+    // with a full-viewport rootMargin for anything the eager pass misses.
+    const limit = isLoggedIn.value ? 12 : 4;
+    enqueueVideoStartupPrefetchMany(collectHomepagePrefetchKeys(limit));
   }
 
   onMounted(() => {

@@ -58,10 +58,19 @@
 </template>
 
 <script setup lang="ts">
+  import { useVideoStartupPrefetch } from '~/composables/useVideoStartupPrefetch';
   import strings from '~/utils/strings';
 
   const route = useRoute();
   const config = useRuntimeConfig();
+  const { isLoggedIn, authHeader } = useAuth();
+
+  const { enqueueMany } = useVideoStartupPrefetch({
+    apiUrl: String(config.public.apiUrl),
+    authHeaders: () => authHeader(),
+    isLoggedIn,
+    segmentCount: 3,
+  });
 
   const categorySlug = computed(() => String(route.params.slug || ''));
   const page = ref(1);
@@ -117,4 +126,27 @@
     if (nextPage < 1 || nextPage === page.value) return;
     page.value = nextPage;
   };
+
+  function warmCategoryStartupPrefetch() {
+    if (!import.meta.client) return;
+    const limit = isLoggedIn.value ? 12 : 4;
+    const keys: string[] = [];
+    for (const video of videos.value) {
+      const key = String(video?.slug || video?.id || '');
+      if (!key) continue;
+      keys.push(key);
+      if (keys.length >= limit) break;
+    }
+    enqueueMany(keys);
+  }
+
+  if (import.meta.client) {
+    watch(
+      () => [videos.value.length, page.value, isLoggedIn.value, categorySlug.value],
+      () => {
+        warmCategoryStartupPrefetch();
+      },
+      { immediate: true },
+    );
+  }
 </script>
