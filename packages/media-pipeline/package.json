@@ -18,7 +18,7 @@
     "test": "npm run build && node --test dist/test/*.test.js"
   },
   "devDependencies": {
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.4.1",
     "typescript": "npm:@typescript/typescript6@^6.0.2"
   },
   "engines": {
