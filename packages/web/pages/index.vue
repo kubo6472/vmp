@@ -423,7 +423,7 @@
 
   const config = useRuntimeConfig();
 
-  useVideoStartupPrefetch({
+  const { enqueue: enqueueVideoStartupPrefetch } = useVideoStartupPrefetch({
     apiUrl: String(config.public.apiUrl),
     authHeaders: () => authHeader(),
     isLoggedIn,
@@ -591,10 +591,87 @@
     if (import.meta.client) isMobileViewport.value = window.innerWidth < 1024;
   }
 
+  function collectHomepagePrefetchKeys(limit: number): string[] {
+    const keys: string[] = [];
+    const seen = new Set<string>();
+    const pushVideo = (video: { id?: string; slug?: string | null } | undefined) => {
+      if (!video) return;
+      const key = String(video.slug || video.id || '');
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      keys.push(key);
+    };
+    const walk = (blocks: typeof homepageRenderModel.value.blockItems) => {
+      for (const block of blocks) {
+        if (keys.length >= limit) return;
+        if (block.type === 'top_video' || block.type === 'featured_row') {
+          for (const video of block.videos) {
+            pushVideo(video);
+            if (keys.length >= limit) return;
+          }
+        } else if (block.type === 'category') {
+          for (const video of block.categorySection?.visible ?? []) {
+            pushVideo(video);
+            if (keys.length >= limit) return;
+          }
+        } else if (block.type === 'category_with_side_mini') {
+          for (const video of block.primary.categorySection?.visible ?? []) {
+            pushVideo(video);
+            if (keys.length >= limit) return;
+          }
+          for (const video of block.sideMini.videos ?? []) {
+            pushVideo(video);
+            if (keys.length >= limit) return;
+          }
+        } else if (block.type === 'split_horizontal' || block.type === 'split_vertical') {
+          for (const child of block.children) {
+            if (keys.length >= limit) return;
+            if (child.type === 'top_video' || child.type === 'featured_row') {
+              for (const video of child.videos) {
+                pushVideo(video);
+                if (keys.length >= limit) return;
+              }
+            } else if (child.categorySection?.visible?.length) {
+              for (const video of child.categorySection.visible) {
+                pushVideo(video);
+                if (keys.length >= limit) return;
+              }
+            } else {
+              for (const video of child.videos ?? []) {
+                pushVideo(video);
+                if (keys.length >= limit) return;
+              }
+            }
+          }
+        }
+      }
+    };
+    walk(homepageRenderModel.value.blockItems);
+    if (keys.length < limit) {
+      for (const video of videos.value) {
+        pushVideo(video);
+        if (keys.length >= limit) break;
+      }
+    }
+    return keys;
+  }
+
+  function warmAboveFoldStartupPrefetch() {
+    if (!import.meta.client) return;
+    // Logged-in: IntersectionObserver on cards handles "above the fold and then some".
+    // Anonymous: eagerly warm a small above-fold set only (rate_limit_anon default 5/h).
+    const limit = isLoggedIn.value ? 0 : 2;
+    if (limit <= 0) return;
+    for (const key of collectHomepagePrefetchKeys(limit)) {
+      enqueueVideoStartupPrefetch(key);
+    }
+  }
+
   onMounted(() => {
     pwaBannerReady.value = true;
     updateMobileViewport();
     if (import.meta.client) window.addEventListener('resize', updateMobileViewport);
+    warmAboveFoldStartupPrefetch();
   });
 
   onUnmounted(() => {
@@ -608,6 +685,12 @@
         void loadBannerImageUrls();
       },
       { immediate: true },
+    );
+    watch(
+      () => [homepageRenderModel.value.blockItems.length, videos.value.length, isLoggedIn.value],
+      () => {
+        warmAboveFoldStartupPrefetch();
+      },
     );
   }
 </script>

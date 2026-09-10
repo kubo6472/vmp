@@ -34,7 +34,7 @@ Cut perceived startup toward the old ~3s bar without giving up signed proxy URLs
 - [x] Path-keyed **Workers Cache API** for immutable `.m4s` / `init*.mp4` after `vt` auth (strip query from cache key).
 - [x] Rewrite master playlists to **ascending BANDWIDTH** so ABR starts on the cheapest rung.
 - [x] Watch page: **start player immediately**; recommendations load in parallel; playlist preflight no longer blocks init.
-- [x] **Above-the-fold HLS startup prefetch** (master → lowest ladder → init + first N segments + audio): aggressive for logged-in users via IntersectionObserver; **hover-only for anonymous** so `rate_limit_anon` (default 5/h) is not burned by homepage cards.
+- [x] Above-the-fold HLS startup prefetch (master → lowest ladder → init + first N segments + audio): IntersectionObserver for logged-in users; anonymous users eagerly warm **2** above-fold cards then hover-warm the rest (protects `rate_limit_anon`).
 - [x] Plan + roadmap entry; unit tests for cache key / bandwidth sort / prefetch URL picking.
 
 ## Follow-ups (not this PR)
