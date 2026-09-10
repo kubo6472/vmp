@@ -1978,23 +1978,24 @@
         }
       }
 
+      // Recommendations are off the startup critical path — warm them in parallel.
       recommendations.value = [];
-      try {
-        const recsResponse = await fetch(
-          `${config.public.apiUrl}/api/recommendations?videoId=${encodeURIComponent(String(videoData.value?.videoId ?? targetVideoId))}&limit=5`,
-          { signal: options.signal },
-        );
-        ensureCurrent();
-
-        if (recsResponse.ok) {
-          const recommendationsData = await recsResponse.json();
-          ensureCurrent();
-          recommendations.value = recommendationsData.videos || [];
+      const recommendationsPromise = (async () => {
+        try {
+          const recsResponse = await fetch(
+            `${config.public.apiUrl}/api/recommendations?videoId=${encodeURIComponent(String(videoData.value?.videoId ?? targetVideoId))}&limit=5`,
+            { signal: options.signal },
+          );
+          if (!guard() || options.signal.aborted) return;
+          if (recsResponse.ok) {
+            const recommendationsData = await recsResponse.json();
+            if (!guard() || options.signal.aborted) return;
+            recommendations.value = recommendationsData.videos || [];
+          }
+        } catch (e: any) {
+          if (e?.name === 'AbortError' || options.signal?.aborted || !guard()) throw e;
         }
-      } catch (e: any) {
-        if (e?.name === 'AbortError' || options.signal?.aborted || !guard()) throw e;
-        // Recommendation fetch is best-effort; keep list empty on failure.
-      }
+      })();
 
       ensureCurrent();
       loading.value = false;
@@ -2003,6 +2004,7 @@
       measureDescriptionClamp();
       ensureCurrent();
       if (videoData.value?.video?.isLivestream) {
+        await recommendationsPromise.catch(() => undefined);
         if (hasLivestreamMoqSource.value && !rateLimited.value) {
           error.value = null;
           await initializeLivestreamRuntime(
@@ -2021,18 +2023,25 @@
         return;
       }
       const playlistUrl = videoData.value?.video?.playlistUrl;
+      // Warm cheapest rung + first segments while Video.js boots (and share Worker cache).
       if (playlistUrl && !rateLimited.value) {
-        const availability = await checkPlaylistAvailability(playlistUrl, options.signal);
-        ensureCurrent();
-        if (!availability.ok && isPlaybackUnavailableCode(availability.code)) {
-          playbackUnavailable.value = true;
-          await loadBrowseRecommendations(options.signal);
-          ensureCurrent();
-          loading.value = false;
-          isNavigatingToAnotherVideo.value = false;
-          return;
-        }
+        void import('~/utils/hlsStartupPrefetch')
+          .then(({ prefetchHlsStartup }) =>
+            prefetchHlsStartup(playlistUrl, {
+              segmentCount: 2,
+              signal: options.signal,
+              priority: 'high',
+            }),
+          )
+          .catch(() => undefined);
       }
+      // Availability preflight runs in parallel with player init; player error path
+      // still surfaces storage failures if the preflight loses the race.
+      const availabilityPromise =
+        playlistUrl && !rateLimited.value
+          ? checkPlaylistAvailability(playlistUrl, options.signal)
+          : Promise.resolve({ ok: true as const });
+
       if (playlistUrl && !rateLimited.value) {
         error.value = null;
         let resolvedPlaylist = playlistUrl;
@@ -2050,7 +2059,18 @@
             playingOffline.value = false;
           }
         }
-        await initializeVideoElement(resolvedPlaylist, guard, options.signal);
+        const playerPromise = initializeVideoElement(resolvedPlaylist, guard, options.signal);
+        const availability = await availabilityPromise;
+        ensureCurrent();
+        if (!availability.ok && isPlaybackUnavailableCode(availability.code)) {
+          playbackUnavailable.value = true;
+          await loadBrowseRecommendations(options.signal);
+          ensureCurrent();
+          loading.value = false;
+          isNavigatingToAnotherVideo.value = false;
+          return;
+        }
+        await playerPromise;
         ensureCurrent();
         assignActivePlayerVideoIdIfCurrent(
           activePlayerVideoId,
@@ -2058,6 +2078,7 @@
           guard,
         );
       }
+      await recommendationsPromise.catch(() => undefined);
     } catch (e: any) {
       const superseded = e?.name === 'AbortError' || options.signal?.aborted || !guard();
       if (superseded) {

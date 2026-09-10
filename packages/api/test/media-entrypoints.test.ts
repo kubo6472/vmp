@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildEntrypointCandidates, getVideoProxyCacheControl } from '../src/mediaEntrypoints.js';
+import {
+  buildEntrypointCandidates,
+  getVideoProxyCacheControl,
+  sortMasterPlaylistByBandwidth,
+} from '../src/mediaEntrypoints.js';
+import { isImmutableVideoProxyObject, videoProxyObjectCacheKey } from '../src/videoProxyCache.js';
 
 describe('buildEntrypointCandidates', () => {
   it('keeps HLS-first order by default', () => {
@@ -66,5 +71,45 @@ describe('getVideoProxyCacheControl', () => {
 
   it('returns null for non-HLS assets', () => {
     assert.equal(getVideoProxyCacheControl('videos/vid_123/poster.jpg', null), null);
+  });
+});
+
+describe('sortMasterPlaylistByBandwidth', () => {
+  it('orders STREAM-INF pairs ascending by BANDWIDTH', () => {
+    const input = [
+      '#EXTM3U',
+      '#EXT-X-MEDIA:TYPE=AUDIO,URI="audio.m3u8",GROUP-ID="a"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,AUDIO="a"',
+      'stream_hi.m3u8',
+      '#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=854x480,AUDIO="a"',
+      'stream_lo.m3u8',
+      '#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720,AUDIO="a"',
+      'stream_mid.m3u8',
+    ].join('\n');
+
+    const sorted = sortMasterPlaylistByBandwidth(input);
+    const lines = sorted.split('\n');
+    assert.equal(lines[0], '#EXTM3U');
+    assert.match(lines[1]!, /EXT-X-MEDIA/);
+    assert.match(lines[2]!, /BANDWIDTH=800000/);
+    assert.equal(lines[3], 'stream_lo.m3u8');
+    assert.match(lines[4]!, /BANDWIDTH=2000000/);
+    assert.equal(lines[5], 'stream_mid.m3u8');
+    assert.match(lines[6]!, /BANDWIDTH=5000000/);
+    assert.equal(lines[7], 'stream_hi.m3u8');
+  });
+});
+
+describe('videoProxyCache keys', () => {
+  it('treats m4s and init as immutable', () => {
+    assert.equal(isImmutableVideoProxyObject('videos/x/seg_1.m4s'), true);
+    assert.equal(isImmutableVideoProxyObject('videos/x/init_audio.mp4'), true);
+    assert.equal(isImmutableVideoProxyObject('videos/x/master.m3u8'), false);
+  });
+
+  it('builds path-only cache keys without query strings', () => {
+    const key = videoProxyObjectCacheKey('videos/abc/seg_1.m4s');
+    assert.equal(new URL(key.url).pathname, '/videos/abc/seg_1.m4s');
+    assert.equal(new URL(key.url).search, '');
   });
 });

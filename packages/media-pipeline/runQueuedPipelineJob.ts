@@ -8,10 +8,12 @@ import path from 'node:path';
 import {
   checkEncoreHealth,
   encoreJobUrl,
+  encoreSegmentLengthSeconds,
   resolveEncoreProfileName,
   submitEncoreJob,
   waitForEncoreJob,
 } from './encoreClient.js';
+import { ENCORE_JOB_PRIORITY } from './encorePriorities.js';
 import { detectGpuEncodeConfig } from './gpuDetect.js';
 import { registerAndEnqueuePackaging, waitForPackaging } from './packagingClient.js';
 import type { PackagingStage, PipelineMode, QueuedPipelineSubStage } from './pipelineMode.js';
@@ -101,6 +103,7 @@ async function runEncoreAndPackage(
     externalId: ctx.videoId,
     priority: options.priority ?? 50,
     duration: options.duration,
+    segmentLength: encoreSegmentLengthSeconds(),
   });
   process.stdout.write(
     `${new Date().toISOString()} 🎞️  ${ctx.videoId} encore job submitted id=${jobId} profile=${profile} stage=${options.stage}\n`,
@@ -150,7 +153,7 @@ async function runPodcastSidecars(ctx: QueuedPipelineContext): Promise<void> {
     outputFolder: podcastOut,
     baseName: `vmp-${ctx.videoId}-podcast`,
     externalId: `${ctx.videoId}:podcast`,
-    priority: 40,
+    priority: ENCORE_JOB_PRIORITY.PODCAST,
   });
   await waitForEncoreJob(podcastJobId, { isCancelled: ctx.isCancelled });
   const podcastFile = await findNewestAudio(podcastOut);
@@ -174,7 +177,7 @@ async function runPodcastSidecars(ctx: QueuedPipelineContext): Promise<void> {
     outputFolder: previewOut,
     baseName: `vmp-${ctx.videoId}-preview`,
     externalId: `${ctx.videoId}:preview`,
-    priority: 45,
+    priority: ENCORE_JOB_PRIORITY.PREVIEW_MP3,
     duration: previewSeconds,
   });
   await waitForEncoreJob(previewJobId, { isCancelled: ctx.isCancelled });
@@ -204,7 +207,7 @@ export async function runQueuedPipelineJob(ctx: QueuedPipelineContext): Promise<
       profileBase: 'vmp-720p-audio',
       stage: 'fast_lane_preview',
       outputSubdir: 'fast-lane-720p',
-      priority: 10,
+      priority: ENCORE_JOB_PRIORITY.FAST_LANE_720P,
       ttpEncodeStart: 'phase1_encode_start',
       ttpEncodeDone: 'phase1_encode_done',
     });
@@ -230,7 +233,7 @@ export async function runQueuedPipelineJob(ctx: QueuedPipelineContext): Promise<
       profileBase: 'vmp-full-ladder',
       stage: 'full_ladder',
       outputSubdir: 'full-ladder',
-      priority: 30,
+      priority: ENCORE_JOB_PRIORITY.FULL_LADDER,
       ttpEncodeStart: 'phase2_encode_start',
       ttpEncodeDone: 'phase2_encode_done',
     }).then(async () => {
@@ -262,7 +265,7 @@ export async function runQueuedPipelineJob(ctx: QueuedPipelineContext): Promise<
     profileBase: 'vmp-full-ladder',
     stage: 'full_ladder',
     outputSubdir: 'full-ladder',
-    priority: 20,
+    priority: ENCORE_JOB_PRIORITY.FULL_LADDER,
     ttpEncodeStart: 'phase2_encode_start',
     ttpEncodeDone: 'phase2_encode_done',
   });

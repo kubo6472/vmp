@@ -98,3 +98,48 @@ export function getVideoProxyCacheControl(objectPath: any, manifestType: any) {
 
   return null;
 }
+
+/**
+ * Reorder `#EXT-X-STREAM-INF` variant pairs by ascending BANDWIDTH so players that
+ * start on the first listed rung (Video.js VHS / native HLS heuristics) begin on
+ * the cheapest ladder step instead of 1080p.
+ */
+export function sortMasterPlaylistByBandwidth(manifest: string): string {
+  const lines = manifest.split('\n');
+  const head: string[] = [];
+  const variants: { inf: string; uri: string; bandwidth: number }[] = [];
+  const tail: string[] = [];
+  let phase: 'head' | 'variants' | 'tail' = 'head';
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#EXT-X-STREAM-INF')) {
+      phase = 'variants';
+      const bwMatch = /BANDWIDTH=(\d+)/i.exec(trimmed);
+      const bandwidth = bwMatch ? Number.parseInt(bwMatch[1]!, 10) : Number.MAX_SAFE_INTEGER;
+      const uri = lines[i + 1] ?? '';
+      variants.push({
+        inf: line,
+        uri,
+        bandwidth: Number.isFinite(bandwidth) ? bandwidth : Number.MAX_SAFE_INTEGER,
+      });
+      i += 1;
+      continue;
+    }
+    if (phase === 'head') {
+      head.push(line);
+    } else if (phase === 'variants') {
+      phase = 'tail';
+      tail.push(line);
+    } else {
+      tail.push(line);
+    }
+  }
+
+  if (variants.length <= 1) return manifest;
+
+  variants.sort((a, b) => a.bandwidth - b.bandwidth);
+  const sorted = variants.flatMap((v) => [v.inf, v.uri]);
+  return [...head, ...sorted, ...tail].join('\n');
+}

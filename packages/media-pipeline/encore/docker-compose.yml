@@ -7,12 +7,14 @@
 # Secrets: copy encore/.env.example to encore/.env (or set VMP_ENV_FILE).
 #
 # Encoding: encore-web polls Redis and runs FFmpeg (poll-disabled defaults to false).
-# Separate encore-worker containers are ONE-SHOT (poll once → exit) and are NOT in
-# this file — see docker-compose.workers.yml for optional KEDA-style workers.
+# Separate encore-worker containers are ONE-SHOT (poll once / drain → exit).
+# Durable horizontal scale: docker-compose.scale.yml (looped worker pools).
+# KEDA / batch one-shots: docker-compose.workers.yml.
 #
 # GPU overrides (optional, CPU-only hosts use base file only):
 #   VAAPI:  docker compose -f encore/docker-compose.yml -f encore/docker-compose.vaapi.yml up -d
 #   NVIDIA: docker compose -f encore/docker-compose.yml -f encore/docker-compose.nvidia.yml up -d
+#   Scaled + GPU: see docker-compose.scale.yml header comments.
 #
 # NFS / TrueNAS mapall (run containers as the mapped UID:GID):
 #   MEDIA_USER=3000:3000 docker compose -f encore/docker-compose.yml -f encore/docker-compose.nfs.yml up -d
@@ -38,7 +40,9 @@ services:
       ENCORE_SETTINGS_REDIS_URI: redis://redis:6379
       ENCORE_SETTINGS_PROFILE_LOCATION: file:/profiles/profiles.yml
       ENCORE_SETTINGS_SHARED_WORK_DIR: /shared/work
-      # Web node encodes jobs (JobPoller). Set true only when using dedicated workers.
+      # Priority queue count (must match workers). With 2: prio≥50 → queue 0, else queue 1.
+      ENCORE_SETTINGS_CONCURRENCY: "${ENCORE_SETTINGS_CONCURRENCY:-2}"
+      # Web node encodes jobs (JobPoller). Set true when using docker-compose.scale.yml workers.
       ENCORE_SETTINGS_POLL_DISABLED: "${ENCORE_SETTINGS_POLL_DISABLED:-false}"
       ENCORE_SETTINGS_SECURITY_ENABLED: "${ENCORE_SETTINGS_SECURITY_ENABLED:-false}"
       # Non-empty placeholders so ENCORE_SETTINGS_SECURITY_ENABLED=true works without silent empty-password auth.
@@ -102,6 +106,8 @@ services:
       # $$ escapes Compose interpolation so encore-packager sees $EXTERNALID$
       OUTPUT_SUBFOLDER_TEMPLATE: ${OUTPUT_SUBFOLDER_TEMPLATE:-$$EXTERNALID$$}
       HLS_MANIFEST_NAME_TEMPLATE: ${HLS_MANIFEST_NAME_TEMPLATE:-master.m3u8}
+      # Shaka segment length (seconds). Must match Encore GOP: profiles use g/keyint=60 @ 30fps → 2s.
+      PACKAGE_FORMAT_OPTIONS_JSON: ${PACKAGE_FORMAT_OPTIONS_JSON:-'{"segmentDuration":2}'}
       S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}

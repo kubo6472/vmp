@@ -1,0 +1,78 @@
+# Horizontally scalable Encore encoding (durable Compose worker pools).
+#
+# Disables encoding on encore-web and runs looped encore-worker replicas pinned
+# to Redis priority queues (concurrency=2):
+#   queue 0 — high (Encore job priority 50–100) — fast-lane 720p
+#   queue 1 — low  (Encore job priority 0–49)  — full ladder / podcast
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml up -d
+#   # or: npm run encore:up:scale --workspace=@vmp/media-pipeline
+#
+# Scale independently:
+#   ENCORE_WORKER_HIGH_REPLICAS=3 ENCORE_WORKER_LOW_REPLICAS=2 ENCORE_PACKAGER_REPLICAS=3 \
+#     docker compose -f docker-compose.yml -f docker-compose.scale.yml up -d
+#
+# GPU (optional):
+#   … -f docker-compose.scale.yml -f docker-compose.scale.vaapi.yml up -d
+#   … -f docker-compose.scale.yml -f docker-compose.scale.nvidia.yml up -d
+#
+# NFS mapall: also pass docker-compose.nfs.yml + docker-compose.scale.nfs.yml
+#
+# For KEDA / one-shot Kubernetes jobs, use docker-compose.workers.yml instead.
+
+services:
+  encore-web:
+    environment:
+      ENCORE_SETTINGS_POLL_DISABLED: "${ENCORE_SETTINGS_POLL_DISABLED:-true}"
+      ENCORE_SETTINGS_CONCURRENCY: "${ENCORE_SETTINGS_CONCURRENCY:-2}"
+
+  encore-worker-high:
+    image: ghcr.io/svt/encore-worker:latest
+    restart: unless-stopped
+    depends_on:
+      - redis
+    deploy:
+      replicas: ${ENCORE_WORKER_HIGH_REPLICAS:-2}
+    entrypoint: ["/bin/sh", "/scripts/encore-worker-loop.sh"]
+    environment:
+      ENCORE_SETTINGS_REDIS_URI: redis://redis:6379
+      ENCORE_SETTINGS_PROFILE_LOCATION: file:/profiles/profiles.yml
+      ENCORE_SETTINGS_SHARED_WORK_DIR: /shared/work
+      ENCORE_SETTINGS_CONCURRENCY: "${ENCORE_SETTINGS_CONCURRENCY:-2}"
+      ENCORE_SETTINGS_POLL_QUEUE: "0"
+      ENCORE_SETTINGS_POLL_HIGHER_PRIO: "false"
+      ENCORE_SETTINGS_WORKER_DRAIN_QUEUE: "${ENCORE_SETTINGS_WORKER_DRAIN_QUEUE:-true}"
+      ENCORE_WORKER_IDLE_SLEEP_S: "${ENCORE_WORKER_IDLE_SLEEP_S:-5}"
+    volumes:
+      - ./profiles:/profiles:ro
+      - ./scripts/encore-worker-loop.sh:/scripts/encore-worker-loop.sh:ro
+      - ${ENCORE_MEDIA_MOUNT:-/mnt}:/media
+      - encore-shared-work:/shared/work
+
+  encore-worker-low:
+    image: ghcr.io/svt/encore-worker:latest
+    restart: unless-stopped
+    depends_on:
+      - redis
+    deploy:
+      replicas: ${ENCORE_WORKER_LOW_REPLICAS:-2}
+    entrypoint: ["/bin/sh", "/scripts/encore-worker-loop.sh"]
+    environment:
+      ENCORE_SETTINGS_REDIS_URI: redis://redis:6379
+      ENCORE_SETTINGS_PROFILE_LOCATION: file:/profiles/profiles.yml
+      ENCORE_SETTINGS_SHARED_WORK_DIR: /shared/work
+      ENCORE_SETTINGS_CONCURRENCY: "${ENCORE_SETTINGS_CONCURRENCY:-2}"
+      ENCORE_SETTINGS_POLL_QUEUE: "1"
+      ENCORE_SETTINGS_POLL_HIGHER_PRIO: "false"
+      ENCORE_SETTINGS_WORKER_DRAIN_QUEUE: "${ENCORE_SETTINGS_WORKER_DRAIN_QUEUE:-true}"
+      ENCORE_WORKER_IDLE_SLEEP_S: "${ENCORE_WORKER_IDLE_SLEEP_S:-5}"
+    volumes:
+      - ./profiles:/profiles:ro
+      - ./scripts/encore-worker-loop.sh:/scripts/encore-worker-loop.sh:ro
+      - ${ENCORE_MEDIA_MOUNT:-/mnt}:/media
+      - encore-shared-work:/shared/work
+
+  encore-packager:
+    deploy:
+      replicas: ${ENCORE_PACKAGER_REPLICAS:-2}

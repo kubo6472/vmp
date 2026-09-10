@@ -1,0 +1,23 @@
+# VAAPI GPU for scaled Encore workers (+ encore-web).
+# Usage (with scale overlay):
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml \
+#     -f docker-compose.scale.vaapi.yml up -d
+
+services:
+  encore-web:
+    devices:
+      - ${VAAPI_DEVICE:-/dev/dri/renderD128}:/dev/dri/renderD128
+    group_add:
+      - video
+
+  encore-worker-high:
+    devices:
+      - ${VAAPI_DEVICE:-/dev/dri/renderD128}:/dev/dri/renderD128
+    group_add:
+      - video
+
+  encore-worker-low:
+    devices:
+      - ${VAAPI_DEVICE:-/dev/dri/renderD128}:/dev/dri/renderD128
+    group_add:
+      - video

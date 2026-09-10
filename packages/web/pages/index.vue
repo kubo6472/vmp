@@ -392,10 +392,12 @@
     orderLayoutBlocksForViewport,
   } from '~/composables/useHomepageLayout';
   import { sizeUrl } from '~/composables/useThumbnail';
+  import { useVideoStartupPrefetch } from '~/composables/useVideoStartupPrefetch';
   import { fetchCmsMediaUrls } from '~/utils/fetchCmsMediaUrls';
   import strings from '~/utils/strings';
 
   const { siteSettings } = useSiteSettings();
+  const { isLoggedIn, authHeader } = useAuth();
   usePageSeo(
     computed(() => ({
       description: siteSettings.value.siteDescription,
@@ -420,6 +422,13 @@
   }
 
   const config = useRuntimeConfig();
+
+  const { enqueueMany: enqueueVideoStartupPrefetchMany } = useVideoStartupPrefetch({
+    apiUrl: String(config.public.apiUrl),
+    authHeaders: () => authHeader(),
+    isLoggedIn,
+    segmentCount: 3,
+  });
 
   type HomePill = {
     id: string;
@@ -582,10 +591,84 @@
     if (import.meta.client) isMobileViewport.value = window.innerWidth < 1024;
   }
 
+  function collectHomepagePrefetchKeys(limit: number): string[] {
+    const keys: string[] = [];
+    const seen = new Set<string>();
+    const pushVideo = (video: { id?: string; slug?: string | null } | undefined) => {
+      if (!video) return;
+      const key = String(video.slug || video.id || '');
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      keys.push(key);
+    };
+    const walk = (blocks: typeof homepageRenderModel.value.blockItems) => {
+      for (const block of blocks) {
+        if (keys.length >= limit) return;
+        if (block.type === 'top_video' || block.type === 'featured_row') {
+          for (const video of block.videos) {
+            pushVideo(video);
+            if (keys.length >= limit) return;
+          }
+        } else if (block.type === 'category') {
+          for (const video of block.categorySection?.visible ?? []) {
+            pushVideo(video);
+            if (keys.length >= limit) return;
+          }
+        } else if (block.type === 'category_with_side_mini') {
+          for (const video of block.primary.categorySection?.visible ?? []) {
+            pushVideo(video);
+            if (keys.length >= limit) return;
+          }
+          for (const video of block.sideMini.videos ?? []) {
+            pushVideo(video);
+            if (keys.length >= limit) return;
+          }
+        } else if (block.type === 'split_horizontal' || block.type === 'split_vertical') {
+          for (const child of block.children) {
+            if (keys.length >= limit) return;
+            if (child.type === 'top_video' || child.type === 'featured_row') {
+              for (const video of child.videos) {
+                pushVideo(video);
+                if (keys.length >= limit) return;
+              }
+            } else if (child.categorySection?.visible?.length) {
+              for (const video of child.categorySection.visible) {
+                pushVideo(video);
+                if (keys.length >= limit) return;
+              }
+            } else {
+              for (const video of child.videos ?? []) {
+                pushVideo(video);
+                if (keys.length >= limit) return;
+              }
+            }
+          }
+        }
+      }
+    };
+    walk(homepageRenderModel.value.blockItems);
+    if (keys.length < limit) {
+      for (const video of videos.value) {
+        pushVideo(video);
+        if (keys.length >= limit) break;
+      }
+    }
+    return keys;
+  }
+
+  function warmAboveFoldStartupPrefetch() {
+    if (!import.meta.client) return;
+    // Eagerly queue above-the-fold (+ more when logged in). Cards also observe
+    // with a full-viewport rootMargin for anything the eager pass misses.
+    const limit = isLoggedIn.value ? 12 : 4;
+    enqueueVideoStartupPrefetchMany(collectHomepagePrefetchKeys(limit));
+  }
+
   onMounted(() => {
     pwaBannerReady.value = true;
     updateMobileViewport();
     if (import.meta.client) window.addEventListener('resize', updateMobileViewport);
+    warmAboveFoldStartupPrefetch();
   });
 
   onUnmounted(() => {
@@ -599,6 +682,12 @@
         void loadBannerImageUrls();
       },
       { immediate: true },
+    );
+    watch(
+      () => [homepageRenderModel.value.blockItems.length, videos.value.length, isLoggedIn.value],
+      () => {
+        warmAboveFoldStartupPrefetch();
+      },
     );
   }
 </script>

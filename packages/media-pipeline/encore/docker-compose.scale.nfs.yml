@@ -1,0 +1,12 @@
+# TrueNAS / NFS mapall UID for scaled worker pools.
+# Usage:
+#   MEDIA_USER=3000:3000 docker compose -f docker-compose.yml \
+#     -f docker-compose.nfs.yml -f docker-compose.scale.yml \
+#     -f docker-compose.scale.nfs.yml up -d
+
+services:
+  encore-worker-high:
+    user: "${MEDIA_USER:-3000:3000}"
+
+  encore-worker-low:
+    user: "${MEDIA_USER:-3000:3000}"
