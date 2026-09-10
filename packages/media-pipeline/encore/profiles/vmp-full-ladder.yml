@@ -1,5 +1,6 @@
 name: vmp-full-ladder
 description: VMP full adaptive ladder — 1080p + 720p + 480p with shared AAC on 720p encode
+# GOP: g/keyint_min 60 @ 30fps = 2s IDR cadence (pairs with encore-packager segmentDuration:2)
 scaling: bicubic
 encodes:
   - type: X264Encode
@@ -13,8 +14,8 @@ encodes:
       r: 30
       fps_mode: cfr
       pix_fmt: yuv420p
-      g: 180
-      keyint_min: 180
+      g: 60
+      keyint_min: 60
       sc_threshold: 0
       profile:v: high
 
@@ -29,8 +30,8 @@ encodes:
       r: 30
       fps_mode: cfr
       pix_fmt: yuv420p
-      g: 180
-      keyint_min: 180
+      g: 60
+      keyint_min: 60
       sc_threshold: 0
       profile:v: high
     audioEncode:
@@ -48,7 +49,7 @@ encodes:
       r: 30
       fps_mode: cfr
       pix_fmt: yuv420p
-      g: 180
-      keyint_min: 180
+      g: 60
+      keyint_min: 60
       sc_threshold: 0
       profile:v: main

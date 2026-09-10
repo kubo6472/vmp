@@ -14,8 +14,8 @@ encodes:
       r: 30
       fps_mode: cfr
       pix_fmt: yuv420p
-      g: 180
-      keyint_min: 180
+      g: 60
+      keyint_min: 60
       sc_threshold: 0
       preset: p4
     audioEncode:

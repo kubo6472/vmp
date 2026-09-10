@@ -146,7 +146,17 @@ When the supervisor listens on a public interface (`VMP_UI_HOST=0.0.0.0`), set `
 | `REDIS_URL` | `redis://127.0.0.1:6379` | Packaging queue (supervisor + packager) |
 | `VMP_SUPERVISOR_URL` | `http://127.0.0.1:8788` | Packaging enqueue/status API |
 | `PACKAGER_CALLBACK_URL` | `http://vmp:$VMP_PACKAGER_SECRET@vmp-supervisor:8788/vmp/api` | encore-packager callbacks (Basic auth; Eyevinn does not send custom headers) |
+| `PACKAGE_FORMAT_OPTIONS_JSON` | `{"segmentDuration":2}` | Shaka options via encore-packager — **keep `segmentDuration` aligned with encode GOP** (profiles use `g`/`keyint_min` **60** @ 30fps = **2s** IDR; was 180/6s) |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `S3_ENDPOINT_URL` | — | R2 credentials for encore-packager (`PACKAGE_OUTPUT_FOLDER=s3://…`) |
+
+### HLS segment duration (startup latency)
+
+New encodes target **2s** CMAF segments (was 6s after PR #162). Two knobs must stay in sync:
+
+1. Encore profiles under `encore/profiles/` — `g` / `keyint_min: 60` at `r: 30`
+2. `PACKAGE_FORMAT_OPTIONS_JSON` on `encore-packager` — `segmentDuration: 2`
+
+Already-published VOD in R2 stays at whatever segment length it was packaged with until re-encoded. Shorter segments cut first-byte media size (~⅓ of a 6s segment) at the cost of more requests per minute of playback.
 
 Drop a file in **fast-lane** inbox to stagger publish; drop in **full-ladder** for one-shot encoding. TTP logs include `pipelineMode` on every milestone for A/B analysis.
 

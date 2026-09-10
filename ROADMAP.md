@@ -133,7 +133,7 @@ These are open Linear issues without active implementation milestones on the pro
 Validated ~7s click-to-play (6s R2/CMAF segments via Worker proxy) vs ~3s on the old Bunny-edge stack.
 
 - [ ] Path-keyed Workers Cache for immutable segments + ascending-bandwidth master rewrite + watch waterfall + above-fold prefetch (this PR)
-- [ ] Shorter segment duration for new encodes (2–4s) / dual ladder
+- [ ] **2s segment duration** for new encodes (Encore GOP 60 + packager `segmentDuration: 2`; re-package existing catalog separately)
 - [ ] Optional CDN (Bunny or R2 custom domain) once cacheable URL model allows
 - [ ] PostHog `video_startup_ms` instrumentation
 

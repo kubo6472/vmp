@@ -35,10 +35,11 @@ Cut perceived startup toward the old ~3s bar without giving up signed proxy URLs
 - [x] Rewrite master playlists to **ascending BANDWIDTH** so ABR starts on the cheapest rung.
 - [x] Watch page: **start player immediately**; recommendations load in parallel; playlist preflight no longer blocks init.
 - [x] Aggressive async above-the-fold HLS startup prefetch (init + first **3** segments on the cheapest rung + audio): eager queue of ~12 cards when logged in / ~4 when anonymous (session budget under `rate_limit_anon`), plus IntersectionObserver with **one viewport** of `rootMargin` so content just below the fold warms too. Category grids use the same queue.
+- [x] **2s HLS segments** for new encodes — Encore profiles `g`/`keyint_min` **60** @ 30fps + encore-packager `PACKAGE_FORMAT_OPTIONS_JSON={"segmentDuration":2}` (was 6s / GOP 180). Existing R2 VODs unchanged until re-packaged.
 - [x] Plan + roadmap entry; unit tests for cache key / bandwidth sort / prefetch URL picking.
 
 ## Follow-ups (not this PR)
 
-- Revisit **2–4s segment duration** for new encodes (packaging / Encore-packager config) — largest remaining byte-size lever; requires re-package or dual ladders.
+- Re-package hot/catalog titles at 2s (ops) once the media VM packager is healthy
 - Optional Bunny (or R2 custom domain + Cache Rules) for hot segments once auth model allows cacheable URLs.
 - PostHog `video_startup_ms` / `time_to_first_frame` event for ongoing validation (taxonomy currently lacks playback timing).

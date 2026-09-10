@@ -13,8 +13,8 @@ encodes:
       maxrate: 5000k
       bufsize: 10000k
       r: 30
-      g: 180
-      keyint_min: 180
+      g: 60
+      keyint_min: 60
       sc_threshold: 0
       profile:v: high
 
@@ -29,8 +29,8 @@ encodes:
       maxrate: 3000k
       bufsize: 6000k
       r: 30
-      g: 180
-      keyint_min: 180
+      g: 60
+      keyint_min: 60
       sc_threshold: 0
       profile:v: high
     audioEncode:
@@ -48,7 +48,7 @@ encodes:
       maxrate: 1500k
       bufsize: 3000k
       r: 30
-      g: 180
-      keyint_min: 180
+      g: 60
+      keyint_min: 60
       sc_threshold: 0
       profile:v: main
