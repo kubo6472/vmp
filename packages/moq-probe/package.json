@@ -15,6 +15,6 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@moq/net": "^0.3.3"
+    "@moq/net": "^0.3.4"
   }
 }

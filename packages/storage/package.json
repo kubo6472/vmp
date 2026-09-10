@@ -27,10 +27,10 @@
     "test": "tsx --test ./test/*.test.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1121.0",
-    "@aws-sdk/s3-request-presigner": "^3.1121.0",
+    "@aws-sdk/client-s3": "^3.1127.0",
+    "@aws-sdk/s3-request-presigner": "^3.1127.0",
     "@smithy/core": "^3.33.2",
-    "@smithy/fetch-http-handler": "^5.7.2"
+    "@smithy/fetch-http-handler": "^5.8.0"
   },
   "peerDependencies": {
     "@cloudflare/workers-types": "*"
@@ -41,8 +41,8 @@
     }
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260831.1",
-    "@types/node": "^26.4.0",
+    "@cloudflare/workers-types": "^5.20260907.1",
+    "@types/node": "^26.4.1",
     "tsx": "^4.23.13",
     "typescript": "npm:@typescript/typescript6@^6.0.2"
   }

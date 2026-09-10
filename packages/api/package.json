@@ -20,16 +20,16 @@
     "db:migration-verify": "bash ./scripts/migration_integrity_check.sh"
   },
   "dependencies": {
-    "@sentry/cloudflare": "^10.72.0",
+    "@sentry/cloudflare": "^10.73.0",
     "@vmp/payments": "*",
     "@vmp/shared": "*",
     "@vmp/storage": "*",
-    "posthog-node": "^5.51.4"
+    "posthog-node": "^5.51.6"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260831.1",
-    "@types/node": "^26.4.0",
+    "@cloudflare/workers-types": "^5.20260907.1",
+    "@types/node": "^26.4.1",
     "tsx": "^4.23.13",
-    "wrangler": "^4.127.1"
+    "wrangler": "^4.129.0"
   }
 }
