@@ -37,8 +37,6 @@ import {
 } from './adminExtras.js';
 import { ensureAdminSettingsTable } from './adminSettingsTable.js';
 import { handleAdminSystemFeatures } from './adminSystemFeatures.js';
-import { handleAdminDeploymentFeatures } from './deploymentFeaturesAdmin.js';
-import { maybeBlockDeploymentFeatureRoute } from './routeFeatureGuard.js';
 import {
   handleGetMe,
   handleLogout,
@@ -82,6 +80,7 @@ import {
   handleCmsPageUnpublish,
 } from './cmsPages.js';
 import { applySessionBookmark, getDb, getReadSession } from './d1Session.js';
+import { handleAdminDeploymentFeatures } from './deploymentFeaturesAdmin.js';
 import {
   handleAccountInvoices,
   handleAdminEInvoiceById,
@@ -116,6 +115,7 @@ import {
   buildProxyPlaylistUrl,
   getVideoProxyCacheControl,
   resolveMediaEntrypointUrl,
+  sortMasterPlaylistByBandwidth,
 } from './mediaEntrypoints.js';
 import {
   handleDevicePairingComplete,
@@ -211,13 +211,14 @@ import {
 } from './replication.js';
 import { isLocalVideoProxyUrl } from './requestPublicOrigin.js';
 import { isAdministrativeRole } from './roles.js';
+import { maybeBlockDeploymentFeatureRoute } from './routeFeatureGuard.js';
 import { handleGetAccountRss, handleRotateAccountRss } from './rssAccount.js';
-import { readRssTokenVersion } from './rssToken.js';
 import {
   deliverPodcastPreviewRebuildWebhook,
   handleRssPodcastPreviewRebuildNotify,
   handleRssPodcastWebhookConfig,
 } from './rssPodcastAdmin.js';
+import { readRssTokenVersion } from './rssToken.js';
 import { handleSiteFooterAdmin, handleSiteFooterPublic } from './siteFooter.js';
 import { handleSiteSettings } from './siteSettings.js';
 import { handleAdminSmokeAuth } from './smokeAuth.js';
@@ -230,6 +231,12 @@ import {
   handleThumbnailUpload,
   THUMBNAIL_CACHE_CONTROL,
 } from './thumbnails.js';
+import {
+  getVideoProxyCache,
+  isImmutableVideoProxyObject,
+  videoProxyObjectCacheKey,
+  withVideoProxyCacheHeader,
+} from './videoProxyCache.js';
 import { checkVideoTokenRssVersion, signVideoToken, verifyVideoToken } from './videoTokens.js';
 import { sendPushNotification } from './webpush.js';
 
@@ -776,10 +783,7 @@ const workerHandler = {
         ) {
           return handleSiteSettings(request, env, corsHeaders);
         }
-        if (
-          url.pathname === '/api/admin/deployment-features' &&
-          request.method === 'GET'
-        ) {
+        if (url.pathname === '/api/admin/deployment-features' && request.method === 'GET') {
           return handleAdminDeploymentFeatures(request, env, corsHeaders);
         }
         if (
@@ -2027,39 +2031,61 @@ async function handleVideoProxy(
   }
 
   const storage = getObjectStorage(env);
-  let upstreamResponse: Response;
+  let upstreamResponse: Response | undefined;
+  let proxyCacheStatus: 'HIT' | 'MISS' | 'BYPASS' = 'BYPASS';
+  const canUseObjectCache =
+    !isManifest && !byteRange && isImmutableVideoProxyObject(normalizedPath);
+  const objectCache = canUseObjectCache ? getVideoProxyCache() : null;
+  const objectCacheKey = canUseObjectCache ? videoProxyObjectCacheKey(normalizedPath) : null;
 
-  if (storage) {
-    try {
-      const storageObject = await storage.getObject(
-        normalizedPath,
-        byteRange ? { range: byteRange } : undefined,
-      );
-      if (!storageObject) {
+  if (objectCache && objectCacheKey) {
+    const cached = await objectCache.match(objectCacheKey);
+    if (cached) {
+      upstreamResponse = cached;
+      proxyCacheStatus = 'HIT';
+    }
+  }
+
+  if (proxyCacheStatus !== 'HIT') {
+    if (storage) {
+      try {
+        const storageObject = await storage.getObject(
+          normalizedPath,
+          byteRange ? { range: byteRange } : undefined,
+        );
+        if (!storageObject) {
+          return jsonResponse(
+            { error: 'Video media is not available', code: 'media_not_available' },
+            404,
+            corsHeaders,
+          );
+        }
+        upstreamResponse = storageGetResultToResponse(storageObject);
+      } catch (err) {
+        console.error('[video-proxy] storage getObject failed:', err);
         return jsonResponse(
-          { error: 'Video media is not available', code: 'media_not_available' },
-          404,
+          { error: 'Video is temporarily unavailable', code: 'storage_unavailable' },
+          502,
           corsHeaders,
         );
       }
-      upstreamResponse = storageGetResultToResponse(storageObject);
-    } catch (err) {
-      console.error('[video-proxy] storage getObject failed:', err);
-      return jsonResponse(
-        { error: 'Video is temporarily unavailable', code: 'storage_unavailable' },
-        502,
-        corsHeaders,
-      );
+    } else if (env.R2_BASE_URL) {
+      const upstreamUrl = new URL(`${env.R2_BASE_URL}/${objectPath}`);
+      const upstreamHeaders = new Headers();
+      if (rangeHeader && !isManifest) upstreamHeaders.set('Range', rangeHeader);
+      upstreamResponse = await fetch(upstreamUrl, {
+        method: request.method,
+        headers: upstreamHeaders,
+      });
+    } else {
+      return jsonResponse({ error: 'Object storage not configured' }, 503, corsHeaders);
     }
-  } else if (env.R2_BASE_URL) {
-    const upstreamUrl = new URL(`${env.R2_BASE_URL}/${objectPath}`);
-    const upstreamHeaders = new Headers();
-    if (rangeHeader && !isManifest) upstreamHeaders.set('Range', rangeHeader);
-    upstreamResponse = await fetch(upstreamUrl, {
-      method: request.method,
-      headers: upstreamHeaders,
-    });
-  } else {
+    if (objectCache && objectCacheKey && upstreamResponse.ok) {
+      proxyCacheStatus = 'MISS';
+    }
+  }
+
+  if (!upstreamResponse) {
     return jsonResponse({ error: 'Object storage not configured' }, 503, corsHeaders);
   }
 
@@ -2095,12 +2121,15 @@ async function handleVideoProxy(
   const manifestType = getManifestType(objectPath, upstreamResponse);
   if (manifestType === 'hls') {
     const manifest = await upstreamResponse.text();
-    const rewrittenManifest = rewriteManifestForProxyWithPreview(
+    let rewrittenManifest = rewriteManifestForProxyWithPreview(
       manifest,
       effectivePreviewUntil,
       objectPath,
       vtForRewrite,
     );
+    if (rewrittenManifest.includes('#EXT-X-STREAM-INF')) {
+      rewrittenManifest = sortMasterPlaylistByBandwidth(rewrittenManifest);
+    }
     const headers = new Headers(upstreamResponse.headers);
     headers.set('Content-Type', 'application/vnd.apple.mpegurl');
     const cacheControl = getVideoProxyCacheControl(objectPath, manifestType);
@@ -2116,7 +2145,10 @@ async function handleVideoProxy(
     });
     return new Response(rewrittenManifest, { status: 200, headers });
   }
-  const headers = new Headers(upstreamResponse.headers);
+  const headers = withVideoProxyCacheHeader(
+    new Headers(upstreamResponse.headers),
+    proxyCacheStatus,
+  );
   const cacheControl = getVideoProxyCacheControl(objectPath, manifestType);
   if (cacheControl) headers.set('Cache-Control', cacheControl);
   for (const [k, v] of Object.entries(corsHeaders as CorsHeaders)) headers.set(k, v);
@@ -2126,14 +2158,42 @@ async function handleVideoProxy(
       event: 'segment_served',
       video_id: proxyVideoId,
       duration_ms: Date.now() - reqStart,
+      cache: proxyCacheStatus,
     });
   }
   logRequest(request.method, requestUrl.pathname, upstreamResponse.status, Date.now() - reqStart, {
     video_id: proxyVideoId,
     manifest_type: manifestType ?? 'segment',
     preview_enforced: effectivePreviewUntil !== null,
+    cache: proxyCacheStatus,
   });
-  return new Response(upstreamResponse.body, { status: upstreamResponse.status, headers });
+  const mediaResponse = new Response(upstreamResponse.body, {
+    status: upstreamResponse.status,
+    headers,
+  });
+  if (
+    objectCache &&
+    objectCacheKey &&
+    proxyCacheStatus === 'MISS' &&
+    mediaResponse.ok &&
+    !byteRange
+  ) {
+    const cacheHeaders = new Headers(headers);
+    // Store without per-request CORS / debug headers so HIT responses can re-apply them.
+    cacheHeaders.delete('Access-Control-Allow-Origin');
+    cacheHeaders.delete('Access-Control-Expose-Headers');
+    cacheHeaders.delete('X-VMP-Cache');
+    ctx?.waitUntil?.(
+      objectCache.put(
+        objectCacheKey,
+        new Response(mediaResponse.clone().body, {
+          status: mediaResponse.status,
+          headers: cacheHeaders,
+        }),
+      ),
+    );
+  }
+  return mediaResponse;
 }
 
 async function handleBootstrap(request: any, env: any, corsHeaders: any) {
@@ -4105,7 +4165,14 @@ function getManifestType(objectPath: any, upstreamResponse: any) {
   return null;
 }
 
-export { getVideoProxyCacheControl } from './mediaEntrypoints.js';
+export {
+  getVideoProxyCacheControl,
+  sortMasterPlaylistByBandwidth,
+} from './mediaEntrypoints.js';
+export {
+  isImmutableVideoProxyObject,
+  videoProxyObjectCacheKey,
+} from './videoProxyCache.js';
 
 export function rewriteManifestForProxyWithPreview(
   manifest: any,

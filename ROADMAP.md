@@ -126,6 +126,17 @@ These are open Linear issues without active implementation milestones on the pro
 | [TOJ-9](https://linear.app/tojemoc/issue/TOJ-9) | [#435](https://github.com/tojemoc/vmp/issues/435) | RFC: Backup stack (bunny.net / Backblaze) | Deno Deploy `@vmp/api-node` backup API exists; bunny/Backblaze investigation still open |
 | [TOJ-14](https://linear.app/tojemoc/issue/TOJ-14) | [#441](https://github.com/tojemoc/vmp/issues/441) | Q: Inspired by peer streaming projects | Research only; MoQ livestreams + feature modules are related partial progress |
 
+### Video startup latency (`video-startup-latency`)
+
+**Plan:** [docs/plans/video-startup-latency.md](docs/plans/video-startup-latency.md)
+
+Validated ~7s click-to-play (6s R2/CMAF segments via Worker proxy) vs ~3s on the old Bunny-edge stack.
+
+- [ ] Path-keyed Workers Cache for immutable segments + ascending-bandwidth master rewrite + watch waterfall + above-fold prefetch (this PR)
+- [ ] Shorter segment duration for new encodes (2–4s) / dual ladder
+- [ ] Optional CDN (Bunny or R2 custom domain) once cacheable URL model allows
+- [ ] PostHog `video_startup_ms` instrumentation
+
 ---
 
 ## Adding new work

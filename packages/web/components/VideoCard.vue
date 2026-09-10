@@ -1,5 +1,12 @@
 <template>
-  <NuxtLink :to="`/watch/${video.slug || video.id}`" class="group block" :class="linkClass">
+  <NuxtLink
+    ref="linkEl"
+    :to="`/watch/${video.slug || video.id}`"
+    class="group block"
+    :class="linkClass"
+    :data-vmp-prefetch-key="prefetchKey"
+    @pointerenter="onPrefetchIntent"
+  >
     <div
       class="relative aspect-video rounded-lg overflow-hidden bg-gray-200 dark:bg-gray-800"
       :class="mediaClass"
@@ -58,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-  import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+  import { computed, inject, onBeforeUnmount, onMounted, type Ref, ref } from 'vue';
   import { useThumbnail } from '~/composables/useThumbnail';
   import strings from '~/utils/strings';
 
@@ -90,6 +97,8 @@
       clampTitle?: boolean;
       imageLoading?: 'lazy' | 'eager';
       imageFetchPriority?: 'high' | 'low' | 'auto';
+      /** When false, skip catalog HLS warmup for this card. */
+      startupPrefetch?: boolean;
     }>(),
     {
       layout: 'default',
@@ -99,8 +108,28 @@
       clampTitle: true,
       imageLoading: 'lazy',
       imageFetchPriority: 'auto',
+      startupPrefetch: true,
     },
   );
+
+  const prefetchKey = computed(() => String(props.video.slug || props.video.id || ''));
+  const linkEl = ref<HTMLElement | null>(null);
+  const enqueueStartupPrefetch = inject<((videoKey: string) => void) | null>(
+    'enqueueVideoStartupPrefetch',
+    null,
+  );
+  const startupPrefetchMode = inject<Ref<'visible' | 'hover'> | null>(
+    'videoStartupPrefetchMode',
+    null,
+  );
+  let intersectionObserver: IntersectionObserver | undefined;
+
+  const onPrefetchIntent = () => {
+    if (!props.startupPrefetch) return;
+    if (startupPrefetchMode?.value === 'hover') {
+      enqueueStartupPrefetch?.(prefetchKey.value);
+    }
+  };
 
   const { sizedUrl } = useThumbnail(computed(() => props.video.thumbnail_url));
   const cardThumbnailSrc = computed(() => sizedUrl('small') ?? sizedUrl('medium'));
@@ -162,10 +191,45 @@
     nowInterval = setInterval(() => {
       now.value = Date.now();
     }, 30_000);
+
+    if (
+      !props.startupPrefetch ||
+      !enqueueStartupPrefetch ||
+      !prefetchKey.value ||
+      startupPrefetchMode?.value !== 'visible'
+    ) {
+      return;
+    }
+
+    const el = linkEl.value as { $el?: Element } | Element | null as
+      | { $el?: Element }
+      | Element
+      | null;
+    const node =
+      el && '$el' in (el as object) ? (el as { $el?: Element }).$el : (el as Element | null);
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      enqueueStartupPrefetch(prefetchKey.value);
+      return;
+    }
+    intersectionObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            enqueueStartupPrefetch(prefetchKey.value);
+            intersectionObserver?.disconnect();
+            intersectionObserver = undefined;
+          }
+        }
+      },
+      { rootMargin: '240px 0px', threshold: 0.01 },
+    );
+    intersectionObserver.observe(node);
   });
 
   onBeforeUnmount(() => {
     if (nowInterval) clearInterval(nowInterval);
+    intersectionObserver?.disconnect();
+    intersectionObserver = undefined;
   });
 
   // Prefer camelCase `fullDuration` when present, with a fallback to legacy `full_duration`.

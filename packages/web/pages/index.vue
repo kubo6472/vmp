@@ -392,10 +392,12 @@
     orderLayoutBlocksForViewport,
   } from '~/composables/useHomepageLayout';
   import { sizeUrl } from '~/composables/useThumbnail';
+  import { useVideoStartupPrefetch } from '~/composables/useVideoStartupPrefetch';
   import { fetchCmsMediaUrls } from '~/utils/fetchCmsMediaUrls';
   import strings from '~/utils/strings';
 
   const { siteSettings } = useSiteSettings();
+  const { isLoggedIn, authHeader } = useAuth();
   usePageSeo(
     computed(() => ({
       description: siteSettings.value.siteDescription,
@@ -420,6 +422,13 @@
   }
 
   const config = useRuntimeConfig();
+
+  useVideoStartupPrefetch({
+    apiUrl: String(config.public.apiUrl),
+    authHeaders: () => authHeader(),
+    isLoggedIn,
+    segmentCount: 2,
+  });
 
   type HomePill = {
     id: string;
